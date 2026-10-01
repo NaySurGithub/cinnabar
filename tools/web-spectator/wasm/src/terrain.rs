@@ -13,6 +13,18 @@ pub(super) const FLOATS_PER_VERTEX: usize = 9;
 const MAX_VERTEX_FLOATS: usize = 2_000_000 * FLOATS_PER_VERTEX;
 
 pub(super) fn mesh(arena: &Arena) -> Result<Vec<f32>, String> {
+    let visual_ids = arena
+        .palette
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| {
+            if assets::is_default_invisible_block(&entry.name) {
+                AIR
+            } else {
+                index as u32
+            }
+        })
+        .collect::<Vec<_>>();
     let mut batches = BTreeMap::<SubChunkKey, Vec<BlockUpdate>>::new();
     for &[x, y, z, palette] in &arena.blocks {
         let key = SubChunkKey::new(
@@ -26,7 +38,8 @@ pub(super) fn mesh(arena: &Arena) -> Result<Vec<f32>, String> {
             y.rem_euclid(SUB_CHUNK_SIDE) as u8,
             z.rem_euclid(SUB_CHUNK_SIDE) as u8,
             0,
-            palette as u32,
+            // Retain air updates so an invisible final value removes a prior visible block.
+            visual_ids[palette as usize],
         ));
         if batches.len() > MAX_SUB_CHUNKS {
             return Err("arena exceeds the 4096-subchunk browser limit".into());

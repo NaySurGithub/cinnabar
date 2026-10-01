@@ -9,7 +9,9 @@ palette-native world store, runtime asset overlays and greedy chunk mesher.
 The server publishes active duel snapshots; the website owns its viewer camera
 and live fighter presentation. No browser game login, lobby/FFA map, player
 input or per-viewer desktop client is included. Incomplete: named flat colors
-and solid-cube terrain are diagnostic approximations; vanilla textures,
+and solid-cube terrain are diagnostic approximations. The existing Cinnabar
+invisible-block classifier is shared with the viewer; invisible terrain draws
+nothing and does not cull neighboring faces. Vanilla textures,
 transparent/partial block models, liquids, world lighting, full actor animation,
 equipment and version-matched native visual/performance parity are not provided.
 This extension closes no vanilla parity gate. Build/runtime admission limits

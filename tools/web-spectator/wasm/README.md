@@ -7,7 +7,10 @@ Xbox account, or send game commands. The website owns its camera, rendering
 surface and live player presentation.
 
 Visual support is **diagnostic**: named flat colors and solid unit cubes replace
-texture, transparency, liquid and partial-block shapes. These approximations are
+texture, transparency, liquid and partial-block shapes. The shared Cinnabar
+visibility classifier maps vanilla invisible blocks to air, so barriers, light
+blocks, structure voids, invisible bedrock and moving blocks neither draw nor
+hide neighboring faces. These approximations are
 recorded as incomplete in the master plan. This target closes no vanilla parity
 gate. No Mojang assets are bundled.
 
@@ -26,7 +29,8 @@ error. World coordinates are preserved, including negative coordinates.
 The input is `{ id, name, palette, blocks, bounds }`. Palette entries are
 `{ name, states }`; index zero must be `air` or `minecraft:air`. Blocks are
 `[x, y, z, paletteIndex]`. Bounds are inclusive minimum XYZ followed by maximum
-XYZ. Duplicate positions use their final palette value; zero removes a block.
+XYZ. Duplicate positions use their final palette value; zero or an invisible
+block removes a block from the visual mesh.
 Unrelated metadata is ignored.
 
 The browser admission limits are 32 MiB JSON, one million block records,

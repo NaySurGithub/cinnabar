@@ -74,6 +74,59 @@ fn final_duplicate_block_update_can_remove_a_block() {
 }
 
 #[test]
+fn barrier_ceiling_neither_draws_nor_culls_the_stone_below() {
+    let stone = arena(json!([[1, 1, 1, 1]]));
+    let expected = vertices(stone.clone());
+    let mut scene = stone;
+    scene["palette"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"name": "minecraft:barrier"}));
+    for x in 0..3 {
+        for z in 0..3 {
+            scene["blocks"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!([x, 2, z, 2]));
+        }
+    }
+    assert_eq!(vertices(scene), expected);
+    assert!(
+        expected
+            .chunks_exact(FLOATS_PER_VERTEX)
+            .any(|vertex| vertex[1] == 2.0 && vertex[4] == 1.0)
+    );
+}
+
+#[test]
+fn invisible_block_families_produce_no_geometry() {
+    for name in [
+        "minecraft:barrier",
+        "minecraft:structure_void",
+        "minecraft:invisible_bedrock",
+        "minecraft:moving_block",
+        "minecraft:light_block_0",
+        "minecraft:light_block_15",
+    ] {
+        let mut scene = arena(json!([[1, 1, 1, 1]]));
+        scene["palette"][1]["name"] = json!(name);
+        assert!(vertices(scene).is_empty(), "{name}");
+    }
+}
+
+#[test]
+fn invisible_duplicate_updates_preserve_the_last_palette_value() {
+    let mut scene = arena(json!([[1, 1, 1, 1], [1, 1, 1, 2]]));
+    scene["palette"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"name": "minecraft:barrier"}));
+    assert!(vertices(scene.clone()).is_empty());
+    scene["blocks"] = json!([[1, 1, 1, 2], [1, 1, 1, 1]]);
+    assert_eq!(vertices(scene), vertices(arena(json!([[1, 1, 1, 1]]))));
+}
+
+#[test]
 fn empty_go_palette_states_may_be_absent_or_null() {
     let mut scene = arena(json!([[1, 1, 1, 1]]));
     scene["palette"][0]["states"] = Value::Null;
