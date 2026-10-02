@@ -28,6 +28,10 @@ type AssetManifest struct {
 	Source   string        `json:"source"`
 	Files    []AssetRecord `json:"files"`
 }
+
+var requiredAssetNames = []string{"world", "registry", "entities", "equipment", "hud", "icons", "ui", "font"}
+var optionalAssetNames = []string{"actors", "particles"}
+
 type assetFile struct {
 	record         AssetRecord
 	file           *os.File
@@ -67,7 +71,10 @@ func LoadAssets(directory string) (*Assets, error) {
 			assets.Close()
 		}
 	}()
-	names := map[string]bool{"world": false, "registry": false, "entities": false, "equipment": false, "hud": false, "icons": false, "ui": false, "font": false, "actors": false, "particles": false}
+	names := make(map[string]bool)
+	for _, name := range append(append([]string(nil), requiredAssetNames...), optionalAssetNames...) {
+		names[name] = false
+	}
 	var total int64
 	for _, record := range manifest.Files {
 		seen, known := names[record.Name]
@@ -129,7 +136,7 @@ func LoadAssets(directory string) (*Assets, error) {
 			return nil, errors.New("asset bundle too large")
 		}
 	}
-	for _, name := range []string{"world", "registry", "entities", "equipment", "hud", "icons", "ui", "font"} {
+	for _, name := range requiredAssetNames {
 		if !names[name] {
 			return nil, errors.New("required asset missing")
 		}
@@ -152,9 +159,23 @@ func (h *Handler) assetsRoute(w http.ResponseWriter, r *http.Request) {
 		failure(w, http.StatusServiceUnavailable, "The renderer assets are not available.")
 		return
 	}
-	if r.URL.Path == "/api/spectator/assets" {
+	if r.URL.Path == "/api/spectator/assets" || r.URL.Path == "/api/spectator/assets/manifest-v10" {
 		w.Header().Set("Cache-Control", "public, max-age=300")
-		writeJSON(w, r, h.assets.manifest)
+		manifest := h.assets.manifest
+		if r.URL.Path == "/api/spectator/assets" {
+			// Preserve the shipped renderer's strict eight-carrier contract while
+			// the new renderer opts into its actor and particle carriers.
+			manifest.Files = make([]AssetRecord, 0, len(requiredAssetNames))
+			for _, record := range h.assets.manifest.Files {
+				for _, name := range requiredAssetNames {
+					if record.Name == name {
+						manifest.Files = append(manifest.Files, record)
+						break
+					}
+				}
+			}
+		}
+		writeJSON(w, r, manifest)
 		return
 	}
 	route, ok := strings.CutPrefix(r.URL.Path, "/api/spectator/assets/")
