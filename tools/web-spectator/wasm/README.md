@@ -50,6 +50,14 @@ owners. Damage-direction packets are not in the stream, so committed hurt
 events use native directionless tilt at their actual age.
 The camera uses Cinnabar's default horizontal field of view and shared
 aspect-correct conversion; the hand pass receives that actual projection FOV.
+Browser redraws follow the native continuous Winit/AutoVsync path instead of
+a 34 ms reactive timer. The 10 Hz stream is sampled between committed poses:
+positions stay aligned across actors, follow/orbit targets and nameplates, while
+POV yaw takes the shortest turn and pitch stays within its vertical range.
+New duels, arenas, rounds and revived fighters start at their current pose.
+No movement is extrapolated beyond the latest committed frame. Converted bone
+poses retain one cached pair per actor, invalidated by the native animation and
+observation ticks, rig/skin replacement and actor/session lifetime changes.
 Biome/light/environment streaming and complete vanilla first-person parity
 remain open. The shared native main-hand pass has the same
 existing offhand and map restrictions as the desktop path. The admission limits
@@ -113,6 +121,8 @@ wasm-bindgen --target web --no-typescript --out-dir target/web-spectator \
   target/wasm32-unknown-unknown/debug/web_spectator.wasm
 ```
 
-Deploy `web_spectator.js` and `web_spectator_bg.wasm` together under the website's
-`public/cinnabar/`. The development build is used for bounded iteration;
-production optimization is a separate release check.
+Use an optimized `--release` artifact for deployment; the development build
+above is for bounded iteration. Deploy `web_spectator.js` and
+`web_spectator_bg.wasm` together under a content-addressed website path and pin
+the source commit, actual build profile and WASM hash in its manifest. Validate
+rendered frames and cold/warm performance with that exact artifact before push.

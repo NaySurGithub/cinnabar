@@ -2,6 +2,9 @@ use serde_json::{Value, json};
 
 use crate::{mesh_arena, model::Arena, terrain::FLOATS_PER_VERTEX};
 
+#[path = "browser_actor/animation/pose_cache.rs"]
+mod pose_cache;
+
 fn arena(blocks: Value) -> Value {
     json!({
         "id": "proof", "name": "Proof arena",

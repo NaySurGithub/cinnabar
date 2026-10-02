@@ -4,7 +4,11 @@
 //! a game connection or accepts gameplay input. The old flat mesh binding remains
 //! a diagnostic geometry tool only and is not a viewer fallback.
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", test))]
+mod browser_interpolation;
+#[cfg(any(target_arch = "wasm32", test))]
+// Host interpolation tests parse the same model without using graphics-only fields.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 mod browser_model;
 mod canonical;
 mod geometry;

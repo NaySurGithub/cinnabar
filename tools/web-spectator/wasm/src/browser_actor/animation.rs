@@ -7,17 +7,22 @@ use actor_animation::{
 };
 use assets::{RuntimeEntityAssets, RuntimeEquipmentCatalog};
 use bevy::platform::time::Instant;
-use render::RenderBoneTransform;
+use render::{EntityRigId, RenderBoneTransform};
 use render_data::{ActorKind, ActorMetadataValue, ActorStatus, HandPhase, SkinGeometrySource};
 
 use super::super::browser_model::{Fighter, Frame};
 use super::{hash_id, parse_rgb};
+
+mod pose_cache;
+use pose_cache::PoseCache;
+type ConvertedPose = (Arc<[RenderBoneTransform]>, Arc<[RenderBoneTransform]>);
 
 pub(super) struct NativeAnimator {
     store: ActorAnimationStore,
     actors: HashMap<u64, Observation>,
     session: u64,
     last_tick: Instant,
+    poses: PoseCache<ConvertedPose>,
 }
 
 pub(super) struct AnimatedPose {
@@ -55,6 +60,7 @@ impl NativeAnimator {
             actors: HashMap::new(),
             session: 0,
             last_tick: Instant::now() - ACTOR_TICK_DURATION,
+            poses: PoseCache::default(),
         }
     }
 
@@ -74,6 +80,7 @@ impl NativeAnimator {
         if self.session != session {
             self.store.clear();
             self.actors.clear();
+            self.poses.clear();
             self.session = session;
             self.last_tick = clock - ACTOR_TICK_DURATION;
         }
@@ -91,6 +98,7 @@ impl NativeAnimator {
         for id in removed {
             self.actors.remove(&id);
             self.store.remove_runtime(id);
+            self.poses.invalidate(id);
         }
         let interval = previous
             .map(|old| {
@@ -103,7 +111,11 @@ impl NativeAnimator {
         for fighter in &frame.fighters {
             let runtime_id = hash_id(&fighter.id);
             let old = previous
-                .and_then(|old| old.fighters.iter().find(|old| old.id == fighter.id))
+                .and_then(|old| {
+                    old.fighters
+                        .iter()
+                        .find(|old| old.id == fighter.id && old.dead == fighter.dead)
+                })
                 .unwrap_or(fighter);
             let position = std::array::from_fn(|axis| {
                 old.position[axis] + (fighter.position[axis] - old.position[axis]) * fraction
@@ -257,18 +269,43 @@ impl NativeAnimator {
         .clamp(0.0, 1.0)
     }
 
-    pub(super) fn pose(&self, id: &str, names: &[Box<str>]) -> Option<AnimatedPose> {
+    pub(super) fn invalidate_pose(&mut self, id: &str) {
+        self.poses.invalidate(hash_id(id));
+    }
+
+    pub(super) fn pose(
+        &mut self,
+        id: &str,
+        rig: EntityRigId,
+        names: &[Box<str>],
+    ) -> Option<AnimatedPose> {
         let runtime_id = hash_id(id);
         let pose = self.store.get(runtime_id)?;
         let actor = self.actors.get(&runtime_id)?;
+        let (previous, current) = self.poses.get_or_insert_with(
+            runtime_id,
+            (
+                rig.0,
+                pose.completed_tick,
+                pose.reset_generation,
+                pose.rest_completed_tick,
+                pose.rest_reset_generation,
+            ),
+            || {
+                Some((
+                    convert_pose(&pose, pose.previous, names)?,
+                    convert_pose(&pose, pose.current, names)?,
+                ))
+            },
+        )?;
         let overlay = if actor.status.overlay_active() {
             render::pack_overlay_rgba8(render::HURT_OVERLAY_RGBA)
         } else {
             0
         };
         Some(AnimatedPose {
-            previous: convert_pose(&pose, pose.previous, names)?,
-            current: convert_pose(&pose, pose.current, names)?,
+            previous: Arc::clone(previous),
+            current: Arc::clone(current),
             hand: pose.hand,
             previous_body_yaw: pose.previous_body_yaw,
             body_yaw: pose.body_yaw,

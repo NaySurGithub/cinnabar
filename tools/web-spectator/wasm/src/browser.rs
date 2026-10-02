@@ -30,8 +30,8 @@ use world::SubChunkKey;
 
 use crate::{
     TerrainAssets, browser_actor::BrowserActors, browser_camera::PovMotion,
-    browser_diagnostics::Diagnostics, browser_hud::BrowserHud, browser_model::Frame, model::Arena,
-    terrain_runtime,
+    browser_diagnostics::Diagnostics, browser_hud::BrowserHud, browser_interpolation::FrameMotion,
+    browser_model::Frame, model::Arena, terrain_runtime,
 };
 
 #[derive(Clone, Copy)]
@@ -241,10 +241,10 @@ impl Viewer {
             .insert_resource(VisibilityDiagnosticsInput::new(true))
             .insert_resource(ClearColor(Color::srgb(0.48, 0.70, 0.94)))
             .insert_resource(WinitSettings {
-                focused_mode: UpdateMode::reactive_low_power(std::time::Duration::from_millis(34)),
-                unfocused_mode: UpdateMode::reactive_low_power(std::time::Duration::from_millis(
-                    34,
-                )),
+                // Browser redraws follow requestAnimationFrame and AutoVsync. An
+                // iframe need not have keyboard focus to present smooth movement.
+                focused_mode: UpdateMode::Continuous,
+                unfocused_mode: UpdateMode::Continuous,
             })
             .insert_non_send_resource(BrowserRuntime {
                 state: Arc::clone(&state),
@@ -564,29 +564,16 @@ fn update_viewer(
         .as_secs_f32()
         .clamp(0.05, 1.0);
     let partial = (state.received.elapsed().as_secs_f32() / interval).clamp(0.0, 1.0);
-    let position = fighter.map(|fighter| {
-        let previous = state.previous.as_ref().and_then(|frame| {
-            frame
-                .fighters
-                .iter()
-                .find(|previous| previous.id == fighter.id)
+    let motion = current.map(|frame| FrameMotion::new(frame, state.previous.as_ref(), partial));
+    let position = fighter
+        .zip(motion.as_ref())
+        .map(|(fighter, motion)| Vec3::from_array(motion.position(fighter)));
+    let mut target = motion
+        .as_ref()
+        .and_then(FrameMotion::center)
+        .map_or(runtime.arena_center, |center| {
+            Vec3::from_array(center) + Vec3::Y
         });
-        previous.map_or(Vec3::from_array(fighter.position), |previous| {
-            Vec3::from_array(previous.position).lerp(Vec3::from_array(fighter.position), partial)
-        })
-    });
-    let mut target =
-        current
-            .filter(|frame| !frame.fighters.is_empty())
-            .map_or(runtime.arena_center, |frame| {
-                frame
-                    .fighters
-                    .iter()
-                    .map(|fighter| Vec3::from_array(fighter.position))
-                    .sum::<Vec3>()
-                    / frame.fighters.len() as f32
-                    + Vec3::Y
-            });
     let mut hand_motion = Mat4::IDENTITY;
     match state.camera.mode {
         CameraMode::Pov if fighter.is_some() => {
@@ -597,9 +584,14 @@ fn update_viewer(
                 state.error = Some("player POV data is unavailable".into());
                 return;
             };
+            let [yaw, pitch] = motion
+                .as_ref()
+                .map_or([fighter.yaw, fighter.pitch], |motion| {
+                    motion.angles(fighter)
+                });
             let base = Transform {
                 translation: position.unwrap_or(target) + Vec3::Y * pov.eye_height,
-                rotation: render::bedrock_camera_rotation(fighter.yaw, fighter.pitch),
+                rotation: render::bedrock_camera_rotation(yaw, pitch),
                 ..Transform::IDENTITY
             };
             let (posed, motion) = runtime.camera_motion.update(fighter, base);
@@ -627,22 +619,22 @@ fn update_viewer(
         None
     };
     if let Some(current) = current {
-        *actors = runtime
-            .actors
-            .update(current, state.previous.as_ref(), partial, hidden);
+        *actors = runtime.actors.update(
+            current,
+            motion.as_ref().and_then(FrameMotion::previous),
+            partial,
+            hidden,
+        );
         let anchors = current
             .fighters
             .iter()
             .filter(|fighter| !fighter.dead && hidden != Some(fighter.id.as_str()))
             .filter_map(|fighter| {
-                let feet = Vec3::from_array(fighter.position);
-                let feet = state
-                    .previous
-                    .as_ref()
-                    .and_then(|previous| previous.fighters.iter().find(|old| old.id == fighter.id))
-                    .map_or(feet, |old| {
-                        Vec3::from_array(old.position).lerp(feet, partial)
-                    });
+                let feet = Vec3::from_array(
+                    motion
+                        .as_ref()
+                        .map_or(fighter.position, |motion| motion.position(fighter)),
+                );
                 render::player_nametag_anchor(
                     &fighter.name,
                     feet,

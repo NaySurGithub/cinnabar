@@ -187,6 +187,7 @@ impl BrowserActors {
             self.skins.remove(&unused);
         }
         self.skins.insert(id.into(), Skin { pixels, slim });
+        self.animator.invalidate_pose(id);
         self.skin_keys.clear(); // Repack only when the skin payload or admission changes.
         Ok(())
     }
@@ -256,9 +257,14 @@ impl BrowserActors {
                 &self.classic
             };
             let old = previous
-                .and_then(|frame| frame.fighters.iter().find(|old| old.id == fighter.id))
+                .and_then(|frame| {
+                    frame
+                        .fighters
+                        .iter()
+                        .find(|old| old.id == fighter.id && old.dead == fighter.dead)
+                })
                 .unwrap_or(fighter);
-            let Some(animated) = self.animator.pose(&fighter.id, &rig.names) else {
+            let Some(animated) = self.animator.pose(&fighter.id, rig.id, &rig.names) else {
                 continue;
             };
             let previous_bones = animated.previous;
@@ -457,7 +463,7 @@ impl BrowserActors {
             &self.classic
         };
         let names = rig.names.clone();
-        let Some(animated) = self.animator.pose(&fighter.id, &rig.names) else {
+        let Some(animated) = self.animator.pose(&fighter.id, rig.id, &rig.names) else {
             return scene;
         };
         let generation = self.generation.max(1);

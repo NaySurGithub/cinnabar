@@ -7,6 +7,8 @@ pub(super) struct Frame {
     pub(super) updated_at: String,
     pub(super) arena_id: String,
     pub(super) mode: String,
+    #[serde(default)]
+    pub(super) round_active: bool,
     #[serde(rename = "players")]
     pub(super) fighters: Vec<Fighter>,
     pub(super) team_wins: Vec<i32>,
