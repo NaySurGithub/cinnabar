@@ -57,7 +57,7 @@ func LoadAssets(directory string) (*Assets, error) {
 	if err = json.Unmarshal(data, &manifest); err != nil {
 		return nil, err
 	}
-	if manifest.Version != 1 || manifest.Protocol <= 0 || manifest.Source == "" || len(manifest.Files) != 8 {
+	if manifest.Version != 1 || manifest.Protocol <= 0 || manifest.Source == "" || len(manifest.Files) < 8 || len(manifest.Files) > 10 {
 		return nil, errors.New("invalid asset manifest")
 	}
 	assets := &Assets{manifest: manifest, files: make(map[string]assetFile)}
@@ -67,7 +67,7 @@ func LoadAssets(directory string) (*Assets, error) {
 			assets.Close()
 		}
 	}()
-	names := map[string]bool{"world": false, "registry": false, "entities": false, "equipment": false, "hud": false, "icons": false, "ui": false, "font": false}
+	names := map[string]bool{"world": false, "registry": false, "entities": false, "equipment": false, "hud": false, "icons": false, "ui": false, "font": false, "actors": false, "particles": false}
 	var total int64
 	for _, record := range manifest.Files {
 		seen, known := names[record.Name]
@@ -127,6 +127,11 @@ func LoadAssets(directory string) (*Assets, error) {
 		total += record.Size
 		if total > 256<<20 {
 			return nil, errors.New("asset bundle too large")
+		}
+	}
+	for _, name := range []string{"world", "registry", "entities", "equipment", "hud", "icons", "ui", "font"} {
+		if !names[name] {
+			return nil, errors.New("required asset missing")
 		}
 	}
 	ok = true
