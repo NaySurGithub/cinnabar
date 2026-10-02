@@ -1,5 +1,5 @@
 use super::{evaluation::MolangValue, pose::LocalDelta, query::QueryInputs, *};
-use crate::ActorPose;
+use render_data::{ActorStatus, PropertyDefinition, PropertyKind};
 
 #[test]
 fn static_generation_exhaustion_fails_closed_without_consuming_animated_generation() {
@@ -14,18 +14,83 @@ fn static_generation_exhaustion_fails_closed_without_consuming_animated_generati
     assert_eq!(store.take_rest_generation(), None);
 }
 
-fn actor_with_metadata(metadata: HashMap<u32, ActorMetadataValue>) -> ActorSnapshot {
-    let pose = ActorPose {
-        position: [0.0; 3],
-        pitch: 0.0,
-        yaw: 0.0,
-        head_yaw: 0.0,
-    };
-    ActorSnapshot {
-        unique_id: -1,
+#[derive(Debug)]
+struct TestActor {
+    runtime_id: u64,
+    spawn_revision: u64,
+    kind: ActorKind,
+    position: [f32; 3],
+    velocity: [f32; 3],
+    pitch: f32,
+    yaw: f32,
+    head_yaw: f32,
+    body_yaw: f32,
+    on_ground: Option<bool>,
+    metadata: HashMap<u32, ActorMetadataValue>,
+    int_properties: HashMap<u32, i32>,
+    float_properties: HashMap<u32, f32>,
+    status: ActorStatus,
+    health: Option<f32>,
+}
+
+impl AnimationActor for TestActor {
+    fn runtime_id(&self) -> u64 {
+        self.runtime_id
+    }
+    fn spawn_revision(&self) -> u64 {
+        self.spawn_revision
+    }
+    fn kind(&self) -> &ActorKind {
+        &self.kind
+    }
+    fn position(&self) -> [f32; 3] {
+        self.position
+    }
+    fn previous_position(&self) -> [f32; 3] {
+        self.position
+    }
+    fn velocity(&self) -> [f32; 3] {
+        self.velocity
+    }
+    fn pitch(&self) -> f32 {
+        self.pitch
+    }
+    fn yaw(&self) -> f32 {
+        self.yaw
+    }
+    fn head_yaw(&self) -> f32 {
+        self.head_yaw
+    }
+    fn body_yaw(&self) -> f32 {
+        self.body_yaw
+    }
+    fn on_ground(&self) -> Option<bool> {
+        self.on_ground
+    }
+    fn metadata(&self) -> &HashMap<u32, ActorMetadataValue> {
+        &self.metadata
+    }
+    fn int_properties(&self) -> &HashMap<u32, i32> {
+        &self.int_properties
+    }
+    fn float_properties(&self) -> &HashMap<u32, f32> {
+        &self.float_properties
+    }
+    fn status(&self) -> &ActorStatus {
+        &self.status
+    }
+    fn health(&self) -> Option<f32> {
+        self.health
+    }
+    fn max_health(&self) -> Option<f32> {
+        Some(300.0)
+    }
+}
+
+fn actor_with_metadata(metadata: HashMap<u32, ActorMetadataValue>) -> TestActor {
+    TestActor {
         runtime_id: 1,
         spawn_revision: 1,
-        movement_revision: 0,
         kind: ActorKind::Entity {
             identifier: "minecraft:test".into(),
         },
@@ -34,23 +99,17 @@ fn actor_with_metadata(metadata: HashMap<u32, ActorMetadataValue>) -> ActorSnaps
         pitch: 0.0,
         yaw: 0.0,
         head_yaw: 0.0,
-        previous_pose: pose,
-        received_pose: pose,
-        interpolation_ticks_remaining: 0,
         body_yaw: 0.0,
         on_ground: Some(false),
-        teleported: false,
-        player_mode: None,
-        source_tick: None,
         metadata,
-        attributes: HashMap::new(),
         int_properties: HashMap::new(),
         float_properties: HashMap::new(),
         status: Default::default(),
+        health: None,
     }
 }
 
-fn read(actor: &ActorSnapshot, input: &ActorTickInput, life_tick: u64, name: &str) -> f32 {
+fn read(actor: &TestActor, input: &ActorTickInput, life_tick: u64, name: &str) -> f32 {
     read_with(
         actor,
         input,
@@ -63,7 +122,7 @@ fn read(actor: &ActorSnapshot, input: &ActorTickInput, life_tick: u64, name: &st
 }
 
 fn read_with(
-    actor: &ActorSnapshot,
+    actor: &TestActor,
     input: &ActorTickInput,
     context: &ActorTickContext,
     life_tick: u64,
@@ -452,7 +511,7 @@ fn camera_rotation_reads_the_fed_view_and_xp_orb_frames_follow_value() {
         ..ActorTickContext::default()
     };
     let mut orb = actor_with_metadata(HashMap::from([(15, ActorMetadataValue::Int(20))]));
-    let number = |actor: &ActorSnapshot, name: &str, arguments: &[MolangValue]| {
+    let number = |actor: &TestActor, name: &str, arguments: &[MolangValue]| {
         read_with(actor, &input, &context, 0, name, arguments)
     };
     assert_eq!(
@@ -508,17 +567,7 @@ fn state_queries_read_target_swell_shield_and_death() {
     actor.status.death_time = 9;
     assert_eq!(read(&actor, &input, 0, "query.death_ticks"), 9.0);
     assert_eq!(read(&actor, &input, 0, "query.is_shield_powered"), 0.0);
-    actor.attributes.insert(
-        "minecraft:health".into(),
-        protocol::ActorAttribute {
-            name: "minecraft:health".into(),
-            min: 0.0,
-            max: 300.0,
-            current: 150.0,
-            default: None,
-            modifiers: Arc::from([]),
-        },
-    );
+    actor.health = Some(150.0);
     assert_eq!(read(&actor, &input, 0, "query.is_shield_powered"), 1.0);
 }
 
@@ -625,7 +674,6 @@ fn charged_hand_and_bed_rotation_queries_read_their_feeds() {
 
 #[test]
 fn property_query_resolves_names_against_synced_definitions() {
-    use crate::actor_store::properties::{PropertyDefinition, PropertyKind};
     let mut actor = actor_with_metadata(HashMap::new());
     actor.int_properties.insert(0, 1);
     actor.int_properties.insert(1, 1);

@@ -8,7 +8,28 @@ use assets::{
 };
 use serde_json::Value;
 
-use super::{PendingGeometry, PendingSymbol, insert_symbol, invalid};
+use super::{PendingGeometry, PendingSymbol, STOCK_GEOMETRY_SOURCE, insert_symbol, invalid};
+
+/// The legacy stock file supplies missing player models. Definitions in the
+/// modern entity family retain authority for names present in both sources.
+pub(super) fn select_stock_geometry(
+    symbols: &mut BTreeMap<(EntityAssetKind, Box<str>, Box<str>), PendingSymbol>,
+    geometries: &mut BTreeMap<(Box<str>, Box<str>), PendingGeometry>,
+) {
+    let modern = geometries
+        .values()
+        .filter(|geometry| geometry.source_path.as_ref() != STOCK_GEOMETRY_SOURCE)
+        .map(|geometry| geometry.identifier.clone())
+        .collect::<std::collections::BTreeSet<_>>();
+    geometries.retain(|(identifier, source), _| {
+        source.as_ref() != STOCK_GEOMETRY_SOURCE || !modern.contains(identifier)
+    });
+    symbols.retain(|(kind, identifier, source), _| {
+        *kind != EntityAssetKind::Geometry
+            || source.as_ref() != STOCK_GEOMETRY_SOURCE
+            || !modern.contains(identifier)
+    });
+}
 
 pub(super) fn parse_geometry(
     relative_path: &str,

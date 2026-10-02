@@ -640,23 +640,9 @@ impl Painter<'_> {
                 }
                 let total = number("#progress_bar_total_amount").filter(|total| *total > 0.0)?;
                 let fraction = (number("#progress_bar_current_amount")? / total).clamp(0.0, 1.0);
-                // Track then fill; the fill hue sweeps green to red with wear.
-                let track = [dest[0], dest[1], dest[2], dest[3] + (dest[3] - dest[1])];
-                self.solid(track, alpha([0, 0, 0, 255])).ok()?;
-                let width = (dest[2] - dest[0]) * fraction as f32;
-                let fill = [dest[0], dest[1], dest[0] + width, dest[3]];
-                // A loading bar names its colour; an item's durability bar sweeps its hue.
-                let color = data
-                    .get("primary_color")
-                    .and_then(json_ui::color_value)
-                    .unwrap_or_else(|| durability_color(fraction));
-                Some((
-                    UiVisual::Solid {
-                        texture_page: self.solid_page,
-                        color: alpha(color),
-                    },
-                    fill,
-                ))
+                let color = data.get("primary_color").and_then(json_ui::color_value);
+                ui::native_hud::paint_progress(self, dest, fraction, color, &alpha);
+                None
             }
             // Messaging art is drawn as its first frame.
             "animated_gif_renderer" => {
@@ -971,12 +957,4 @@ pub(super) fn active_codes(text: &str) -> String {
         }
     }
     codes
-}
-
-/// Durability colour: hue from green (full) to red (worn); needs native measurement.
-fn durability_color(fraction: f64) -> [u8; 4] {
-    let hue = (fraction / 3.0) * 6.0;
-    let x = (1.0 - (hue % 2.0 - 1.0).abs()) as f32;
-    let (r, g) = if hue < 1.0 { (1.0, x) } else { (x, 1.0) };
-    [(r * 255.0) as u8, (g * 255.0) as u8, 0, 255]
 }

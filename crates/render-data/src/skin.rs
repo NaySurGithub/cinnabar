@@ -1,4 +1,4 @@
-//! Shared classic skin layout conversion, used before alpha validation.
+//! Shared classic skin layout conversion, used before alpha validation and GPU presentation.
 
 /// The authored square texture side for the classic skin layout.
 pub const CLASSIC_SKIN_SIDE: usize = 64;

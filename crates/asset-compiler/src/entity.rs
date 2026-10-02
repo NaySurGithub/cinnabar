@@ -36,7 +36,7 @@ pub use pack::{
 };
 
 use collect::{collect_family, collect_optional_family, collect_optional_file};
-use geometry::parse_geometry;
+use geometry::{parse_geometry, select_stock_geometry};
 pub(crate) use json::parse_fully_unique_json;
 use json::{parse_semantic_json, parse_unique_json};
 pub(crate) use source::{open_source_handle, read_bounded_source};
@@ -61,6 +61,7 @@ pub struct EntityAssetCompilation {
 
 const MAX_SOURCE_MANIFEST_BYTES: usize = 1024 * 1024;
 const MAX_ENTITY_SOURCE_DIRECTORY_DEPTH: usize = 32;
+const STOCK_GEOMETRY_SOURCE: &str = assets::ENTITY_STOCK_GEOMETRY_SOURCE;
 
 #[derive(Clone)]
 struct PendingSymbol {
@@ -101,6 +102,7 @@ pub fn compile_entity_assets_with_report(
     let mut selected = Vec::new();
     collect_family(root, "entity", &["json"], &mut selected)?;
     collect_family(root, "models/entity", &["json"], &mut selected)?;
+    collect_optional_file(root, STOCK_GEOMETRY_SOURCE, &mut selected)?;
     collect_family(root, "animations", &["json"], &mut selected)?;
     collect_family(root, "animation_controllers", &["json"], &mut selected)?;
     collect_family(root, "render_controllers", &["json"], &mut selected)?;
@@ -208,6 +210,7 @@ pub fn compile_entity_assets_with_report(
         source_bytes: legacy_bytes.len() as u32,
         source_sha256: Sha256::digest(legacy_bytes).into(),
     });
+    select_stock_geometry(&mut symbols, &mut geometries);
     assemble(
         root,
         sources,
@@ -505,7 +508,9 @@ fn parse_source(
         return Ok(());
     }
 
-    let value = if relative_path.starts_with("models/entity/") {
+    let geometry_source =
+        relative_path.starts_with("models/entity/") || relative_path == STOCK_GEOMETRY_SOURCE;
+    let value = if geometry_source {
         parse_fully_unique_json(absolute_path, bytes)?
     } else {
         parse_unique_json(absolute_path, bytes)?
@@ -518,7 +523,7 @@ fn parse_source(
             &["format_version", "minecraft:client_entity"],
         )?;
         parse_entity(relative_path, absolute_path, &value, symbols)
-    } else if relative_path.starts_with("models/entity/") {
+    } else if geometry_source {
         parse_geometry(
             relative_path,
             absolute_path,

@@ -1,6 +1,7 @@
 //! Retained UI preparation regression and timing fixture.
 use super::*;
 use bevy::ecs::system::RunSystemOnce;
+use bevy::platform::time::Instant;
 
 /// Builds a large immutable HUD in the no-op renderer.
 fn retained_world() -> World {
@@ -68,7 +69,7 @@ fn retained_publication_rejects_conflicting_identity_and_missing_buffers() {
 fn frame_cost_bench_retained_ui_preparation() {
     let mut world = retained_world();
     let system = world.register_system(prepare_ui_resources);
-    let started = std::time::Instant::now();
+    let started = Instant::now();
     for _ in 0..2_000 {
         world.run_system(system).unwrap();
     }

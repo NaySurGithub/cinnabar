@@ -4,18 +4,34 @@ Current execution order: [playable multiplayer track](docs/tracking/playable-mul
 This preserves the full scope below; historical snapshots are not current runtime acceptance.
 
 2026-10-01 web spectator: optional read-only extension under
-`tools/web-spectator`, with browser arena geometry built by Cinnabar's existing
-palette-native world store, runtime asset overlays and greedy chunk mesher.
-The server publishes active duel snapshots; the website owns its viewer camera
-and live fighter presentation. No browser game login, lobby/FFA map, player
-input or per-viewer desktop client is included. Incomplete: named flat colors
-and solid-cube terrain are diagnostic approximations. The existing Cinnabar
-invisible-block classifier is shared with the viewer; invisible terrain draws
-nothing and does not cull neighboring faces. Vanilla textures,
-transparent/partial block models, liquids, world lighting, full actor animation,
-equipment and version-matched native visual/performance parity are not provided.
-This extension closes no vanilla parity gate. Build/runtime admission limits
-are documented in `tools/web-spectator/wasm/README.md`.
+`tools/web-spectator`, runs the actual renderer library through browser WASM
+and WebGPU. The native GPU plugins/shaders own terrain, compiled actor rigs,
+armor, held items, main-hand POV and JSON-UI HUD; JavaScript supplies snapshots,
+skins and camera choices. The portable compiled animator uses the native fixed
+20 Hz Molang, motion, swing/hurt and item-use owners with streamed observations.
+POV camera/hand motion uses the native walk bob, turn spring and hurt tilt;
+damage direction is unavailable, so actual-age events use directionless tilt.
+Camera and hand projection share the native default horizontal FOV and
+aspect-correct conversion.
+Public fighter names use the shared native nameplate raster/layout owner and
+billboard GPU pass, preserving default distance and sneaking visibility policy.
+Its glyph raster observes exclusive texel-edge UVs; dirty atlas cells use
+bounded, mapped GPU staging storage instead of the browser texture-write path
+that read back actor vertex words despite correct submitted RGBA pixels.
+Terrain uses the canonical version-matched registry, runtime vanilla carrier,
+palette-native store and full 26-neighbour cube/model/liquid mesher. Runtime
+carriers are prepared with existing asset compiler owners (including official
+stock player geometry in `models/mobs.json`) and served as
+immutable mounted artifacts, never committed Mojang payloads. Each viewer
+document owns its Winit event loop; iframe removal disposes its rendering state.
+The earlier named-flat-color geometry binding remains diagnostic only and is
+not a fallback. No browser game login, lobby/FFA map, gameplay input or
+per-viewer desktop client is included. Incomplete: streamed biome/light/weather
+inputs, directed camera damage, complete first-person appearance and
+version-matched native visual/performance parity. WebGPU unsupported devices
+receive an explicit error. This extension closes no vanilla parity gate.
+Build/runtime admission limits and the JS contract are documented in
+`tools/web-spectator/wasm/README.md`.
 
 2026-10-01 menu scene ownership: gameplay input uses the screen absorption policy;
 world queues and both first-person paths obey game visibility. Pack flags retain

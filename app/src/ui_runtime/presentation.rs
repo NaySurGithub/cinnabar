@@ -73,7 +73,9 @@ pub(crate) use debug_overlay::DebugLines;
 pub(crate) use forms::{BedHit, ChatHit, LoadingStage, drive_menu_panorama};
 pub(crate) use gui_scale_settings::apply_gui_scale_setting;
 pub(crate) use hud_layout::HudFrame;
-use hud_layout::{HudGeometry, HudLayout, gui_scale};
+#[cfg(test)]
+use hud_layout::gui_scale;
+use hud_layout::{HudGeometry, HudLayout};
 use primitives::{bounded_visible_text, rect, resolve_chat_line};
 #[cfg(test)]
 pub(crate) use publish::refresh_hud_frame;
@@ -93,8 +95,9 @@ use texture_atlas::{
     font_texture_array_with_optional_hud,
 };
 
-const TEXT_CACHE_ENTRIES: usize = 1_024;
-const TEXT_CACHE_BYTES: usize = 8 * 1024 * 1024;
+use ui::{
+    DEFAULT_TEXT_CACHE_BYTES as TEXT_CACHE_BYTES, DEFAULT_TEXT_CACHE_ENTRIES as TEXT_CACHE_ENTRIES,
+};
 const MAX_PRESENTED_TEXT_BYTES: usize = 512;
 #[derive(Debug)]
 pub enum UiPresentationError {

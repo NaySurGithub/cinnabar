@@ -1,3 +1,5 @@
+use bevy::platform::time::Instant;
+
 use super::*;
 
 /// Creates distinct geometry bytes for catalog identity and snapshot checks.
@@ -133,7 +135,7 @@ fn catalog_registration_threshold_bench() {
         }
         let before = catalog.vertices.clone();
         let added = geometry(255);
-        let start = std::time::Instant::now();
+        let start = Instant::now();
         catalog.append(vec![added], 2).unwrap();
         elapsed += start.elapsed();
         copied_vertices += catalog

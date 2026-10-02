@@ -24,9 +24,9 @@ use bevy::{
             ColorTargetState, ColorWrites, CompareFunction, DepthStencilState, Extent3d,
             FilterMode, FragmentState, PipelineCache, RenderPipeline, RenderPipelineDescriptor,
             Sampler, SamplerBindingType, SamplerDescriptor, ShaderStages, ShaderType, Specializer,
-            SpecializerKey, TexelCopyBufferLayout, TextureAspect, TextureDescriptor,
-            TextureDimension, TextureFormat, TextureSampleType, TextureUsages, TextureView,
-            TextureViewDescriptor, TextureViewDimension, Variants, VertexState,
+            SpecializerKey, TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType,
+            TextureUsages, TextureView, TextureViewDescriptor, TextureViewDimension, Variants,
+            VertexState,
         },
         renderer::{RenderDevice, RenderQueue},
         sync_world::MainEntity,
@@ -40,6 +40,8 @@ use crate::nametag::{
 
 const NAMETAG_SHADER_HANDLE: Handle<Shader> = uuid_handle!("5d1f0c8e-2a47-4b93-9e6c-1f7a3b8d4c20");
 const RECORD_BYTES: usize = std::mem::size_of::<NametagRecord>();
+
+mod uploads;
 
 pub(crate) fn install_nametag_render(app: &mut App) {
     app.init_resource::<NametagScene>()
@@ -127,6 +129,7 @@ fn init_nametag_gpu(mut commands: Commands, render_device: Res<RenderDevice>) {
 
 fn prepare_nametags(
     scene: Res<NametagScene>,
+    render_device: Res<RenderDevice>,
     render_queue: Res<RenderQueue>,
     mut gpu: ResMut<NametagGpu>,
 ) {
@@ -143,28 +146,12 @@ fn prepare_nametags(
     if Arc::ptr_eq(&scene.atlas, &gpu.atlas) {
         return;
     }
-    for rectangle in NametagAtlasRect::updates(&scene.atlas, &gpu.atlas) {
-        let [x, y, width, height] = rectangle.cell;
-        render_queue.write_texture(
-            bevy::render::render_resource::TexelCopyTextureInfo {
-                texture: &gpu.atlas_texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d { x, y, z: 0 },
-                aspect: TextureAspect::All,
-            },
-            &rectangle.rgba8,
-            TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(width * 4),
-                rows_per_image: Some(height),
-            },
-            Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-        );
-    }
+    uploads::upload(
+        &render_device,
+        &render_queue,
+        &gpu.atlas_texture,
+        NametagAtlasRect::updates(&scene.atlas, &gpu.atlas),
+    );
     gpu.atlas = Arc::clone(&scene.atlas);
 }
 

@@ -43,7 +43,7 @@ pub const MAX_ACTOR_ATTRIBUTE_MODIFIERS: usize = 64;
 pub const MAX_ACTOR_METADATA_STRING_BYTES: usize = 4_096;
 pub const MAX_ACTOR_METADATA_NBT_BYTES: usize = 1_048_576;
 pub const MAX_PLAYER_LIST_RECORDS: usize = 4_096;
-pub const MAX_STANDARD_SKIN_SIDE: u32 = 512;
+pub use render_data::MAX_STANDARD_SKIN_SIDE;
 pub const MAX_PLAYER_LIST_SKIN_BYTES: usize = 64 * 1024 * 1024;
 
 /// Actor-data id of the primary 64-bit actor flag word.
@@ -61,11 +61,7 @@ const ACTOR_DATA_ID_FLAGS: u32 = 0;
 /// `minecraft/protocol/entity_metadata.go`: `EntityDataKeyFlagsTwo` (92).
 const ACTOR_DATA_ID_FLAGS_EXTENDED: u32 = 92;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ActorKind {
-    Player { uuid: [u8; 16], username: Arc<str> },
-    Entity { identifier: Arc<str> },
-}
+pub use render_data::ActorKind;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ActorAttribute {
@@ -99,20 +95,7 @@ pub struct ActorMetadata {
     pub value: ActorMetadataValue,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum ActorMetadataValue {
-    Byte(i8),
-    Short(i16),
-    Int(i32),
-    Float(f32),
-    String(Arc<str>),
-    Compound(Arc<[u8]>),
-    BlockPosition([i32; 3]),
-    Long(i64),
-    Vector([f32; 3]),
-    Flags(u64),
-    FlagsExtended(u64),
-}
+pub use render_data::ActorMetadataValue;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ActorSpawnEvent {

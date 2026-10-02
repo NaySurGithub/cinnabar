@@ -1,4 +1,4 @@
-use std::f32::consts::{PI, TAU};
+use std::f32::consts::TAU;
 
 use bevy::{
     anti_alias::fxaa::Fxaa,
@@ -46,18 +46,15 @@ pub use overlay::{
     VisionEffects, compute_overlays,
 };
 pub use presentation::{FirstPersonHandMotion, ScreenEffectFacts};
+pub use render::camera::{DEFAULT_HORIZONTAL_FOV_RADIANS, horizontal_fov_to_vertical};
 pub use server_view::{ServerCameraSkips, ServerCameraView};
 
 pub const PITCH_LIMIT: f32 = 89.9_f32.to_radians();
-pub const DEFAULT_HORIZONTAL_FOV_RADIANS: f32 = 90.0_f32.to_radians();
 /// Radius declared by the pinned `minecraft:camera_orbit` vanilla presets.
 pub const THIRD_PERSON_RADIUS_BLOCKS: f32 = 4.0;
 pub const THIRD_PERSON_COLLISION_RADIUS_BLOCKS: f32 = 0.2;
 pub const THIRD_PERSON_COLLISION_EPSILON_BLOCKS: f32 = 0.001;
 const _: () = assert!(THIRD_PERSON_COLLISION_EPSILON_BLOCKS > 0.0);
-const MIN_FOV_RADIANS: f32 = PI / 180.0;
-const MAX_FOV_RADIANS: f32 = PI - MIN_FOV_RADIANS;
-const DEFAULT_ASPECT_RATIO: f32 = 16.0 / 9.0;
 
 pub const AUTO_FLY_PERIOD_SECONDS: f32 = 24.0;
 pub const AUTO_FLY_MAX_HORIZONTAL_BLOCKS: f32 = 128.0;
@@ -567,23 +564,6 @@ impl Plugin for FlyCameraPlugin {
                 ),
             );
     }
-}
-
-/// Converts the user-facing horizontal FOV to Bevy's aspect-correct vertical
-/// FOV while keeping malformed or zero-size window input finite and valid.
-#[must_use]
-pub fn horizontal_fov_to_vertical(horizontal: f32, aspect: f32) -> f32 {
-    let horizontal = if horizontal.is_finite() {
-        horizontal.clamp(MIN_FOV_RADIANS, MAX_FOV_RADIANS)
-    } else {
-        DEFAULT_HORIZONTAL_FOV_RADIANS
-    };
-    let aspect = if aspect.is_finite() && aspect > 0.0 {
-        aspect
-    } else {
-        DEFAULT_ASPECT_RATIO
-    };
-    (2.0 * ((horizontal * 0.5).tan() / aspect).atan()).clamp(MIN_FOV_RADIANS, MAX_FOV_RADIANS)
 }
 
 fn window_aspect(window: &Window) -> f32 {

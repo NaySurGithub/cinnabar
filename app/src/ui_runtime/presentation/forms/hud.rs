@@ -21,20 +21,7 @@ use super::super::{
 use super::engine::{EngineInputs, EngineOutput, ScreenArt};
 use crate::ui_runtime::UiRuntime;
 
-/// The built-in Java-styled HUD pack: `(pack path, namespace, bytes)`, layered
-/// under every server pack.
-pub(super) const JAVA_HUD_PACK: [(&str, &str, &[u8]); 2] = [
-    (
-        "ui/hud_screen.json",
-        "hud",
-        include_bytes!("../../../../../assets/java-hud/ui/hud_screen.json"),
-    ),
-    (
-        "ui/scoreboards.json",
-        "scoreboard",
-        include_bytes!("../../../../../assets/java-hud/ui/scoreboards.json"),
-    ),
-];
+pub(super) use ui::native_hud::JAVA_HUD_PACK;
 
 /// Chat lines stay this long before their one-second fade (Java: 200 ticks).
 const CHAT_LIFETIME_SECONDS: f64 = 10.0;

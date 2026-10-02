@@ -1,6 +1,7 @@
 use semantic_input::{ControlSettings, PerspectiveMode};
 
 pub const CURRENT_SETTINGS_SCHEMA: u32 = 2;
+pub const DEFAULT_HORIZONTAL_FOV_DEGREES: f32 = 90.0;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct UserSettings {
@@ -41,7 +42,7 @@ pub struct VideoSettings {
 impl Default for VideoSettings {
     fn default() -> Self {
         Self {
-            horizontal_fov_degrees: 90.0,
+            horizontal_fov_degrees: DEFAULT_HORIZONTAL_FOV_DEGREES,
             fullscreen: false,
             frame_cap: None,
             vsync: true,

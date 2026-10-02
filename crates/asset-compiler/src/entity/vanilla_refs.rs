@@ -37,6 +37,8 @@ pub fn compile_vanilla_entity_refs(root: &Path) -> Result<VanillaEntityRefs, Ass
         }
     }
     let mut files = Vec::new();
+    // Insert legacy references first so modern definitions with the same name win.
+    collect_optional_file(root, STOCK_GEOMETRY_SOURCE, &mut files)?;
     collect_optional_family(root, "models/entity", &["json"], &mut files)?;
     for (relative, absolute) in files {
         let bytes = read_bounded_source(root, &absolute)?;
@@ -79,6 +81,8 @@ pub fn compile_vanilla_entity_refs(root: &Path) -> Result<VanillaEntityRefs, Ass
         for (id, parent) in identifiers {
             if let Some(parent) = parent {
                 refs.geometry_parent.insert(id.clone(), parent);
+            } else {
+                refs.geometry_parent.remove(&id);
             }
             refs.geometry_index.insert(id, index);
         }

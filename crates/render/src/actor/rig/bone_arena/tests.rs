@@ -1,3 +1,5 @@
+use bevy::platform::time::Instant;
+
 use super::*;
 use crate::actor::rig::{
     ActorDrawManifestEntry, ActorGpuInstance, ActorRenderIdentity, ActorRigFrameBuilder,
@@ -197,7 +199,7 @@ fn frame_cost_bench_actor_bone_arena_50x64() {
             [true, false]
         };
         for optimized in order {
-            let started = std::time::Instant::now();
+            let started = Instant::now();
             let mut valid = true;
             for _ in 0..50 {
                 let mut previous_arena = Vec::new();

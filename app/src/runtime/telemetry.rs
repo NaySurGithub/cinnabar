@@ -9,9 +9,7 @@ use bevy::{
     diagnostic::{DiagnosticPath, DiagnosticsStore},
     ecs::system::SystemParam,
     log::info,
-    prelude::{
-        EulerRot, Local, Quat, Query, Res, ResMut, Resource, Time, Transform, Vec3, Window, With,
-    },
+    prelude::{EulerRot, Local, Query, Res, ResMut, Resource, Time, Transform, Vec3, Window, With},
     time::Real,
     window::{CursorOptions, PrimaryWindow},
     winit::{UpdateMode, WinitSettings},
@@ -292,14 +290,7 @@ fn packed_biome_record_hash(record: &PackedBiomeRecord) -> u64 {
     })
 }
 
-pub(crate) fn bedrock_camera_rotation(yaw_degrees: f32, pitch_degrees: f32) -> Quat {
-    Quat::from_euler(
-        EulerRot::YXZ,
-        (180.0 - yaw_degrees).to_radians(),
-        -pitch_degrees.to_radians(),
-        0.0,
-    )
-}
+pub(crate) use render::bedrock_camera_rotation;
 
 pub(crate) fn send_player_auth_inputs(
     network: Res<NetworkHandle>,

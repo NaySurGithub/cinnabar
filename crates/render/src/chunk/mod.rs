@@ -1,3 +1,4 @@
+use bevy::platform::time::Instant;
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque, hash_map::Entry},
     ops::Range,
@@ -5,7 +6,7 @@ use std::{
         Arc, Mutex,
         mpsc::{Receiver, SyncSender, sync_channel},
     },
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use assets::{
@@ -60,8 +61,8 @@ use bevy::{
         },
     },
 };
-use client_world::{PublicationPermit, PublicationPermitStage, PublicationServiceConfig};
 use meshing::{ChunkBiomeTintIdentity, Face, chunk_publication_byte_len};
+use render_data::{PublicationPermit, PublicationPermitStage, PublicationServiceConfig};
 use world::SubChunkKey;
 
 use crate::{
@@ -90,6 +91,7 @@ mod publication_test_support;
 mod queue;
 mod textures;
 mod transparent;
+pub use pipeline::layouts::required_chunk_storage_buffers_per_shader_stage;
 
 use constants::{
     BIOME_TINT_SHADER_HANDLE, BIOME_WORD_BYTES, CHUNK_ORIGIN_BYTES, CHUNK_SHADER_HANDLE,

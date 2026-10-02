@@ -373,6 +373,10 @@ struct CacheEntry {
     last_used: u64,
 }
 
+/// Default retained text budget shared by native and browser presentation.
+pub const DEFAULT_TEXT_CACHE_ENTRIES: usize = 1_024;
+pub const DEFAULT_TEXT_CACHE_BYTES: usize = 8 * 1024 * 1024;
+
 pub struct TextLayoutCache {
     entry_cap: usize,
     byte_cap: usize,

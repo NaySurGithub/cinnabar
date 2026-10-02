@@ -6,7 +6,7 @@ pub(super) fn reselect_geometry(
     assets: &RuntimeEntityAssets,
     layout: &VariableLayout,
     state: &mut ActorRigState,
-    actor: &ActorSnapshot,
+    actor: &dyn AnimationActor,
     context: &ActorTickContext,
     budget: &mut EvalBudget<'_>,
 ) {

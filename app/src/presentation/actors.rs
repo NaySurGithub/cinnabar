@@ -12,7 +12,7 @@ use render::{
 };
 
 /// Damage tint blended over a hurt or dying actor.
-const HURT_OVERLAY_RGBA: [f32; 4] = [1.0, 0.0, 0.0, client_world::HURT_OVERLAY_ALPHA];
+use render::HURT_OVERLAY_RGBA;
 
 #[derive(Clone, Debug)]
 pub(crate) struct ActorRigPresentation {
@@ -608,12 +608,7 @@ pub(crate) fn rig_world_from_actor(
     yaw_degrees: f32,
     scale: f32,
 ) -> [[f32; 4]; 3] {
-    let (sine, cosine) = yaw_degrees.to_radians().sin_cos();
-    [
-        [-cosine * scale, 0.0, sine * scale, position[0]],
-        [0.0, scale, 0.0, position[1]],
-        [-sine * scale, 0.0, -cosine * scale, position[2]],
-    ]
+    render::equipment_display::rig_world_from_actor(position, yaw_degrees, scale)
 }
 
 /// Scales the model's own axes (`scaleX`, `scaleY`, `scaleZ`) about its feet.

@@ -23,7 +23,7 @@ use crate::{
     melee::SwingTracker,
     presentation::actors::{
         ActorRigPresentation, local_actor_presentation_for_visibility,
-        local_diagnostic_presentation, rig_world_from_actor, select_actor_presentations_for_view,
+        local_diagnostic_presentation, select_actor_presentations_for_view,
     },
     presentation::equipment::{
         EquipmentPresentation, EquipmentRuntime, FirstPersonArms, FirstPersonHand, FirstPersonItem,
@@ -58,23 +58,11 @@ pub(crate) const HAND_FOV_DEGREES: f32 = 70.0;
 /// Vanilla draws the first-person rig in view space as a zero-yaw actor, feet one eye height
 /// below the camera; the pack's first-person arm offsets are authored for that facing.
 fn hand_camera_from_rig(scale: f32, motion: Mat4) -> [[f32; 4]; 3] {
-    let rows = rig_world_from_actor(
-        [
-            0.0,
-            -crate::local_player::LOCAL_AVATAR_EYE_HEIGHT_BLOCKS,
-            0.0,
-        ],
-        0.0,
+    render::equipment_display::hand_camera_from_rig(
         scale,
-    );
-    let placement = Mat4::from_cols_array_2d(&[
-        [rows[0][0], rows[1][0], rows[2][0], 0.0],
-        [rows[0][1], rows[1][1], rows[2][1], 0.0],
-        [rows[0][2], rows[1][2], rows[2][2], 0.0],
-        [rows[0][3], rows[1][3], rows[2][3], 1.0],
-    ]);
-    let composed = (motion * placement).transpose().to_cols_array_2d();
-    [composed[0], composed[1], composed[2]]
+        crate::local_player::LOCAL_AVATAR_EYE_HEIGHT_BLOCKS,
+        motion,
+    )
 }
 
 /// Rebuilds the scene's pack geometry and artwork for a new session, or restores the
@@ -793,33 +781,9 @@ fn publish_hand_rig(
     }
 }
 
-/// Camera-space rows for a first-person item placed by its own view transform under `motion`.
-fn view_placement(motion: Mat4) -> [[f32; 4]; 3] {
-    let rows = motion.transpose().to_cols_array_2d();
-    [rows[0], rows[1], rows[2]]
-}
+use render::equipment_display::hand_view_placement as view_placement;
 
-/// The arm's state at `partial_tick` between the rig's last two ticks, as `renderFirstPerson`
-/// interpolates it: the swing wraps forward past its end, and an eat or drink use of
-/// `consume_ticks` counts from its first using tick.
-fn hand_progress(
-    hand: [client_world::HandPhase; 2],
-    consume_ticks: Option<u32>,
-    partial_tick: f32,
-) -> FirstPersonHand {
-    let [previous, current] = hand;
-    let mut swing = current.attack_time - previous.attack_time;
-    if swing < 0.0 {
-        swing += 1.0;
-    }
-    FirstPersonHand {
-        swing: previous.attack_time + swing * partial_tick,
-        equip: previous.arm_height + (current.arm_height - previous.arm_height) * partial_tick,
-        consume: consume_ticks
-            .filter(|_| current.use_ticks > 0)
-            .map(|ticks| (current.use_ticks as f32 - 1.0 + partial_tick, ticks as f32)),
-    }
-}
+use render::equipment_display::hand_progress;
 
 /// What the first-person pass draws: arm-masked body pose and/or a held item with its atlas page
 /// and whether its bone is in camera space.
@@ -833,14 +797,11 @@ struct HandSource {
 
 /// Vanilla's hand stack order: hurt tilt, walk bob, then sway about X and Y.
 fn hand_motion_matrix(motion: &crate::camera::FirstPersonHandMotion) -> Mat4 {
-    motion.hurt
-        * motion.bob.matrix()
-        * Mat4::from_rotation_x(motion.sway_pitch_radians)
-        * Mat4::from_rotation_y(motion.sway_yaw_radians)
+    motion.matrix()
 }
 
 /// Marks an instance's texture layer as an item-atlas layer for the first-person shader.
-const HAND_ITEM_LAYER_FLAG: u32 = 0x8000_0000;
+use render::HAND_ITEM_LAYER_FLAG;
 
 /// Builds this frame's client-authored local-player feed from the predicted physics state and
 /// the look pose. The yaw/pitch come from the look input (`LocalViewPose`), never the boomed

@@ -51,11 +51,11 @@ const FLAG_QUERIES: [(&str, u32); 57] = [
     ("is_sneaking", FLAG_SNEAKING),
     ("is_sniffing", 105),
     ("is_sonic_boom", 107),
-    ("is_sprinting", 3),
+    ("is_sprinting", render_data::ACTOR_FLAG_SPRINTING),
     ("is_stalking", 91),
     ("is_standing", 39),
     ("is_stunned", 83),
-    ("is_swimming", 57),
+    ("is_swimming", FLAG_SWIMMING),
     ("is_tamed", 28),
     ("is_using_item", FLAG_USING_ITEM),
     ("show_bottom", 38),
@@ -63,8 +63,8 @@ const FLAG_QUERIES: [(&str, u32); 57] = [
     ("timer_flag_2", 116),
     ("timer_flag_3", 117),
 ];
-pub(super) const FLAG_SNEAKING: u32 = 1;
-pub(super) const FLAG_USING_ITEM: u32 = 4;
+pub(super) use render_data::ACTOR_FLAG_SNEAKING as FLAG_SNEAKING;
+pub(super) use render_data::ACTOR_FLAG_USING_ITEM as FLAG_USING_ITEM;
 pub(super) const FLAG_BABY: u32 = 11;
 pub(super) const FLAG_BLOCKING: u32 = 72;
 pub(super) const FLAG_DAMAGE_NEARBY_MOBS: u32 = 56;
@@ -90,7 +90,7 @@ const KEY_NAME: u32 = 4;
 const KEY_TARGET: u32 = 6;
 const KEY_SWELL: u32 = 19;
 const FLAG_STANDING: u32 = 39;
-pub(super) const FLAG_SWIMMING: u32 = 57;
+pub(super) use render_data::ACTOR_FLAG_SWIMMING as FLAG_SWIMMING;
 
 // Fuse ticks a swell is normalised by; needs independent measurement.
 const SWELL_FULL_TICKS: f32 = 28.0;
@@ -122,7 +122,7 @@ const TARGET_YAW_LIMIT: f32 = 85.0;
 /// Actor state one query reads.
 #[derive(Clone, Copy)]
 pub(super) struct QueryInputs<'a> {
-    pub(super) actor: &'a ActorSnapshot,
+    pub(super) actor: &'a dyn AnimationActor,
     pub(super) input: &'a ActorTickInput,
     pub(super) context: &'a ActorTickContext,
     pub(super) anim_tick: u64,
@@ -146,7 +146,7 @@ pub(super) fn query(
         "get_equipped_item_name" => {
             text(hand_item(evaluator.context, arguments.first()).map(item_name))
         }
-        "get_name" => text(match evaluator.actor.metadata.get(&KEY_NAME) {
+        "get_name" => text(match evaluator.actor.metadata().get(&KEY_NAME) {
             Some(ActorMetadataValue::String(name)) => Some(name.as_ref()),
             _ => None,
         }),
@@ -160,7 +160,7 @@ pub(super) fn query(
 /// The actor's synced property by name: enums read as their value name, everything else as its
 /// stored number; an unsynced or unknown property reads 0.
 fn property(evaluator: &QueryInputs<'_>, name: Option<&MolangValue>) -> MolangValue {
-    use crate::actor_store::properties::PropertyKind;
+    use render_data::PropertyKind;
     let (actor, context) = (evaluator.actor, evaluator.context);
     let Some(MolangValue::String(name)) = name else {
         return MolangValue::Number(0.0);
@@ -174,7 +174,7 @@ fn property(evaluator: &QueryInputs<'_>, name: Option<&MolangValue>) -> MolangVa
     let Some((index, kind)) = found else {
         return MolangValue::Number(0.0);
     };
-    if let Some(value) = actor.float_properties.get(&index) {
+    if let Some(value) = actor.float_properties().get(&index) {
         return MolangValue::Number(*value);
     }
     // Before the server sets it, an actor reads the pack-declared default (0 without one).
@@ -183,7 +183,7 @@ fn property(evaluator: &QueryInputs<'_>, name: Option<&MolangValue>) -> MolangVa
         .as_deref()
         .map_or(0.0, |definitions| definitions[index as usize].default);
     let value = actor
-        .int_properties
+        .int_properties()
         .get(&index)
         .copied()
         .unwrap_or(default as i32);
@@ -194,7 +194,7 @@ fn property(evaluator: &QueryInputs<'_>, name: Option<&MolangValue>) -> MolangVa
             .map_or(MolangValue::Number(0.0), |name| {
                 MolangValue::String(Arc::clone(name))
             }),
-        PropertyKind::Number if !actor.int_properties.contains_key(&index) => {
+        PropertyKind::Number if !actor.int_properties().contains_key(&index) => {
             MolangValue::Number(default)
         }
         PropertyKind::Number => MolangValue::Number(value as f32),
@@ -281,14 +281,14 @@ fn number(evaluator: &QueryInputs<'_>, name: &str, arguments: &[MolangValue]) ->
         "texture_frame_index" => texture_frame_index(actor),
         // Client-derived from the Hurt event; streamed metadata is not authoritative.
         "overlay_alpha" => {
-            if actor.status.overlay_active() {
-                crate::actor_store::HURT_OVERLAY_ALPHA
+            if actor.status().overlay_active() {
+                render_data::HURT_OVERLAY_ALPHA
             } else {
                 0.0
             }
         }
-        "hurt_time" => f32::from(actor.status.hurt_time),
-        "hurt_direction" => actor.status.hurt_direction.unwrap_or(0.0),
+        "hurt_time" => f32::from(actor.status().hurt_time),
+        "hurt_direction" => actor.status().hurt_direction.unwrap_or(0.0),
         "is_carrying_block" => truth(metadata_number(actor, KEY_CARRY_BLOCK).unwrap_or(0.0) != 0.0),
         "main_hand_item_use_duration" => {
             input.item_use_ticks as f32 * ACTOR_TICK_DURATION.as_secs_f32()
@@ -302,7 +302,7 @@ fn number(evaluator: &QueryInputs<'_>, name: &str, arguments: &[MolangValue]) ->
                 .saturating_sub(input.item_use_ticks) as f32
                 * ACTOR_TICK_DURATION.as_secs_f32()
         }
-        "death_ticks" => f32::from(actor.status.death_time),
+        "death_ticks" => f32::from(actor.status().death_time),
         // Ticks stand in for the world clock; only the phase between actors differs.
         "time_stamp" => evaluator.life_tick as f32,
         "has_target" => truth(has_target(actor)),
@@ -311,20 +311,20 @@ fn number(evaluator: &QueryInputs<'_>, name: &str, arguments: &[MolangValue]) ->
         // Wither armor shows below half health.
         "is_shield_powered" => truth(
             actor
-                .attributes
-                .get("minecraft:health")
-                .is_some_and(|health| health.max > 0.0 && health.current <= health.max * 0.5),
+                .health()
+                .zip(actor.max_health())
+                .is_some_and(|(current, max)| max > 0.0 && current <= max * 0.5),
         ),
         "swim_amount" => input.swim_amount,
         // Unsmoothed 0/1 stand-in for the pose blend.
         "standing_scale" => truth(actor_flag(actor, FLAG_STANDING)),
         "is_in_water" => truth(in_water(actor, input)),
-        "sleep_rotation" => actor.status.sleep_rotation.unwrap_or(0.0),
+        "sleep_rotation" => actor.status().sleep_rotation.unwrap_or(0.0),
         // Grows with ground speed; the scale needs independent measurement.
         "cape_flap_amount" => (input.velocity[0].hypot(input.velocity[2]) * 4.0).clamp(0.0, 1.0),
         "has_cape" => truth(context.has_cape),
         "item_is_charged" => truth(context.hand_charged),
-        "is_in_lava" => truth(actor.status.fluid.is_some_and(|(_, lava)| lava)),
+        "is_in_lava" => truth(actor.status().fluid.is_some_and(|(_, lava)| lava)),
         "armor_texture_slot" => argument(0).map_or(0.0, |slot| armor_texture_slot(context, slot)),
         "armor_color_slot" => armor_color_slot(context, argument(0), argument(1)),
         "is_on_ground" => truth(input.on_ground),
@@ -337,7 +337,7 @@ fn number(evaluator: &QueryInputs<'_>, name: &str, arguments: &[MolangValue]) ->
         "body_x_rotation" | "target_x_rotation" => input.pitch,
         "target_y_rotation" => {
             if actor.target_rotation_is_absolute() {
-                actor.yaw
+                actor.yaw()
             } else {
                 head_relative_yaw(input, TARGET_YAW_LIMIT)
             }
@@ -457,8 +457,8 @@ fn item_name_matches(context: &ActorTickContext, arguments: &[MolangValue]) -> b
 const KEY_ACTOR_VALUE: u32 = 15;
 
 /// Sprite frame of an experience orb, chosen by its XP value; other actors use frame 0.
-fn texture_frame_index(actor: &ActorSnapshot) -> f32 {
-    let is_orb = matches!(&actor.kind, ActorKind::Entity { identifier } if identifier.as_ref() == "minecraft:xp_orb");
+fn texture_frame_index(actor: &dyn AnimationActor) -> f32 {
+    let is_orb = matches!(&actor.kind(), ActorKind::Entity { identifier } if identifier.as_ref() == "minecraft:xp_orb");
     if !is_orb {
         return 0.0;
     }
@@ -473,16 +473,16 @@ fn texture_frame_index(actor: &ActorSnapshot) -> f32 {
         .unwrap_or(UPPER_BOUNDS.len()) as f32
 }
 
-pub(super) fn has_target(actor: &ActorSnapshot) -> bool {
-    matches!(actor.metadata.get(&KEY_TARGET), Some(ActorMetadataValue::Long(id)) if *id != 0 && *id != -1)
+pub(super) fn has_target(actor: &dyn AnimationActor) -> bool {
+    matches!(actor.metadata().get(&KEY_TARGET), Some(ActorMetadataValue::Long(id)) if *id != 0 && *id != -1)
 }
 
 /// Sampled fluid at the actor when available; otherwise the swimming flag or airborne fish.
-fn in_water(actor: &ActorSnapshot, input: &ActorTickInput) -> bool {
-    if let Some((water, _)) = actor.status.fluid {
+fn in_water(actor: &dyn AnimationActor, input: &ActorTickInput) -> bool {
+    if let Some((water, _)) = actor.status().fluid {
         return water;
     }
-    let aquatic = match &actor.kind {
+    let aquatic = match &actor.kind() {
         ActorKind::Entity { identifier } => {
             let name = identifier.as_ref();
             AQUATIC.contains(&name.strip_prefix("minecraft:").unwrap_or(name))
@@ -492,15 +492,12 @@ fn in_water(actor: &ActorSnapshot, input: &ActorTickInput) -> bool {
     actor_flag(actor, FLAG_SWIMMING) || (aquatic && !input.on_ground)
 }
 
-fn health(actor: &ActorSnapshot) -> Option<f32> {
-    actor
-        .attributes
-        .get("minecraft:health")
-        .map(|health| health.current)
+fn health(actor: &dyn AnimationActor) -> Option<f32> {
+    actor.health()
 }
 
-fn metadata_number(actor: &ActorSnapshot, key: u32) -> Option<f32> {
-    match actor.metadata.get(&key)? {
+fn metadata_number(actor: &dyn AnimationActor, key: u32) -> Option<f32> {
+    match actor.metadata().get(&key)? {
         ActorMetadataValue::Byte(value) => Some(f32::from(*value)),
         ActorMetadataValue::Short(value) => Some(f32::from(*value)),
         ActorMetadataValue::Int(value) => Some(*value as f32),
@@ -510,7 +507,7 @@ fn metadata_number(actor: &ActorSnapshot, key: u32) -> Option<f32> {
     }
 }
 
-pub(super) fn actor_flag(actor: &ActorSnapshot, bit: u32) -> bool {
+pub(super) fn actor_flag(actor: &dyn AnimationActor, bit: u32) -> bool {
     actor.flag(bit)
 }
 

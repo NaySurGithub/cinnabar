@@ -8,6 +8,7 @@ publish = false
 [dependencies]
 anyhow.workspace = true
 bridge = { path = "../bridge" }
+render-data = { path = "../render-data" }
 bytes.workspace = true
 futures.workspace = true
 serde = { version = "1", features = ["derive"] }

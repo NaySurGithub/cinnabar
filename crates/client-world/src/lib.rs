@@ -60,3 +60,6 @@ pub use stream::{
 };
 #[cfg(feature = "publication-test-support")]
 pub use stream::{PublicationFixtureIdentity, PublicationFixtureSnapshot};
+
+/// Portable native item-use classification shared with spectator presentation.
+pub use render_data::item_use;

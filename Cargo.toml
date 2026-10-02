@@ -2,6 +2,7 @@
 members = [
     "app",
     "crates/asset-compiler",
+    "crates/actor-animation",
     "crates/assets",
     "crates/bridge",
     "crates/client-world",
@@ -14,6 +15,7 @@ members = [
     "crates/protocol",
     "crates/resource-pack",
     "crates/render",
+    "crates/render-data",
     "crates/sim",
     "crates/ui",
     "crates/world",

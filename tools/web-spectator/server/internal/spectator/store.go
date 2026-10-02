@@ -17,14 +17,22 @@ type Store struct {
 	closed       map[string]time.Time
 	blockCount   int
 	blockedUntil time.Time
+	skins        map[skinKey]skinEntry
+	skinBytes    int
 }
 
 func NewStore() *Store {
-	return &Store{arenas: make(map[string]*Arena), arenaUsed: make(map[string]time.Time), pending: make(map[string]*assembly), matches: make(map[string]*Live), closed: make(map[string]time.Time)}
+	return &Store{arenas: make(map[string]*Arena), arenaUsed: make(map[string]time.Time), pending: make(map[string]*assembly), matches: make(map[string]*Live), closed: make(map[string]time.Time), skins: make(map[skinKey]skinEntry)}
 }
 
 func (s *Store) Accept(subject string, data []byte, now time.Time) error {
 	switch subject {
+	case SkinSubject:
+		var asset SkinAsset
+		if err := decode(data, &asset); err != nil {
+			return err
+		}
+		return s.acceptSkin(asset, now)
 	case ArenaSubject:
 		var part ArenaPart
 		if err := decode(data, &part); err != nil {
@@ -133,6 +141,7 @@ func (s *Store) Close(id string, now time.Time) {
 	s.mu.Lock()
 	live := s.matches[id]
 	delete(s.matches, id)
+	s.discardSkins(id)
 	// A short tombstone is enough to reject every still-fresh reordered frame.
 	for closedID, stamp := range s.closed {
 		if now.Sub(stamp) > 2*Freshness {
@@ -166,6 +175,12 @@ func (s *Store) Sweep(now time.Time) {
 			s.discardAssembly(id)
 		}
 	}
+	for key, entry := range s.skins {
+		if now.Sub(entry.updated) > skinLifetime {
+			delete(s.skins, key)
+			s.skinBytes -= len(entry.png)
+		}
+	}
 	s.mu.Unlock()
 	for id, match := range live {
 		s.expire(id, match, now)
@@ -185,12 +200,15 @@ func (s *Store) expire(id string, match *Live, now time.Time) {
 	}
 	match.deactivate()
 	delete(s.matches, id)
+	s.discardSkins(id)
 	// Expiry is temporary unavailability, not revoked consent: a new fresh frame
 	// may reopen the match, while old subscribers retain their closed handle.
 }
 
 func (s *Store) CloseAll(now time.Time) {
 	s.mu.Lock()
+	s.skins = make(map[skinKey]skinEntry)
+	s.skinBytes = 0
 	ids := make([]string, 0, len(s.matches))
 	for id := range s.matches {
 		ids = append(ids, id)

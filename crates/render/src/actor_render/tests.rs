@@ -1,3 +1,5 @@
+use bevy::platform::time::Instant;
+
 use std::sync::Arc;
 
 use bevy::{
@@ -175,7 +177,7 @@ fn first_generic_only_frame_prepares_after_an_empty_skin_revision() {
     assert_eq!(gpu.artwork_identity, [3; 32]);
     assert_eq!(gpu.artwork.pages.len(), 1);
     assert!(gpu.artwork.pages[0].bind_group.is_none());
-    let now = std::time::Instant::now();
+    let now = Instant::now();
     assert!(!gate.publish_reserved(old, now, now));
     assert!(gate.drain().is_empty());
 

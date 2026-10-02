@@ -54,6 +54,8 @@ pub const MAX_ENTITY_DEPENDENCIES: usize = 512;
 pub const MAX_ENTITY_ASSET_PATH_BYTES: usize = 512;
 pub const MAX_ENTITY_IDENTIFIER_BYTES: usize = 512;
 pub const MAX_ENTITY_SOURCE_BYTES: usize = 8 * 1024 * 1024;
+/// Legacy vanilla player models outside the modern entity geometry directory.
+pub const ENTITY_STOCK_GEOMETRY_SOURCE: &str = "models/mobs.json";
 pub const MAX_ENTITY_TOTAL_SOURCE_BYTES: usize = 512 * 1024 * 1024;
 pub const MAX_ENTITY_CATALOG_BYTES: usize = 512 * 1024 * 1024;
 pub const MAX_ENTITY_GEOMETRIES: usize = 4_096;
@@ -886,7 +888,10 @@ const fn dependency_asset_kind(kind: EntityDependencyKind) -> EntityAssetKind {
 fn validate_symbol_source(kind: EntityAssetKind, path: &str) -> Result<(), AssetError> {
     let matches = match kind {
         EntityAssetKind::Entity => path.starts_with("entity/") && path.ends_with(".json"),
-        EntityAssetKind::Geometry => path.starts_with("models/entity/") && path.ends_with(".json"),
+        EntityAssetKind::Geometry => {
+            (path.starts_with("models/entity/") && path.ends_with(".json"))
+                || path == ENTITY_STOCK_GEOMETRY_SOURCE
+        }
         EntityAssetKind::Animation => path.starts_with("animations/") && path.ends_with(".json"),
         EntityAssetKind::AnimationController => {
             path.starts_with("animation_controllers/") && path.ends_with(".json")

@@ -1,3 +1,5 @@
+//! Shared linear publication allowance, independent of networking and platform services.
+
 use std::{
     collections::BTreeMap,
     fmt,

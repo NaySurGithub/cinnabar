@@ -42,25 +42,7 @@ pub struct ScreenEffectFacts {
     pub in_portal: bool,
 }
 
-/// First-person hand motion for the equipment lane, all in view space.
-#[derive(Resource, Debug, Clone, Copy, PartialEq)]
-pub struct FirstPersonHandMotion {
-    pub bob: ViewEffect,
-    pub hurt: Mat4,
-    pub sway_pitch_radians: f32,
-    pub sway_yaw_radians: f32,
-}
-
-impl Default for FirstPersonHandMotion {
-    fn default() -> Self {
-        Self {
-            bob: ViewEffect::NONE,
-            hurt: Mat4::IDENTITY,
-            sway_pitch_radians: 0.0,
-            sway_yaw_radians: 0.0,
-        }
-    }
-}
+pub use render::camera::FirstPersonHandMotion;
 
 pub(super) fn collect_fov_inputs(
     input: Res<SemanticInputSnapshot>,
@@ -272,7 +254,7 @@ pub(super) fn apply_camera_presentation(
             vision.nausea,
             settings.feel().distortion_scale,
         ));
-        let effect = hand.hurt * hand.bob.matrix() * nausea;
+        let effect = hand.view_matrix() * nausea;
         if effect != Mat4::IDENTITY && effect.is_finite() {
             pose = Transform::from_matrix(pose.to_matrix() * effect.inverse());
             changed = true;

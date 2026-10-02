@@ -6,14 +6,17 @@ gameplay commands and does not connect a Minecraft player or use a database.
 
 ## HTTP interface
 
-All spectator routes accept only `GET` and `HEAD` and return `Cache-Control:
-no-store`. Browser requests must come from the configured public origin.
+All spectator routes accept only `GET` and `HEAD`. Live duel responses return
+`Cache-Control: no-store`; verified runtime assets use immutable caching. Browser requests must come from the configured public origin.
 
 | Route | Response |
 | --- | --- |
 | `/api/spectator/duels` | `{ "duels": [Frame] }`, containing only fresh, complete matches |
 | `/api/spectator/duels/{id}/arena` | `{id,name,palette,bounds,blocks}` for an active match |
 | `/api/spectator/duels/{id}/events` | SSE `frame` events, followed by `closed` when unavailable |
+| `/api/spectator/duels/{id}/skins/{sha256}` | PNG referenced by a fresh bot fighter; removed with duel consent |
+| `/api/spectator/assets` | Runtime carrier manifest |
+| `/api/spectator/assets/{sha256}/{filename}` | Verified immutable carrier, optionally gzip encoded |
 | `/healthz` | Local process liveness |
 
 The SSE connection sends the current frame immediately. Each subsequent message
@@ -71,3 +74,22 @@ ForwardMe's `dev.zenomc.org` route to `http://10.0.0.69:3002`, and run the separ
 website on port 3001. Do not change the current port-3000 public website. The
 ForwardMe config is loaded at startup; restart just its proxy after adding the
 route. Configure dev DNS for that proxy and verify its certificate before use.
+
+## Appearance and native POV
+
+Frame player records optionally include `equipment` (mainHand, offHand, four
+armour slots), native action timestamps, movement/use flags, skinModel and `pov`.
+POV contains nine hotbar slots, selectedSlot, eyeHeight, food, absorption,
+armourPoints, XP, effects, optional breathing state and public sidebar/popup/title
+HUD snapshots. Items carry namespaced identifiers, metadata, counts, enchantment
+presence, durability and leather color only. No item names/lore or private chat
+are exported. `practice.spectator.v1.skin` carries bounded bot PNGs with content
+hash, dimensions and model. Human skins keep their regular shared API/cooldown.
+
+Generate the runtime carriers with the repository's pinned asset compiler, then
+run `agent-check python3 tools/web-spectator/bundle_assets.py .local/runtime-assets`.
+Set `SPECTATOR_ASSET_DIR` to this immutable release directory and mount it read-only
+in Compose. The loader verifies all eight sizes/hashes, regular file types and gzip
+representations before serving. Assets remain outside Git and container images.
+Downloads share two nonblocking admission slots and a60-second write deadline;
+active duel skin writes retain the three-second consent-atomic limit.

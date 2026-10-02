@@ -1,3 +1,5 @@
+use bevy::platform::time::Instant;
+
 use std::{
     mem::size_of,
     sync::{Arc, Weak},
@@ -115,7 +117,7 @@ pub(crate) struct UiGpu {
     index_arena_id: u64,
     viewport_buffer: Buffer,
     viewport_size: [u32; 2],
-    started: std::time::Instant,
+    started: Instant,
     textures: UiGpuTextures,
     sampler: Sampler,
     batches: Arc<[UiRenderBatch]>,
@@ -160,7 +162,7 @@ fn init_ui_gpu(mut commands: Commands, render_device: Res<RenderDevice>, tick: S
         index_arena_id: 0,
         viewport_buffer,
         viewport_size: [1, 1],
-        started: std::time::Instant::now(),
+        started: Instant::now(),
         textures: UiGpuTextures::default(),
         sampler,
         batches: Arc::from([]),

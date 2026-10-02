@@ -5,21 +5,33 @@ pub use lighting::WorldLighting;
 pub use lightmap::{LightmapInputs, darkness_pulse};
 
 mod actor;
+mod armor_pose;
+pub use armor_pose::{
+    DEFAULT_LEATHER_RGB, bone_map as armor_bone_map, hidden_bone as hidden_armor_bone,
+    pack_tint as pack_armor_tint, remap_pose as armor_remap_pose,
+};
 mod actor_render;
 mod atmosphere;
 mod atmosphere_render;
 mod block_entity;
+pub mod camera;
 mod celestial;
 mod chunk;
+pub use camera::bedrock_camera_rotation;
+pub use chunk::required_chunk_storage_buffers_per_shader_stage;
 mod cloud_config;
 mod cloud_render;
 mod dropped_item;
 mod dropped_item_render;
+pub mod equipment_display;
+pub mod equipment_sprite_atlas;
 mod hand_rig_render;
 mod item_geometry;
 mod lightning;
 mod lightning_render;
 mod nametag;
+mod nametag_atlas;
+mod nametag_layout;
 mod nametag_render;
 mod panorama;
 mod panorama_render;
@@ -29,6 +41,13 @@ mod runtime_profile;
 mod screen_overlay;
 mod screen_overlay_render;
 mod ui;
+mod ui_adapter;
+mod ui_atlas;
+pub use ui_adapter::{UiRenderAdapterError, UiRenderViewport, adapt_ui_draw_list};
+pub use ui_atlas::{
+    HudSprite, HudTexturePages, IconRef, TextureArrayWithIcons, font_texture_array,
+    font_texture_array_with_hud_and_icons, font_texture_array_with_optional_hud, with_ui_pages,
+};
 mod ui_textures;
 
 pub use ui_textures::{
@@ -39,7 +58,9 @@ mod ui_render;
 mod viewmodel;
 mod viewmodel_render;
 
-pub use hand_rig_render::{HandItemAtlas, HandRigLight, HandRigRenderPlugin, HandRigScene};
+pub use hand_rig_render::{
+    HAND_ITEM_LAYER_FLAG, HandItemAtlas, HandRigLight, HandRigRenderPlugin, HandRigScene,
+};
 pub use particles::{
     ATLAS_SIDE as PARTICLE_ATLAS_SIDE, DrawLists as ParticleDrawLists,
     EmptyWorld as EmptyParticleWorld, Fluid as ParticleFluid, LevelParticle, MAX_LIVE_PARTICLES,
@@ -160,6 +181,16 @@ pub use nametag::{
     MAX_NAMETAG_RECORDS, NAMETAG_ATLAS_SIDE, NAMETAG_BLOCKS_PER_FONT_PIXEL,
     NAMETAG_TEXT_LIFT_BLOCKS, NametagAtlasRect, NametagRecord, NametagScene,
 };
+pub use nametag_atlas::{
+    AtlasLine as NametagAtlasLine, GlyphPage as NametagGlyphPage, NametagAtlas,
+    font_page as nametag_font_page,
+};
+pub use nametag_layout::{
+    DEFAULT_NAMEPLATE_DISTANCE, DEFAULT_NAMETAG_HEIGHT, EXTRA_NAMETAG_LINE_RAISE,
+    NAMETAG_HEAD_CLEARANCE, NAMETAG_LINE_PITCH_PX, NAMETAG_PLATE_COLOR, NametagAnchor,
+    SNEAK_NAMETAG_TEXT_ALPHA, build_nametag_scene, default_nametag_box_height, nametag_lines,
+    player_nametag_anchor,
+};
 pub use panorama::{
     MAX_PANORAMA_FACE_SIDE, PANORAMA_WGSL, PanoramaFaces, PanoramaScene, PanoramaView,
 };
@@ -201,3 +232,5 @@ pub use weather::{
 };
 
 mod stars;
+
+pub use render_data::HURT_OVERLAY_RGBA;

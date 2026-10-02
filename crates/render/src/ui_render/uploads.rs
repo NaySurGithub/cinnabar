@@ -1,5 +1,8 @@
 //! Upload only changed UI buffer spans while retaining the last resident bytes.
 
+#[cfg(test)]
+use bevy::platform::time::Instant;
+
 use std::{ops::Range, sync::Arc};
 
 use crate::{UiRenderInput, UiRenderVertex};
@@ -147,12 +150,12 @@ mod tests {
         }
         let indices: Vec<u32> = (0..18_000).collect();
         const FRAMES: u32 = 2_000;
-        let started = std::time::Instant::now();
+        let started = Instant::now();
         for _ in 0..FRAMES {
             std::hint::black_box((new.clone(), indices.clone()));
         }
         let full = started.elapsed() / FRAMES;
-        let started = std::time::Instant::now();
+        let started = Instant::now();
         for _ in 0..FRAMES {
             let vertices = changed_range(&old, &new, false);
             let changed_indices = changed_range(&indices, &indices, false);

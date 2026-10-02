@@ -127,7 +127,7 @@ pub use entity::{
     MolangEaseMode, MolangFunction, MolangOp, MolangSymbol, MolangSymbolKind, RuntimeEntityAssets,
     encode_entity_blob, molang_call, molang_program_stack, validate_entity_geometry_inheritance,
 };
-pub use entity::{PACK_EQUIPMENT_INDEX_BASE, PACK_RIG_ID_BASE};
+pub use entity::{ENTITY_STOCK_GEOMETRY_SOURCE, PACK_EQUIPMENT_INDEX_BASE, PACK_RIG_ID_BASE};
 pub use environment_settings::{CloudQuality, EnvironmentQualitySettings, PrecipitationQuality};
 pub use equipment::{
     ArmorSlot, AttachablePose, AttachablePoseBone, EQUIPMENT_CARRIER_MAGIC,
@@ -193,8 +193,9 @@ pub use physics_registry::{
     physics_registry_header_protocol, read_physics_registry, read_physics_registry_for_protocol,
 };
 pub use provenance::{
-    BlobProvenance, VANILLA_SOURCE_MANIFEST, VanillaSource, canonical_source_manifest_sha256,
-    vanilla_source, vanilla_source_manifest_sha256,
+    BlobProvenance, UI_FONT_SOURCE_MANIFEST, VANILLA_SOURCE_MANIFEST, VanillaSource,
+    canonical_source_manifest_sha256, ui_font_source_manifest_sha256, vanilla_source,
+    vanilla_source_manifest_sha256,
 };
 pub use registry::{
     BlockFlags, CollisionBox, CollisionConfidence, CollisionSeed, ContributorRole, ModelFamily,

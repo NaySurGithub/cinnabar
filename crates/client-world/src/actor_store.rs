@@ -20,8 +20,6 @@ pub(crate) const MAX_TRACKED_ACTOR_LINKS: usize = MAX_TRACKED_ACTORS;
 pub(crate) const MAX_TRACKED_PLAYER_SKIN_BYTES: usize = MAX_PLAYER_LIST_SKIN_BYTES;
 
 // Protocol 1001 metadata keys retained verbatim by ActorSnapshot.
-const PLAYER_FLAGS_METADATA_KEY: u32 = 26;
-const SCALE_METADATA_KEY: u32 = 38;
 const NAMETAG_METADATA_KEY: u32 = 4;
 const BOUNDING_BOX_WIDTH_METADATA_KEY: u32 = 53;
 const BOUNDING_BOX_HEIGHT_METADATA_KEY: u32 = 54;
@@ -30,15 +28,9 @@ const PLAYER_COLLISION_WIDTH: f32 = 0.6;
 const PLAYER_COLLISION_HEIGHT: f32 = 1.8;
 const EXTENDED_FLAGS_METADATA_KEY: u32 = 92;
 pub(crate) const FUSE_TIME_METADATA_KEY: u32 = 55;
-const PLAYER_FLAGS_SLEEPING: u8 = 1 << 1;
 /// Actor flag bits follow gophertunnel v1.61.0 `EntityDataFlag*` (iota from zero); bits from
 /// 64 live in the overflow flag word.
-pub(crate) const ACTOR_FLAG_SLEEPING: u32 = 76;
-const ACTOR_FLAG_SNEAKING: u32 = 1;
 const ACTOR_FLAG_INVISIBLE: u32 = 5;
-const ACTOR_FLAG_SWIMMING: u32 = 57;
-const ACTOR_FLAG_USING_ITEM: u32 = 4;
-const ACTOR_FLAG_SPRINTING: u32 = 3;
 const ACTOR_FLAG_GLIDING: u32 = 32;
 const ACTOR_FLAG_CRAWLING: u32 = 114;
 
@@ -105,8 +97,7 @@ impl ActorSnapshot {
     /// These actors animate their full yaw through the target-rotation queries.
     #[must_use]
     pub fn target_rotation_is_absolute(&self) -> bool {
-        matches!(&self.kind, ActorKind::Entity { identifier } if matches!(identifier.as_ref(),
-            "minecraft:arrow" | "minecraft:fireworks_rocket" | "minecraft:wither_skull" | "minecraft:wither_skull_dangerous"))
+        render_data::target_rotation_is_absolute(&self.kind)
     }
 
     /// The render position `alpha` of the way from the previous tick's pose to the current one,
@@ -321,10 +312,7 @@ impl ActorSnapshot {
     /// absent, non-finite or non-positive value reads 1.
     #[must_use]
     pub fn render_scale(&self) -> f32 {
-        match self.metadata.get(&SCALE_METADATA_KEY) {
-            Some(ActorMetadataValue::Float(scale)) if scale.is_finite() && *scale > 0.0 => *scale,
-            _ => 1.0,
-        }
+        render_data::actor_render_scale(&self.metadata)
     }
 
     #[must_use]
@@ -343,10 +331,7 @@ impl ActorSnapshot {
     }
 
     pub(crate) fn player_is_sleeping(&self) -> bool {
-        let player_flags = self.metadata.get(&PLAYER_FLAGS_METADATA_KEY).is_some_and(
-            |value| matches!(value, ActorMetadataValue::Byte(flags) if (*flags as u8) & PLAYER_FLAGS_SLEEPING != 0),
-        );
-        player_flags || self.flag(ACTOR_FLAG_SLEEPING)
+        render_data::player_is_sleeping(&self.metadata)
     }
 
     /// Whether the using-item flag is set; for the local player's food and drink it is the
@@ -358,17 +343,7 @@ impl ActorSnapshot {
 
     /// Reads one actor flag bit from the primary or overflow flag word.
     pub(crate) fn flag(&self, bit: u32) -> bool {
-        let (key, bit) = if bit < 64 {
-            (0, bit)
-        } else {
-            (EXTENDED_FLAGS_METADATA_KEY, bit - 64)
-        };
-        match self.metadata.get(&key) {
-            Some(ActorMetadataValue::Flags(flags) | ActorMetadataValue::FlagsExtended(flags)) => {
-                flags & (1_u64 << bit) != 0
-            }
-            _ => false,
-        }
+        render_data::actor_flag(&self.metadata, bit)
     }
 
     fn primed_tnt_network_offset(&self) -> f32 {
@@ -647,3 +622,7 @@ mod tests;
 
 #[cfg(test)]
 mod projectile_tests;
+
+use render_data::{
+    ACTOR_FLAG_SNEAKING, ACTOR_FLAG_SPRINTING, ACTOR_FLAG_SWIMMING, ACTOR_FLAG_USING_ITEM,
+};

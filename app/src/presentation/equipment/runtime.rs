@@ -29,7 +29,7 @@ pub(crate) use types::{
 use types::{ArmorGeometry, BodyBones, ElytraStance, MeshKey};
 
 use super::{
-    armor::{DEFAULT_LEATHER_RGB, bone_map, hidden_bone, pack_tint, remap_pose},
+    armor::{DEFAULT_LEATHER_RGB, bone_map, pack_tint, remap_pose},
     atlas::{Placement, SpriteAtlas},
     attachable::{self, BoneChannels},
     blocks::{self, BlockSheets},
@@ -359,16 +359,8 @@ impl EquipmentRuntime {
         {
             return None;
         }
-        let visible = |name: &str| {
-            let is = |wanted: &str| name.eq_ignore_ascii_case(wanted);
-            (arms.right && (is("rightArm") || is("rightSleeve")))
-                || (arms.left && (is("leftArm") || is("leftSleeve")))
-        };
         let mask = |pose: &[RenderBoneTransform]| {
-            pose.iter()
-                .zip(&bones.names)
-                .map(|(bone, name)| if visible(name) { *bone } else { hidden_bone() })
-                .collect::<Vec<_>>()
+            render::equipment_display::mask_first_person_bones(&bones.names, pose, arms)
         };
         let mut masked = body.clone();
         let (previous, current) = (

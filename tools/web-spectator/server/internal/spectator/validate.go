@@ -89,6 +89,9 @@ func validFrame(frame Frame, now time.Time) bool {
 	}
 	ids := make(map[string]struct{}, len(frame.Players))
 	for _, p := range frame.Players {
+		if !validAppearance(p, now) {
+			return false
+		}
 		if !cleanLabel(p.ID, 128) || !cleanLabel(p.Name, 64) || p.Team < 0 || p.Team > 15 || p.Hits < 0 || p.Hits > 1_000_000 || !finite(p.Yaw) || !finite(p.Pitch) || math.Abs(p.Yaw) > 360_000 || math.Abs(p.Pitch) > 360 || !finite(p.Health) || !finite(p.MaxHealth) || p.Health < 0 || p.MaxHealth <= 0 || p.MaxHealth > 4096 || p.Health > p.MaxHealth {
 			return false
 		}

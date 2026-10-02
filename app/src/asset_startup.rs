@@ -56,7 +56,7 @@ pub static COMPILE_COMMAND: std::sync::LazyLock<String> = std::sync::LazyLock::n
 });
 
 const VANILLA_SOURCE_JSON: &str = assets::VANILLA_SOURCE_MANIFEST;
-const UI_FONT_SOURCE_JSON: &str = include_str!("../../assets/ui-font-source.json");
+const UI_FONT_SOURCE_JSON: &str = assets::UI_FONT_SOURCE_MANIFEST;
 const ATMOSPHERE_SHADER_SOURCE: &[u8] = include_bytes!("../../crates/render/src/atmosphere.wgsl");
 const CLOUD_SHADER_SOURCE: &[u8] = include_bytes!("../../crates/render/src/cloud.wgsl");
 const MAX_RUNTIME_BLOB_BYTES: u64 = 16 * 1024 * 1024;

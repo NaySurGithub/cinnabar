@@ -44,6 +44,11 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	store := spectator.NewStore()
+	assets, err := ingress.LoadAssets(os.Getenv("SPECTATOR_ASSET_DIR"))
+	if err != nil {
+		return fmt.Errorf("SPECTATOR_ASSET_DIR: %w", err)
+	}
+	defer assets.Close()
 	options := []nats.Option{nats.Name("cinnabar-web-spectator"), nats.Timeout(5 * time.Second), nats.MaxReconnects(-1), nats.ReconnectWait(time.Second), nats.ReconnectBufSize(0), nats.DisconnectErrHandler(func(_ *nats.Conn, _ error) { store.CloseAll(time.Now()); log.Warn("spectator bus disconnected") }), nats.ErrorHandler(func(_ *nats.Conn, _ *nats.Subscription, _ error) {
 		store.CloseAll(time.Now())
 		log.Warn("spectator subscription lost messages; active views closed")
@@ -71,8 +76,10 @@ func run(log *slog.Logger) error {
 	if err := connection.FlushTimeout(5 * time.Second); err != nil {
 		return errors.New("spectator event subscription did not become ready")
 	}
-	server := &http.Server{Addr: env("SPECTATOR_LISTEN_ADDRESS", "127.0.0.1:3002"), Handler: ingress.New(store, upstream, origin, trusted), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
+	server := &http.Server{Addr: env("SPECTATOR_LISTEN_ADDRESS", "127.0.0.1:3002"), Handler: ingress.New(store, upstream, origin, trusted, assets), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
+	shutdownDone := make(chan struct{})
 	go func() {
+		defer close(shutdownDone)
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
 		for {
@@ -96,6 +103,9 @@ func run(log *slog.Logger) error {
 	log.Info("starting read-only spectator ingress", "address", server.Addr, "origin", origin.String())
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
+	}
+	if ctx.Err() != nil {
+		<-shutdownDone
 	}
 	return nil
 }

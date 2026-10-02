@@ -23,10 +23,14 @@ type Handler struct {
 	trusted   []netip.Prefix
 	limits    *limits
 	downloads chan struct{}
+	assets    *Assets
 }
 
-func New(store *spectator.Store, upstream, origin *url.URL, trusted []netip.Prefix) *Handler {
+func New(store *spectator.Store, upstream, origin *url.URL, trusted []netip.Prefix, assets ...*Assets) *Handler {
 	h := &Handler{store: store, origin: origin, trusted: trusted, limits: newLimits(), downloads: make(chan struct{}, 2)}
+	if len(assets) > 0 {
+		h.assets = assets[0]
+	}
 	h.proxy = &httputil.ReverseProxy{
 		Rewrite: func(r *httputil.ProxyRequest) {
 			r.SetURL(upstream)
@@ -88,6 +92,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer release()
+	if r.URL.Path == "/api/spectator/assets" || strings.HasPrefix(r.URL.Path, "/api/spectator/assets/") {
+		h.assetsRoute(w, r)
+		return
+	}
 	if r.URL.Path == apiPrefix {
 		_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(writeTimeout))
 		_ = h.store.WithList(time.Now(), func(frames []spectator.Frame) error {
@@ -108,13 +116,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, operation, found := strings.Cut(path, "/")
-	if !found || !spectator.ValidID(id) || strings.Contains(operation, "/") {
+	if !found || !spectator.ValidID(id) || (strings.Contains(operation, "/") && !strings.HasPrefix(operation, "skins/")) {
 		failure(w, http.StatusNotFound, "Spectator route not found.")
 		return
 	}
 	live := h.store.Lookup(id)
 	if live == nil {
 		failure(w, http.StatusNotFound, "This duel is no longer available to watch.")
+		return
+	}
+	if hash, ok := strings.CutPrefix(operation, "skins/"); ok {
+		h.skin(w, r, id, hash, live)
 		return
 	}
 	switch operation {

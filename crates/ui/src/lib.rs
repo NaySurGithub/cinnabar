@@ -5,9 +5,12 @@ mod chat;
 mod geometry;
 mod hud;
 mod model;
+pub mod native_hud;
 mod scoreboard;
 mod settings;
 mod text;
+mod text_metrics;
+pub use text_metrics::TextMetrics;
 
 pub use action::{PointerPhase, UiAction, UiLimits};
 pub use chat::{
@@ -38,10 +41,14 @@ pub use scoreboard::{
     ScoreOwner, ScoreRenderType, ScoreRow, ScoreSortOrder, ScoreboardDiagnostics, ScoreboardEvent,
     ScoreboardProjection, ScoreboardStore,
 };
-pub use settings::{CURRENT_SETTINGS_SCHEMA, GameplaySettings, UserSettings, VideoSettings};
+pub use settings::{
+    CURRENT_SETTINGS_SCHEMA, DEFAULT_HORIZONTAL_FOV_DEGREES, GameplaySettings, UserSettings,
+    VideoSettings,
+};
 pub use text::{
-    BedrockColor, FONT_ASCENT_TEXELS, FONT_DESIGN_PIXEL_TEXELS, FONT_INK_TEXELS, GlyphQuad,
-    MAX_GLYPHS_PER_LAYOUT, MAX_TEXT_SPANS, MAX_WRAP_LINES, ObfuscationGlyphs, TEXT_BASELINE_64,
-    TEXT_LINE_HEIGHT_64, TEXT_SHADOW_OFFSET_64, TextError, TextLayout, TextLayoutCache,
-    TextLayoutKey, TextLayoutRequest, TextSpan, TextSpans, TextStyle, parse_bedrock_text,
+    BedrockColor, DEFAULT_TEXT_CACHE_BYTES, DEFAULT_TEXT_CACHE_ENTRIES, FONT_ASCENT_TEXELS,
+    FONT_DESIGN_PIXEL_TEXELS, FONT_INK_TEXELS, GlyphQuad, MAX_GLYPHS_PER_LAYOUT, MAX_TEXT_SPANS,
+    MAX_WRAP_LINES, ObfuscationGlyphs, TEXT_BASELINE_64, TEXT_LINE_HEIGHT_64,
+    TEXT_SHADOW_OFFSET_64, TextError, TextLayout, TextLayoutCache, TextLayoutKey,
+    TextLayoutRequest, TextSpan, TextSpans, TextStyle, parse_bedrock_text,
 };

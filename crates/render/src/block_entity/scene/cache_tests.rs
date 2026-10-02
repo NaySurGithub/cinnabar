@@ -1,3 +1,5 @@
+use bevy::platform::time::Instant;
+
 use super::*;
 use crate::block_entity::{
     chest::{ChestPair, ChestVariant},
@@ -263,7 +265,7 @@ fn frame_cost_bench_block_entity_mixed_scene_400_chests() {
     let frames = 200;
     let mut old_scene = scene();
     old_scene.update(SceneClock::default(), &[], &submissions);
-    let started = std::time::Instant::now();
+    let started = Instant::now();
     for tick in 0..frames {
         let (frame, rejected) = reference_frame(
             &old_scene,
@@ -279,7 +281,7 @@ fn frame_cost_bench_block_entity_mixed_scene_400_chests() {
     let old = started.elapsed() / frames;
     let mut new_scene = scene();
     new_scene.update(SceneClock::default(), &[], &submissions);
-    let started = std::time::Instant::now();
+    let started = Instant::now();
     for tick in 0..frames {
         std::hint::black_box(new_scene.update(
             SceneClock {

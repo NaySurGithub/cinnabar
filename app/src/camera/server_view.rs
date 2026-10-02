@@ -588,12 +588,7 @@ fn axis(explicit: Option<f32>, preset: Option<f32>, current: f32) -> f32 {
 }
 
 fn bedrock_rotation(yaw_degrees: f32, pitch_degrees: f32) -> Quat {
-    Quat::from_euler(
-        EulerRot::YXZ,
-        (180.0 - yaw_degrees).to_radians(),
-        -pitch_degrees.to_radians(),
-        0.0,
-    )
+    render::bedrock_camera_rotation(yaw_degrees, pitch_degrees)
 }
 
 fn look_rotation(from: Vec3, target: Vec3) -> Option<Quat> {

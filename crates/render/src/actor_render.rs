@@ -1,3 +1,5 @@
+use bevy::platform::time::Instant;
+
 use std::mem::size_of;
 mod artwork;
 use artwork::{GpuArtwork, draw_spans};
@@ -922,7 +924,7 @@ fn submit_actor_presented_frame(
         reserved: true,
         acknowledged: false,
     });
-    let present_returned_at = std::time::Instant::now();
+    let present_returned_at = Instant::now();
     let encoder = render_device.create_command_encoder(&CommandEncoderDescriptor {
         label: Some("actor presented-frame completion sentinel"),
     });
@@ -931,7 +933,7 @@ fn submit_actor_presented_frame(
     let callback_witness = witness.clone();
     command_buffer.on_submitted_work_done(move || {
         let acknowledged =
-            callback_gate.publish_reserved(token, present_returned_at, std::time::Instant::now());
+            callback_gate.publish_reserved(token, present_returned_at, Instant::now());
         callback_witness.observe_submit(ActorSubmitWitness {
             drawn_frame: true,
             exact: true,

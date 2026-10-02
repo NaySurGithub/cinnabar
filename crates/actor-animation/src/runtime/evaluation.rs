@@ -248,7 +248,7 @@ impl VariableLayout {
 pub(super) struct Evaluator<'a> {
     pub(super) assets: &'a RuntimeEntityAssets,
     pub(super) layout: &'a VariableLayout,
-    pub(super) actor: &'a ActorSnapshot,
+    pub(super) actor: &'a dyn AnimationActor,
     pub(super) input: &'a ActorTickInput,
     pub(super) context: &'a ActorTickContext,
     pub(super) anim_tick: u64,

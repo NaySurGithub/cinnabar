@@ -245,7 +245,7 @@ pub(in crate::chunk) fn spawn_transparent_sort(
     work: TransparentSortWork,
     profiler: Option<RuntimeStageProfiler>,
 ) {
-    rayon::spawn(move || {
+    spawn_sort(move || {
         let _timer = profiler
             .as_ref()
             .map(|profiler| profiler.time(RuntimeStage::TransparentWorker));
@@ -429,7 +429,7 @@ pub(in crate::chunk) fn spawn_transparent_model_sort(
     sender: SyncSender<TransparentModelWorkerResult>,
     work: TransparentModelSortWork,
 ) {
-    rayon::spawn(move || {
+    spawn_sort(move || {
         let batches = sort_transparent_model_candidates(work.view_from_world, work.candidates);
         let _ = sender.try_send(TransparentModelWorkerResult {
             generation: work.generation,
@@ -437,6 +437,14 @@ pub(in crate::chunk) fn spawn_transparent_model_sort(
             batches,
         });
     });
+}
+
+/// Browser WASM has one thread; preserve the bounded sort and result publication there.
+fn spawn_sort(work: impl FnOnce() + Send + 'static) {
+    #[cfg(not(target_arch = "wasm32"))]
+    rayon::spawn(work);
+    #[cfg(target_arch = "wasm32")]
+    work();
 }
 
 #[allow(clippy::too_many_arguments)]

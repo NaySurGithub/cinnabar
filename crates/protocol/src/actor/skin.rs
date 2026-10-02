@@ -6,9 +6,8 @@ use super::{MAX_PLAYER_LIST_SKIN_BYTES, MAX_STANDARD_SKIN_SIDE};
 
 mod alpha;
 mod animation;
-mod legacy;
 pub use animation::{MAX_SKIN_ANIMATION_LAYERS, SkinAnimation, SkinAnimationKind};
-pub use legacy::{CLASSIC_SKIN_SIDE, MAX_CLASSIC_SKIN_SIDE, expand_legacy_skin_rgba8};
+pub use render_data::{CLASSIC_SKIN_SIDE, MAX_CLASSIC_SKIN_SIDE, expand_legacy_skin_rgba8};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StandardSkin {
@@ -21,26 +20,7 @@ pub struct StandardSkin {
     pub geometry: Option<Arc<SkinGeometrySource>>,
 }
 
-/// The resource patch and geometry JSON a skin carries; parsed by the actor runtime.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SkinGeometrySource {
-    pub resource_patch: Arc<str>,
-    pub geometry_data: Arc<str>,
-    pub animations: Arc<[SkinAnimation]>,
-}
-
-impl SkinGeometrySource {
-    #[must_use]
-    pub fn byte_len(&self) -> usize {
-        self.resource_patch.len()
-            + self.geometry_data.len()
-            + self
-                .animations
-                .iter()
-                .map(|image| image.rgba8.len())
-                .sum::<usize>()
-    }
-}
+pub use render_data::SkinGeometrySource;
 
 /// Model input bytes one skin may retain; larger models fall back to the default geometry.
 pub const MAX_SKIN_GEOMETRY_SOURCE_BYTES: usize = 1024 * 1024;

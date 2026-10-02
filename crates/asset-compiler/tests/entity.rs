@@ -160,6 +160,69 @@ fn compiler_enumerates_entity_authority_and_dependencies_deterministically() {
 }
 
 #[test]
+fn compiler_ingests_stock_player_models_without_overriding_modern_geometry() {
+    let pack = synthetic_pack();
+    let legacy = br#"{"format_version":"1.10.0",
+      "geometry.allay":{"texturewidth":16,"textureheight":16,"bones":[
+        {"name":"legacy","cubes":[{"origin":[0,0,0],"size":[9,9,9],"uv":[0,0]}]}
+      ]},
+      "geometry.humanoid.customSlim:geometry.allay":{"bones":[
+        {"name":"slim_arm","parent":"root","cubes":[{"origin":[0,0,0],"size":[3,12,4],"uv":[0,0]}]}
+      ]}}
+    "#;
+    write(pack.path(), "models/mobs.json", legacy);
+    let compiled = compile_entity_assets(pack.path(), MANIFEST).expect("compile stock model");
+    let stock = compiled
+        .sources
+        .iter()
+        .find(|source| source.path.as_ref() == "models/mobs.json")
+        .expect("stock source provenance retained");
+    assert_eq!(
+        stock.source_sha256,
+        <[u8; 32]>::from(Sha256::digest(legacy))
+    );
+    let allay = compiled
+        .geometries
+        .iter()
+        .filter(|geometry| geometry.identifier.as_ref() == "geometry.allay")
+        .collect::<Vec<_>>();
+    assert_eq!(allay.len(), 1, "modern definition must remain unambiguous");
+    assert_eq!(allay[0].bones[0].name.as_ref(), "root");
+    assert_eq!((allay[0].texture_width, allay[0].texture_height), (32, 64));
+    let slim = compiled
+        .geometries
+        .iter()
+        .find(|geometry| geometry.identifier.as_ref() == "geometry.humanoid.customSlim")
+        .expect("stock-only slim model survives");
+    assert_eq!(slim.bones[0].cubes[0].size[0].get(), 3.0);
+    assert_eq!((slim.texture_width, slim.texture_height), (32, 64));
+    assert_eq!(
+        slim.inherits.as_ref().unwrap().identifier.as_ref(),
+        "geometry.allay"
+    );
+    assert_eq!(
+        compiled
+            .symbols
+            .iter()
+            .filter(|symbol| symbol.kind == EntityAssetKind::Geometry
+                && symbol.identifier.as_ref() == "geometry.allay")
+            .count(),
+        1,
+    );
+    let refs = asset_compiler::compile_vanilla_entity_refs(pack.path()).unwrap();
+    let index = refs.geometry_index["geometry.allay"] as usize;
+    assert_eq!(
+        refs.geometry_files[index].path,
+        "models/entity/allay.geo.json"
+    );
+    assert!(!refs.geometry_parent.contains_key("geometry.allay"));
+    assert_eq!(
+        refs.geometry_parent["geometry.humanoid.customSlim"],
+        "geometry.allay"
+    );
+}
+
+#[test]
 fn compiler_marks_out_of_scope_dependency_edges_explicitly_external() {
     let pack = synthetic_pack();
     write(

@@ -7,6 +7,7 @@ const (
 	ArenaSubject    = "practice.spectator.v1.arena"
 	FrameSubject    = "practice.spectator.v1.frame"
 	ClosedSubject   = "practice.spectator.v1.closed"
+	SkinSubject     = "practice.spectator.v1.skin"
 	Freshness       = 5 * time.Second
 	MaxMessage      = 1 << 20
 	MaxPartBlocks   = 4096
@@ -50,6 +51,17 @@ type Player struct {
 	MaxHealth float64    `json:"maxHealth"`
 	Hits      int        `json:"hits"`
 	Dead      bool       `json:"dead"`
+	Equipment *Equipment `json:"equipment,omitempty"`
+	SkinID    string     `json:"skinId,omitempty"`
+	SkinModel string     `json:"skinModel,omitempty"`
+	Sneaking  bool       `json:"sneaking,omitempty"`
+	Sprinting bool       `json:"sprinting,omitempty"`
+	UsingItem bool       `json:"usingItem,omitempty"`
+	OnGround  bool       `json:"onGround,omitempty"`
+	Swimming  bool       `json:"swimming,omitempty"`
+	SwingAt   *time.Time `json:"swingAt,omitempty"`
+	HurtAt    *time.Time `json:"hurtAt,omitempty"`
+	POV       *POV       `json:"pov,omitempty"`
 }
 
 type Frame struct {

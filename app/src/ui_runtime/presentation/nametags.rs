@@ -10,25 +10,28 @@ use bevy::{
 };
 use client_world::ActorSnapshot;
 use protocol::{ActorKind, ActorMetadataValue};
-use render::{MAX_NAMETAG_RECORDS, NAMETAG_ATLAS_SIDE, NametagRecord, NametagScene};
-use ui::{FONT_DESIGN_PIXEL_TEXELS, SafeArea, TextLayoutCache};
+use render::{
+    DEFAULT_NAMEPLATE_DISTANCE, EXTRA_NAMETAG_LINE_RAISE as EXTRA_LINE_RAISE,
+    NAMETAG_HEAD_CLEARANCE as HEAD_CLEARANCE, SNEAK_NAMETAG_TEXT_ALPHA as SNEAK_TEXT_ALPHA,
+    default_nametag_box_height, nametag_lines as tag_lines,
+};
+pub(crate) use render::{NametagAnchor, build_nametag_scene};
+use ui::SafeArea;
 
-use super::nametag_atlas::{GlyphPage, NametagAtlas};
-use assets::RuntimeFontCatalog;
+#[cfg(test)]
+use super::nametag_atlas::NametagAtlas;
+#[cfg(test)]
+use render::{
+    DEFAULT_NAMETAG_HEIGHT as DEFAULT_HEIGHT, NAMETAG_ATLAS_SIDE,
+    NAMETAG_LINE_PITCH_PX as LINE_PITCH_PX, NAMETAG_PLATE_COLOR as PLATE_COLOR,
+};
+#[cfg(test)]
+use ui::TextLayoutCache;
 
-/// Vanilla's default nameplate render distance, used until an actor streams its own.
-const DEFAULT_NAMEPLATE_DISTANCE: f32 = 64.0;
 /// Entity metadata key of an actor's nameplate render distance.
 const METADATA_NAMEPLATE_DISTANCE: u32 = 143;
 /// Tags drawn per frame, nearest first.
 pub(super) const MAX_PRESENTED_NAMETAGS: usize = 128;
-/// The tag hangs this far above the top of the actor's bounding box, in blocks.
-const HEAD_CLEARANCE: f32 = 0.7;
-/// Each line past the first raises the whole tag by this much, in blocks.
-const EXTRA_LINE_RAISE: f32 = 0.125;
-/// Bounding-box heights used when the actor publishes none: standing and sneaking players.
-const DEFAULT_HEIGHT: f32 = 1.8;
-const SNEAKING_HEIGHT: f32 = 1.5;
 /// Entity metadata key of the bounding-box height.
 const METADATA_HEIGHT: u32 = 54;
 /// Entity metadata keys of the name tag and the score tag appended below it.
@@ -36,12 +39,6 @@ const METADATA_NAME: u32 = 4;
 const METADATA_SCORE_TAG: u32 = 84;
 /// The score tag joins the name only within this many blocks of the camera.
 const SCORE_TAG_DISTANCE: f32 = 10.0;
-/// Line pitch in font pixels; each line's plate spans one pixel above to one below its glyphs.
-const LINE_PITCH_PX: f32 = 10.0;
-/// `BaseActorRenderer::NAME_TAG_BACKGROUND_COLOR`.
-const PLATE_COLOR: [f32; 4] = [0.0, 0.0, 0.0, 0.25];
-/// A sneaking actor's tag is depth tested and its text drawn at this alpha.
-const SNEAK_TEXT_ALPHA: f32 = 0.125;
 const ACTOR_FLAG_SNEAKING: u32 = 1;
 const ACTOR_FLAG_INVISIBLE: u32 = 5;
 const ACTOR_FLAG_SHOW_NAME: u32 = 14;
@@ -50,19 +47,6 @@ const ACTOR_FLAG_ALWAYS_SHOW_NAME: u32 = 15;
 const METADATA_ALWAYS_SHOW_NAMETAG: u32 = 81;
 /// A mob flagged show-name (not always-show) presents its tag only near the view center.
 const CROSSHAIR_RADIUS: f32 = 48.0;
-
-/// One actor's tag: where its first line hangs and what it draws.
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct NametagAnchor {
-    /// World point of the tag's font-pixel origin, already raised for extra lines.
-    pub(super) position: Vec3,
-    /// Non-empty lines, top first.
-    pub(super) lines: Vec<Arc<str>>,
-    /// Drawn behind walls only where visible, as for a sneaking actor.
-    pub(super) depth_tested: bool,
-    pub(super) text_alpha: f32,
-    pub(super) distance: f32,
-}
 
 fn actor_flag(actor: &ActorSnapshot, bit: u32) -> bool {
     matches!(
@@ -96,8 +80,9 @@ fn tag_text(actor: &ActorSnapshot) -> Option<Arc<str>> {
 fn tag_height(actor: &ActorSnapshot) -> f32 {
     let box_height = match actor.metadata.get(&METADATA_HEIGHT) {
         Some(ActorMetadataValue::Float(height)) if height.is_finite() && *height > 0.0 => *height,
-        _ if actor_flag(actor, ACTOR_FLAG_SNEAKING) => SNEAKING_HEIGHT * actor.render_scale(),
-        _ => DEFAULT_HEIGHT * actor.render_scale(),
+        _ => {
+            default_nametag_box_height(actor_flag(actor, ACTOR_FLAG_SNEAKING), actor.render_scale())
+        }
     };
     box_height + HEAD_CLEARANCE
 }
@@ -109,15 +94,6 @@ fn tag_world_position(actor: &ActorSnapshot, partial_tick: f32) -> Option<Vec3> 
         Vec3::from_array(actor.interpolated_position(partial_tick.clamp(0.0, 1.0))?)
             + Vec3::Y * tag_height(actor),
     )
-}
-
-/// Vanilla splits the text on newlines and drops empty lines.
-fn tag_lines(name: &str, score: Option<&str>) -> Vec<Arc<str>> {
-    name.split('\n')
-        .chain(score.into_iter().flat_map(|score| score.split('\n')))
-        .filter(|line| !line.is_empty())
-        .map(Arc::from)
-        .collect()
 }
 
 fn nameplate_distance(actor: &ActorSnapshot) -> f32 {
@@ -181,85 +157,6 @@ pub(crate) fn project_nametag(
         text_alpha: if sneaking { SNEAK_TEXT_ALPHA } else { 1.0 },
         distance,
     })
-}
-
-/// The frame's tag quads: see-through tags first, then depth-tested ones, each farthest first,
-/// every tag its plates then its text.
-pub(crate) fn build_nametag_scene<'p>(
-    anchors: &[NametagAnchor],
-    font: &RuntimeFontCatalog,
-    layouts: &mut TextLayoutCache,
-    atlas: &mut NametagAtlas,
-    pages: &impl Fn(usize) -> Option<GlyphPage<'p>>,
-) -> NametagScene {
-    let mut ordered: Vec<&NametagAnchor> = anchors.iter().collect();
-    ordered.sort_by(|a, b| {
-        a.depth_tested
-            .cmp(&b.depth_tested)
-            .then(b.distance.total_cmp(&a.distance))
-    });
-    let lines: usize = ordered.iter().map(|anchor| anchor.lines.len()).sum();
-    if !atlas.has_room_for(lines) {
-        atlas.reset();
-    }
-    let side = NAMETAG_ATLAS_SIDE as f32;
-    let texels = FONT_DESIGN_PIXEL_TEXELS as f32;
-    let mut records = Vec::new();
-    let mut see_through = 0;
-    for anchor in ordered {
-        let placed: Vec<_> = anchor
-            .lines
-            .iter()
-            .filter_map(|line| atlas.line(line, font, layouts, pages))
-            .collect();
-        if placed.is_empty() || records.len() + placed.len() * 2 > MAX_NAMETAG_RECORDS {
-            continue;
-        }
-        // Vanilla measures whole font pixels and pads the widest half-width by one pixel.
-        let half = placed
-            .iter()
-            .map(|line| line.width_px.round() as i32 / 2)
-            .max()
-            .unwrap_or(0) as f32;
-        for index in 0..placed.len() {
-            let top = LINE_PITCH_PX * index as f32;
-            records.push(NametagRecord {
-                anchor: anchor.position.to_array(),
-                text: 0,
-                rect: [
-                    -(half + 1.0),
-                    top - 1.0,
-                    half + 1.0,
-                    top + LINE_PITCH_PX - 1.0,
-                ],
-                uv: [0.0, 0.0, -1.0, -1.0],
-                color: PLATE_COLOR,
-            });
-        }
-        for (index, line) in placed.iter().enumerate() {
-            let left = -((line.width_px.round() as i32 / 2) as f32);
-            let top = LINE_PITCH_PX * index as f32;
-            let [x, y, width, height] = line.cell.map(|value| value as f32);
-            let top = top + line.top_px;
-            records.push(NametagRecord {
-                anchor: anchor.position.to_array(),
-                text: 1,
-                rect: [left, top, left + width / texels, top + height / texels],
-                uv: [x / side, y / side, (x + width) / side, (y + height) / side],
-                color: [1.0, 1.0, 1.0, anchor.text_alpha],
-            });
-        }
-        if !anchor.depth_tested {
-            see_through = records.len();
-        }
-    }
-    let (atlas, atlas_revision) = atlas.publish();
-    NametagScene {
-        records,
-        see_through,
-        atlas,
-        atlas_revision,
-    }
 }
 
 /// Tags for remote players and flagged mobs, nearest first; players with a below-name score get
