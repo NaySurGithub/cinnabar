@@ -2,6 +2,7 @@ package recording
 
 import (
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -12,6 +13,11 @@ import (
 
 	"github.com/bedrock-mc/cinnabar/tools/web-spectator/server/internal/replay"
 )
+
+const maxWindowPayloadBytes = 64 << 20
+const maxWindowFrames = 16_384
+
+var errWindowTooLarge = errors.New("replay window exceeds size limit")
 
 type HTTP struct {
 	store     *replay.Store
@@ -194,11 +200,12 @@ func replayError(w http.ResponseWriter, err error) {
 }
 
 func (h *HTTP) frames(w http.ResponseWriter, r *http.Request, m replay.Manifest, info View, from, to int64) {
-	// One independent compressed chunk is decoded at a time. A seek includes
-	// the preceding snapshot for continuous interpolation at the boundary.
-	index := m.ChunkAt(from)
-	if index > 0 {
-		index--
+	frames, err := h.window(r.Context(), m, from, to)
+	if err != nil {
+		if r.Context().Err() == nil {
+			replayError(w, err)
+		}
+		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	var writer io.Writer = w
@@ -210,57 +217,47 @@ func (h *HTTP) frames(w http.ResponseWriter, r *http.Request, m replay.Manifest,
 		writer = gz
 	}
 	_, _ = io.WriteString(writer, `{"frames":[`)
-	first := true
-	var preceding json.RawMessage
-	write := func(payload json.RawMessage) error {
-		if !first {
+	for index, payload := range frames {
+		if index > 0 {
 			if _, err := io.WriteString(writer, ","); err != nil {
-				return err
+				return
 			}
 		}
-		first = false
-		var raw struct {
-			Players []struct {
-				ID     string `json:"id"`
-				SkinID string `json:"skinId"`
-			} `json:"players"`
+		if _, err := writer.Write(fillSkinReferences(payload, info)); err != nil {
+			return
 		}
-		// Early snapshots may predate asynchronous skin encoding. Fill only absent
-		// references from the frozen final metadata, never from current profiles.
-		if json.Unmarshal(payload, &raw) == nil {
-			var object map[string]json.RawMessage
-			changed := false
-			var players []map[string]json.RawMessage
-			if json.Unmarshal(payload, &object) == nil && json.Unmarshal(object["players"], &players) == nil {
-				for i, p := range raw.Players {
-					if p.SkinID == "" || !info.hasSkin(p.SkinID) {
-						for _, saved := range info.Players {
-							if saved.ID == p.ID && saved.SkinID != "" {
-								players[i]["skinId"], _ = json.Marshal(saved.SkinID)
-								players[i]["skinModel"], _ = json.Marshal(saved.SkinModel)
-								players[i]["appearanceId"], _ = json.Marshal(saved.AppearanceID)
-								changed = true
-								break
-							}
-						}
-					}
-				}
-				if changed {
-					object["players"], _ = json.Marshal(players)
-					payload, _ = json.Marshal(object)
-				}
-			}
+	}
+	_, _ = io.WriteString(writer, `]}`)
+}
+
+func (h *HTTP) window(ctx context.Context, m replay.Manifest, from, to int64) ([]json.RawMessage, error) {
+	// One independent compressed chunk is decoded at a time. A seek includes
+	// the preceding snapshot for continuous interpolation at the boundary.
+	index := m.ChunkAt(from)
+	if index > 0 {
+		index--
+	}
+	selected := make([]json.RawMessage, 0)
+	var selectedBytes int
+	var preceding json.RawMessage
+	appendFrame := func(payload json.RawMessage) error {
+		if len(selected) >= maxWindowFrames || len(payload) > maxWindowPayloadBytes-selectedBytes {
+			return errWindowTooLarge
 		}
-		_, err := writer.Write(payload)
-		return err
+		selected = append(selected, payload)
+		selectedBytes += len(payload)
+		return nil
 	}
 	for ; index < len(m.Chunks); index++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if m.Chunks[index].StartMS > to {
 			break
 		}
 		frames, err := h.store.ReadChunk(m.Metadata.ID, index)
 		if err != nil {
-			return
+			return nil, err
 		}
 		for _, frame := range frames {
 			if frame.TimeMS <= from {
@@ -271,25 +268,58 @@ func (h *HTTP) frames(w http.ResponseWriter, r *http.Request, m replay.Manifest,
 				break
 			}
 			if preceding != nil {
-				if write(preceding) != nil {
-					return
+				if err := appendFrame(preceding); err != nil {
+					return nil, err
 				}
 				preceding = nil
 			}
-			if write(frame.Payload) != nil {
-				return
+			if err := appendFrame(frame.Payload); err != nil {
+				return nil, err
 			}
-		}
-		if r.Context().Err() != nil {
-			return
 		}
 	}
 	if preceding != nil {
-		if write(preceding) != nil {
-			return
+		if err := appendFrame(preceding); err != nil {
+			return nil, err
 		}
 	}
-	_, _ = io.WriteString(writer, `]}`)
+	return selected, nil
+}
+
+func fillSkinReferences(payload json.RawMessage, info View) json.RawMessage {
+	var raw struct {
+		Players []struct {
+			ID     string `json:"id"`
+			SkinID string `json:"skinId"`
+		} `json:"players"`
+	}
+	// Early snapshots may predate asynchronous skin encoding. Fill only absent
+	// references from the frozen final metadata, never from current profiles.
+	if json.Unmarshal(payload, &raw) == nil {
+		var object map[string]json.RawMessage
+		changed := false
+		var players []map[string]json.RawMessage
+		if json.Unmarshal(payload, &object) == nil && json.Unmarshal(object["players"], &players) == nil {
+			for i, p := range raw.Players {
+				if p.SkinID == "" || !info.hasSkin(p.SkinID) {
+					for _, saved := range info.Players {
+						if saved.ID == p.ID && saved.SkinID != "" {
+							players[i]["skinId"], _ = json.Marshal(saved.SkinID)
+							players[i]["skinModel"], _ = json.Marshal(saved.SkinModel)
+							players[i]["appearanceId"], _ = json.Marshal(saved.AppearanceID)
+							changed = true
+							break
+						}
+					}
+				}
+			}
+			if changed {
+				object["players"], _ = json.Marshal(players)
+				payload, _ = json.Marshal(object)
+			}
+		}
+	}
+	return payload
 }
 
 // Bound decoded arena data and chunk windows across slow HTTP readers too.

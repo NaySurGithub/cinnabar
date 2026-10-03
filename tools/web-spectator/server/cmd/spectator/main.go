@@ -93,6 +93,18 @@ func run(log *slog.Logger) error {
 	var rejected atomic.Uint64
 	subscription, err := connection.Subscribe("practice.spectator.v1.>", func(message *nats.Msg) {
 		now := time.Now()
+		if message.Subject == spectator.ReplayStartSubject {
+			opening, arena, err := store.ValidateReplayStart(message.Data, now)
+			if err != nil {
+				rejected.Add(1)
+				if capture != nil {
+					capture.Disconnect()
+				}
+			} else if capture != nil {
+				capture.AcceptReplayStart(opening, arena, message.Data, now)
+			}
+			return
+		}
 		if err := store.Accept(message.Subject, message.Data, now); err != nil {
 			rejected.Add(1)
 			if capture != nil && message.Subject == spectator.FrameSubject {

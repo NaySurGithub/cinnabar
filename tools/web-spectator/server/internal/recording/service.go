@@ -20,6 +20,7 @@ type event struct {
 	subject     string
 	data        []byte
 	frame       spectator.Frame
+	opening     spectator.ReplayStart
 	arena       *spectator.Arena
 	skins       map[string][]byte
 	appearances map[string][]byte
@@ -28,10 +29,11 @@ type event struct {
 	bytes       int64
 }
 type active struct {
-	recording *replay.Recording
-	last      time.Time
-	started   time.Time
-	detail    Detail
+	recording   *replay.Recording
+	last        time.Time
+	lastFrameAt time.Time
+	started     time.Time
+	detail      Detail
 }
 type Service struct {
 	store      *replay.Store
@@ -118,6 +120,28 @@ func (s *Service) Accept(subject string, data []byte, now time.Time) {
 		s.Disconnect()
 	}
 }
+
+// AcceptReplayStart queues one validated atomic opening. A missing batch leaves
+// the first live frame ineligible to start a recording.
+func (s *Service) AcceptReplayStart(start spectator.ReplayStart, arena *spectator.Arena, data []byte, now time.Time) {
+	select {
+	case <-s.stop:
+		return
+	default:
+	}
+	e := event{subject: spectator.ReplayStartSubject, opening: start, arena: arena, data: bytes.Clone(data), stamp: now, generation: s.generation.Load(), bytes: int64(len(data))}
+	if s.pending.Add(e.bytes) > maxPendingBytes {
+		s.pending.Add(-e.bytes)
+		s.Disconnect()
+		return
+	}
+	select {
+	case s.queue <- e:
+	default:
+		s.pending.Add(-e.bytes)
+		s.Disconnect()
+	}
+}
 func (s *Service) Close()      { s.closeOnce.Do(func() { close(s.stop) }); <-s.done }
 func (s *Service) Disconnect() { s.generation.Add(1); s.lost.Store(true) }
 
@@ -136,6 +160,8 @@ func (s *Service) run() {
 			if e.generation != s.generation.Load() {
 				if e.subject == spectator.FrameSubject {
 					s.abort(e.frame.ID)
+				} else if e.subject == spectator.ReplayStartSubject {
+					s.abort(e.opening.ID)
 				}
 				continue
 			}

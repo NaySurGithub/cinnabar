@@ -3,19 +3,20 @@ package spectator
 import "time"
 
 const (
-	Version         = 1
-	ArenaSubject    = "practice.spectator.v1.arena"
-	FrameSubject    = "practice.spectator.v1.frame"
-	ClosedSubject   = "practice.spectator.v1.closed"
-	SkinSubject     = "practice.spectator.v1.skin"
-	Freshness       = 5 * time.Second
-	MaxMessage      = 1 << 20
-	MaxPartBlocks   = 4096
-	MaxParts        = 256
-	MaxBlocks       = 1_000_000
-	MaxCachedBlocks = 2_000_000
-	MaxArenas       = 16
-	MaxMatches      = 32
+	Version            = 1
+	ArenaSubject       = "practice.spectator.v1.arena"
+	FrameSubject       = "practice.spectator.v1.frame"
+	ReplayStartSubject = "practice.spectator.v1.replay-start"
+	ClosedSubject      = "practice.spectator.v1.closed"
+	SkinSubject        = "practice.spectator.v1.skin"
+	Freshness          = 5 * time.Second
+	MaxMessage         = 1 << 20
+	MaxPartBlocks      = 4096
+	MaxParts           = 256
+	MaxBlocks          = 1_000_000
+	MaxCachedBlocks    = 2_000_000
+	MaxArenas          = 16
+	MaxMatches         = 32
 )
 
 type PaletteEntry struct {
@@ -82,10 +83,20 @@ type Frame struct {
 	TeamWins       []int         `json:"teamWins"`
 }
 
+// ReplayStart carries complete, real snapshots sampled before the terrain
+// export became available. It is admitted only to the recorder, never Live.
+type ReplayStart struct {
+	Version int     `json:"version"`
+	ID      string  `json:"id"`
+	ArenaID string  `json:"arenaId"`
+	Frames  []Frame `json:"frames"`
+}
+
 type Closed struct {
-	Reason     string    `json:"reason,omitempty"`
-	FinalFrame *Frame    `json:"finalFrame,omitempty"`
-	Version    int       `json:"version"`
-	ID         string    `json:"id"`
-	UpdatedAt  time.Time `json:"updatedAt"`
+	Reason           string    `json:"reason,omitempty"`
+	ReplayIncomplete bool      `json:"replayIncomplete,omitempty"`
+	FinalFrame       *Frame    `json:"finalFrame,omitempty"`
+	Version          int       `json:"version"`
+	ID               string    `json:"id"`
+	UpdatedAt        time.Time `json:"updatedAt"`
 }

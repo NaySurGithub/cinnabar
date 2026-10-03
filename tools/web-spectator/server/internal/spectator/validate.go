@@ -66,7 +66,11 @@ func validArena(part ArenaPart) bool {
 }
 
 func validFrame(frame Frame, now time.Time) bool {
-	if !validWorldState(frame) || frame.Version != Version || !ValidID(frame.ID) || !ValidID(frame.ArenaID) || !cleanLabel(frame.Mode, 64) || !fresh(frame.UpdatedAt, now) || len(frame.Players) < 2 || len(frame.Players) > 32 || len(frame.TeamWins) > 16 {
+	return validFrameAge(frame, now, Freshness)
+}
+
+func validFrameAge(frame Frame, now time.Time, maxAge time.Duration) bool {
+	if !validWorldState(frame) || frame.Version != Version || !ValidID(frame.ID) || !ValidID(frame.ArenaID) || !cleanLabel(frame.Mode, 64) || frame.UpdatedAt.IsZero() || now.Sub(frame.UpdatedAt) > maxAge || frame.UpdatedAt.Sub(now) > time.Second || len(frame.Players) < 2 || len(frame.Players) > 32 || len(frame.TeamWins) > 16 {
 		return false
 	}
 	ids := make(map[string]struct{}, len(frame.Players))

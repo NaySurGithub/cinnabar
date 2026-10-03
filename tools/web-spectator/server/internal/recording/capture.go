@@ -24,6 +24,25 @@ type Detail struct {
 func (s *Service) consume(e event) {
 	var err error
 	switch e.subject {
+	case spectator.ReplayStartSubject:
+		if s.active[e.opening.ID] != nil {
+			s.abort(e.opening.ID)
+			return
+		}
+		for _, frame := range e.opening.Frames {
+			payload, marshalErr := json.Marshal(frame)
+			if marshalErr != nil {
+				s.abort(e.opening.ID)
+				return
+			}
+			e.frame, e.data = frame, payload
+			if err = s.frame(e); err != nil {
+				return
+			}
+			if _, active := s.active[e.opening.ID]; !active {
+				return
+			}
+		}
 	case spectator.FrameSubject:
 		err = s.frame(e)
 	case spectator.SkinSubject:
@@ -74,12 +93,16 @@ func (s *Service) consume(e event) {
 		}
 		defer delete(s.failed, closed.ID)
 		if value := s.active[closed.ID]; value != nil {
-			if closed.Reason != "finished" {
+			if closed.Reason != "finished" || closed.ReplayIncomplete {
 				s.abort(closed.ID)
 				return
 			}
 			if final := closed.FinalFrame; final != nil {
 				if final.Incomplete {
+					s.abort(closed.ID)
+					return
+				}
+				if final.UpdatedAt.Sub(value.lastFrameAt) > spectator.MaxReplayStartGap {
 					s.abort(closed.ID)
 					return
 				}
@@ -122,6 +145,10 @@ func (s *Service) frame(e event) error {
 	}
 	value := s.active[id]
 	if value == nil {
+		if e.subject != spectator.ReplayStartSubject {
+			s.abort(id)
+			return nil
+		}
 		start := e.frame.MatchStartedAt
 		if start == nil || start.IsZero() || e.frame.RoundActive || e.frame.UpdatedAt.Sub(*start) > 10*time.Second {
 			s.abort(id)
@@ -179,8 +206,11 @@ func (s *Service) frame(e event) error {
 			s.abort(id)
 			return err
 		}
-		value = &active{recording: recording, last: e.frame.UpdatedAt, started: e.frame.UpdatedAt, detail: info}
+		value = &active{recording: recording, last: time.Now(), lastFrameAt: e.frame.UpdatedAt, started: e.frame.UpdatedAt, detail: info}
 		s.active[id] = value
+	} else if e.frame.UpdatedAt.Sub(value.lastFrameAt) > spectator.MaxReplayStartGap {
+		s.abort(id)
+		return fmt.Errorf("replay frame gap exceeds capture limit")
 	}
 	for _, player := range e.frame.Players {
 		if player.SkinID == "" || len(e.skins[player.ID]) == 0 || value.detail.hasSkin(player.SkinID) {
@@ -223,6 +253,7 @@ func (s *Service) frame(e event) error {
 		return err
 	}
 	value.last = time.Now()
+	value.lastFrameAt = e.frame.UpdatedAt
 	return nil
 }
 
