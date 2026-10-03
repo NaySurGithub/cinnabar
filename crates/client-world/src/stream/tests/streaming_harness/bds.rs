@@ -1,7 +1,38 @@
 //! Dense local-world terrain through request, decode, lighting, mesh and upload acknowledgement.
 use super::*;
 
-/// Distant replies may stay in flight after the spawn neighborhood is presentable.
+/// Scripted network delay must not consume response retries while workers make progress.
+#[test]
+fn held_network_exchange_preserves_retry_budget() {
+    let (stream, keys, request) = stream_with_unsent_sub_chunks(1);
+    let mut harness = Harness {
+        stream,
+        sequence: 2,
+        ..Harness::for_tests()
+    };
+    harness.withheld.insert(keys[0].chunk());
+    assert!(harness.stream.retry_request_front(request).is_ok());
+    harness.answer_requests();
+    assert_eq!(harness.held.len(), 1);
+
+    harness.stream.expire_sub_chunk_deadlines(
+        Instant::now() + SUB_CHUNK_RESPONSE_TIMEOUT * u32::from(MAX_SUB_CHUNK_RETRIES + 1),
+    );
+    assert_eq!(harness.stream.stats().sub_chunk_timeouts, 0);
+    assert_eq!(harness.stream.stats().sub_chunk_retries_scheduled, 0);
+    assert_eq!(harness.stream.outstanding_sub_chunk_count(), 1);
+    assert_eq!(harness.stream.transport_pending_requests, 1);
+
+    harness.withheld.clear();
+    harness.deliver();
+    assert!(harness.held.is_empty());
+    assert_eq!(harness.stream.transport_pending_requests, 0);
+    assert_eq!(harness.stream.stats().phase2_stages.requests_sent, 1);
+    assert_eq!(harness.stream.stats().phase2_stages.responses_admitted, 1);
+    assert_eq!(harness.stream.stats().phase2_outcomes.stale, 0);
+}
+
+/// Distant network exchanges may stay pending after the spawn neighborhood is presentable.
 #[test]
 fn bds_local_startup_completes_with_distant_replies_withheld() {
     let mut harness = Harness::for_tests();

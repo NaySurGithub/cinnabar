@@ -76,9 +76,10 @@ struct Harness {
     columns_per_frame: usize,
     frames_per_column: u64,
     frame_sleep: Duration,
-    /// Columns whose sub-chunk replies are held until removed from this set.
+    /// Columns whose request send acknowledgement and reply wait for scripted release.
+    /// Keeping sends pending prevents worker speed from exhausting response retries.
     withheld: BTreeSet<ChunkKey>,
-    held: Vec<(ChunkKey, WorldEvent)>,
+    held: Vec<(PendingSubChunkRequest, WorldEvent)>,
     poll_times: Vec<Duration>,
     frame_work_times: Vec<Duration>,
     peak_light_jobs: usize,
@@ -204,9 +205,10 @@ impl Harness {
     fn deliver(&mut self) {
         let (released, held) = std::mem::take(&mut self.held)
             .into_iter()
-            .partition::<Vec<_>, _>(|(column, _)| !self.withheld.contains(column));
+            .partition::<Vec<_>, _>(|(request, _)| !self.withheld.contains(&request.chunk));
         self.held = held;
-        for (_, event) in released {
+        for (request, event) in released {
+            acknowledge_request_sent(&mut self.stream, &request, Instant::now());
             self.replies.push_back((self.frame, event));
         }
         while self
@@ -244,17 +246,10 @@ impl Harness {
 
     fn answer_requests(&mut self) {
         for request in self.stream.take_requests() {
-            let sent_at = Instant::now();
             self.stream.record_sub_chunk_request_transport_pending(
                 request.chunk,
                 request.base_sub_chunk_y,
                 request.count,
-            );
-            self.stream.acknowledge_sub_chunk_request_sent(
-                request.chunk,
-                request.base_sub_chunk_y,
-                request.count,
-                sent_at,
             );
             let entries = (0..request.count)
                 .map(|offset| {
@@ -281,8 +276,9 @@ impl Harness {
                 entries,
             });
             if self.withheld.contains(&request.chunk) {
-                self.held.push((request.chunk, reply));
+                self.held.push((request, reply));
             } else {
+                acknowledge_request_sent(&mut self.stream, &request, Instant::now());
                 self.replies
                     .push_back((self.frame + REPLY_LATENCY_FRAMES, reply));
             }
