@@ -86,10 +86,16 @@ presence, durability and leather color only. No item names/lore or private chat
 are exported. `practice.spectator.v1.skin` carries bounded bot PNGs with content
 hash, dimensions and model. Human skins keep their regular shared API/cooldown.
 
-Generate the runtime carriers with the repository's pinned asset compiler, then
-run `agent-check python3 tools/web-spectator/bundle_assets.py .local/runtime-assets`.
-Set `SPECTATOR_ASSET_DIR` to this immutable release directory and mount it read-only
-in Compose. The loader verifies all eight sizes/hashes, regular file types and gzip
-representations before serving. Assets remain outside Git and container images.
+Generate the runtime carriers with the repository's pinned asset compiler,
+including `make actor-assets particle-assets` under `agent-check`. Stage the
+legacy eight carriers in `.local/runtime-assets`, then run
+`tools/web-spectator/bundle_assets.py .local/runtime-assets --actors .local/assets/compiled/vanilla-v1.mcbeact --particles .local/assets/compiled/vanilla-v1.mcbept`.
+The actor and particle paths may instead be pre-staged as `actors.mcbeact` and
+`particles.mcbept` in that directory. The bundle requires both and records ten
+verified carriers; the legacy asset-manifest route still exposes its original
+eight in the same order. Set `SPECTATOR_ASSET_DIR` to the immutable release
+directory and mount it read-only in Compose. The loader verifies sizes, hashes,
+regular file types and gzip representations before serving. Assets remain
+outside Git and container images.
 Downloads share two nonblocking admission slots and a60-second write deadline;
 active duel skin writes retain the three-second consent-atomic limit.
