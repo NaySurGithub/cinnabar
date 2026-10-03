@@ -650,7 +650,7 @@ fn wrap_degrees(degrees: f32) -> f32 {
 
 /// Projectile bones carry absolute rotation; billboard bones carry the camera's rotation.
 fn actor_world_yaw(actor: &ActorSnapshot, rig: &ActorRigSnapshot<'_>, alpha: f32) -> f32 {
-    let billboard = render_data::actor_is_billboard(&actor.kind);
+    let billboard = client_world::actor_is_billboard(&actor.kind);
     if billboard {
         180.0
     } else if actor.target_rotation_is_absolute() {
