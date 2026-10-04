@@ -1,0 +1,87 @@
+name: Android emulator smoke
+
+on:
+  workflow_call:
+    inputs:
+      apk_run:
+        required: true
+        type: string
+      server:
+        default: ''
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  runtime:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      ANDROID_AVD_HOME: ${{ runner.temp }}/cinnabar-smoke-avds
+      SMOKE_OUTPUT: ${{ runner.temp }}/cinnabar-smoke-evidence
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Resolve the pinned Android runtime
+        run: |
+          python3 - <<'PY' >> "$GITHUB_ENV"
+          import json
+          runtime = json.load(open('packaging/android/runtime.json'))
+          print(f"ANDROID_API={runtime['target_sdk']}")
+          print(f"ANDROID_BUILD_TOOLS={runtime['build_tools']}")
+          PY
+      - uses: android-actions/setup-android@v3
+        with:
+          accept-android-sdk-licenses: true
+          log-accepted-android-sdk-licenses: false
+          packages: >-
+            platform-tools emulator
+            platforms;android-${{ env.ANDROID_API }}
+            build-tools;${{ env.ANDROID_BUILD_TOOLS }}
+            system-images;android-${{ env.ANDROID_API }};google_apis;x86_64
+      - name: Download the verified x86_64 APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APK_RUN_ID: ${{ inputs.apk_run }}
+        run: |
+          [[ "$APK_RUN_ID" =~ ^[0-9]+$ ]]
+          mkdir -p "$SMOKE_OUTPUT"
+          gh run view "$APK_RUN_ID" -R "$GITHUB_REPOSITORY" --json url,headSha,status,conclusion > "$SMOKE_OUTPUT/apk-run.json"
+          gh run download "$APK_RUN_ID" -R "$GITHUB_REPOSITORY" -n Cinnabar-Android-x86_64 -D "$RUNNER_TEMP/cinnabar-smoke-apk"
+      - name: Prepare direct-host KVM and the emulator
+        run: |
+          sudo chmod 666 /dev/kvm
+          sudo apt-get update -qq
+          sudo apt-get install --no-install-recommends -y tesseract-ocr
+          mkdir -p "$ANDROID_AVD_HOME"
+          printf 'no\n' | avdmanager create avd --force --name cinnabar-smoke --package "system-images;android-${ANDROID_API};google_apis;x86_64"
+          printf '\nhw.lcd.width=1280\nhw.lcd.height=720\nhw.lcd.density=240\nhw.keyboard=yes\n' >> "$ANDROID_AVD_HOME/cinnabar-smoke.avd/config.ini"
+          "$ANDROID_HOME/emulator/emulator" -accel-check
+      - name: Run the existing APK and capture runtime evidence
+        env:
+          SMOKE_SERVER: ${{ inputs.server }}
+        run: |
+          sudo systemd-run --wait --collect --pipe \
+            --property=MemoryMax=7G --property=MemorySwapMax=0 --property=CPUQuota=200% \
+            --property=TasksMax=512 --property=RuntimeMaxSec=1300 \
+            --uid="$(id -u)" --gid="$(id -g)" --working-directory="$GITHUB_WORKSPACE" \
+            --setenv=PATH="$PATH" --setenv=ANDROID_HOME="$ANDROID_HOME" \
+            --setenv=ANDROID_AVD_HOME="$ANDROID_AVD_HOME" \
+            python3 packaging/android/smoke.py --avd cinnabar-smoke \
+              --apk-dir "$RUNNER_TEMP/cinnabar-smoke-apk" --output "$SMOKE_OUTPUT" \
+              --server "$SMOKE_SERVER" --seconds 1200
+      - name: Upload frames, logs and crash reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cinnabar-Android-smoke-${{ inputs.apk_run }}
+          path: ${{ env.SMOKE_OUTPUT }}
+          if-no-files-found: warn
+          retention-days: 7

@@ -42,12 +42,20 @@ on:
         default: arm64-v8a
         type: choice
         options: [arm64-v8a, x86_64]
+      apk_run:
+        description: Existing APK run ID to smoke-test instead of building (optional)
+        default: ''
+        type: string
+      server:
+        description: Optional server address for an offline smoke join
+        default: ''
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: android-${{ github.head_ref || github.ref_name }}
+  group: android-${{ github.event_name == 'workflow_dispatch' && inputs.apk_run != '' && 'smoke-' || '' }}${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 env:
@@ -58,6 +66,7 @@ env:
 
 jobs:
   apk:
+    if: github.event_name != 'workflow_dispatch' || inputs.apk_run == ''
     name: Build signed test APK (${{ matrix.abi }})
     strategy:
       fail-fast: false
@@ -133,3 +142,12 @@ jobs:
           path: target/android/${{ matrix.abi }}/*-test.apk
           if-no-files-found: error
           retention-days: 14
+  smoke:
+    if: github.event_name == 'workflow_dispatch' && inputs.apk_run != ''
+    permissions:
+      actions: read
+      contents: read
+    uses: ./.github/workflows/android-smoke.yml
+    with:
+      apk_run: ${{ inputs.apk_run }}
+      server: ${{ inputs.server }}

@@ -28,6 +28,11 @@ the secret and local builds generate their own test key. Changing signing identi
 uninstalling the earlier APK, which removes its app data. This preview identity is not a production
 release key. Generated keys/artifacts live under ignored `.local/` and `target/` directories.
 
+To smoke-test an existing x86_64 artifact without rebuilding, dispatch `android.yml` on your branch
+with `apk_run` set to its Actions run ID. The optional `server` input attempts an offline join to
+that address. The smoke artifact includes frames, private logs and crash reports; no account tokens
+are supplied, so servers requiring Microsoft sign-in may reject the attempt.
+
 For release signing, pass `--keystore` and `--key-alias`, with
 `CINNABAR_ANDROID_STORE_PASSWORD` and `CINNABAR_ANDROID_KEY_PASSWORD` in the environment. APK
 verification checks signatures, 16 KB native alignment and the required Rust/Go payload. Android
