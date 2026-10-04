@@ -155,7 +155,10 @@ fn the_app_adapter_updates_ui_input_without_warping_the_window_cursor() {
     let mut app = App::new();
     let mut player = crate::player_runtime::PlayerRuntime::new(1);
     let mut ui = UiRuntime::new(1);
+    ui.publish_local_runtime_id(&mut player, 1, 42)
+        .expect("local player identity");
     ui.toggle_inventory(&mut player);
+    assert!(ui.inventory_open());
     app.insert_resource(ui)
         .init_resource::<UiTouchPointer>()
         .init_resource::<ButtonInput<MouseButton>>()

@@ -201,8 +201,8 @@ path = "crates/render"
 test_support_features = ["publication-test-support"]
 allowed_dependencies = ["assets", "meshing", "mod-api", "particles", "render-api", "world"]
 forbidden_dependencies = ["asset-compiler"]
-# Also reject game-state edges hidden behind another local crate or test dependency.
-forbidden_transitive_dependencies = ["client-world", "chunk-pipeline", "protocol"]
+# Also reject compiler and game-state edges hidden behind local crates or tests.
+forbidden_transitive_dependencies = ["asset-compiler", "client-world", "chunk-pipeline", "protocol"]
 
 [[crates]]
 name = "app"

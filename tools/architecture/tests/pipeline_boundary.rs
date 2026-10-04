@@ -198,35 +198,31 @@ fn new_domain_crates_reject_hidden_engine_dependencies() {
 }
 
 #[test]
-fn app_cannot_regain_the_offline_compiler_through_runtime_or_test_edges() {
+fn renderer_cannot_regain_the_offline_compiler_through_runtime_or_test_edges() {
     for kind in ["dependencies", "build-dependencies", "dev-dependencies"] {
         let temp = fixture();
         set_dependencies(
             temp.path(),
-            "app",
-            &format!(
-                "[{kind}]\noffline={{package='asset-compiler',path='../crates/asset-compiler'}}"
-            ),
+            "render",
+            &format!("[{kind}]\noffline={{package='asset-compiler',path='../asset-compiler'}}"),
         );
-        assert!(
-            diagnostics(temp.path())
-                .iter()
-                .any(|line| { line == "app: forbidden dependency path `app -> asset-compiler`" })
-        );
+        assert!(diagnostics(temp.path()).iter().any(|line| {
+            line == "render: forbidden dependency path `render -> asset-compiler`"
+        }));
     }
     let temp = fixture();
     set_dependencies(
         temp.path(),
-        "app",
-        "[dependencies]\npack-compiler={path='../crates/pack-compiler'}",
+        "render",
+        "[dependencies]\nassets={path='../assets'}",
     );
     set_dependencies(
         temp.path(),
-        "pack-compiler",
+        "assets",
         "[dependencies]\noffline={package='asset-compiler',path='../asset-compiler'}",
     );
     assert!(diagnostics(temp.path()).iter().any(|line| {
-        line == "app: forbidden dependency path `app -> pack-compiler -> asset-compiler`"
+        line == "render: forbidden dependency path `render -> assets -> asset-compiler`"
     }));
 }
 

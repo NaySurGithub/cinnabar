@@ -126,8 +126,8 @@ fn app_semantic_runtime_preserves_keyboard_controller_touch_equivalence() {
                     contact_id: 1,
                     activity_sequence: 0,
                     position: [0.25, 0.5],
-                    delta: [0.0, 0.0],
-                    hit_id: None,
+                    delta: [0.0, 1.0],
+                    hit_id: Some(semantic_input::touch::JOYSTICK),
                 },
                 TouchContact {
                     contact_id: 2,
@@ -385,6 +385,4 @@ fn semantic_runtime_synthesizes_controller_disconnect_and_releases_stale_touch_t
     assert_eq!(targets.target(2), Some(semantic_input::touch::USE));
     targets.release_all();
     assert_eq!(targets.target(2), None);
-
-
 }
