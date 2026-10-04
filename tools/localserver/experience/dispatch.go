@@ -527,7 +527,8 @@ func await(ctx context.Context, task *world.Task) error {
 }
 
 // read builds the event's snapshot in tx: the anchor and its six neighbors within the world's
-// height, loaded or not, with the data of the owned ones; nothing for an unanchored call.
+// height, loaded or not, with the data of the owned ones, then the members of the anchor's
+// network; nothing for an unanchored call.
 func (h *Host) read(tx *world.Tx, d *dispatcher, ev event) snapshot {
 	r := tx.Range()
 	snap := snapshot{
@@ -571,6 +572,7 @@ func (h *Host) read(tx *world.Tx, d *dispatcher, ev event) snapshot {
 		snap.req.Snapshot = append(snap.req.Snapshot, cell)
 		snap.cells = append(snap.cells, st)
 	}
+	h.network(tx, d, ev, &snap)
 	return snap
 }
 

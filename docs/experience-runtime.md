@@ -172,11 +172,25 @@ WIT cannot express the rules below; the runtime (`crates/experience-runtime`) an
   visibility, boxes, rotation, permutations over structured conditions), network membership and
   items, and the callback calls `block-states`, `set-block-state`, `network`, `inventory`,
   `set-slot` and `drop-item`; IPC protocol 5 carries all of them. States, placement traits,
-  visuals and permutations, `block-states` and `set-block-state` are implemented (SP5 task E of
-  the Applied Benergistics plan). Network membership and items (tasks F and G) are not yet: a
-  `registration` that uses either fails the load, naming the block, `network`, `inventory`,
-  `set-slot` and `drop-item` count as host calls and are refused as `unsupported-state`, and the
-  adapter refuses their ops as invalid.
+  visuals and permutations, `block-states` and `set-block-state` (SP5 task E of the Applied
+  Benergistics plan) and the network scope (task F) are implemented. Items (task G) are not
+  yet: a `registration` that declares any fails the load, `inventory`, `set-slot` and
+  `drop-item` count as host calls and are refused as `unsupported-state`, and the adapter
+  refuses their ops as invalid.
+- **Network scope (0.5).** A block type may be a network member. A callback anchored on a member
+  (place, interact, neighbor, or a client message or epoch whose focus is one) has the anchor's
+  network: the adapter floods from the anchor through face-adjacent members of the Experience
+  over all six faces, and for the break of a member from its six neighbors, so both halves of a
+  split are in it. The guest applies its own rules about which faces connect. The flood stops at
+  unloaded positions, as an AE2 grid does, and at `MAX_NETWORK_BLOCKS` members or
+  `MAX_NETWORK_DATA_BYTES` of their data, where `network` says truncated and the guest should
+  treat the network as unavailable. The snapshot holds every member with its id, states, data
+  and token; reads cover them and the anchor's neighbors, `set-block-data` and
+  `set-block-state` reach every member, and `set-block` keeps the anchor's chunk column. Commit
+  checks every member's token, so a foreign change anywhere in the network discards the whole
+  result; one Experience's callbacks run one at a time, so only foreign changes can. Neither
+  side keeps a grid: each callback recomputes from this snapshot. `network` is none off a
+  member.
 - **Block types (0.5).** The runtime checks every rule below at load and the adapter again at
   registration; every bound is a constant in `limits.rs`, mirrored in `limits.go` and checked
   against the limits fixture.
@@ -227,13 +241,15 @@ WIT cannot express the rules below; the runtime (`crates/experience-runtime`) an
   staged; a rejected single operation leaves the staged state unchanged and the callback
   continues. Logs are not gameplay output and survive a discarded callback.
 - **Reads.** Reads see only the anchor (the event's block, or a client message's or an epoch's
-  focus) and its six orthogonal neighbors in the same dimension, as they were snapshotted.
+  focus), its six orthogonal neighbors in the same dimension and its network's members, as they
+  were snapshotted.
   - `get-block` returns a snapshot position's id with staged writes applied; an unloaded position
     is `unavailable`, one outside the snapshot `denied`, one outside the world height
     `out-of-bounds`.
   - `block-data` returns data only while the position holds this Experience's block (staged
     writes applied), else `not-owned`. No data and empty data are distinct.
-- **Writes.** Writes reach the anchor and the snapshot neighbors in the anchor's chunk column.
+- **Writes.** Writes reach the anchor and the snapshot neighbors in the anchor's chunk column;
+  data and states also reach the network's members.
   - `set-block`: the current block (staged writes applied) must be air or this Experience's own,
     else `not-owned`; the new id must be `minecraft:air` or this Experience's own, else
     `unknown-block`. Every replacement, even with the same id, clears the position's data and

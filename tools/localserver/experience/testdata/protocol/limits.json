@@ -1,5 +1,5 @@
 {
-  "max_frame_bytes": 1048576,
+  "max_frame_bytes": 4194304,
   "protocol": 5,
   "max_block_data_bytes": 65536,
   "max_staged_ops": 64,
@@ -16,5 +16,7 @@
   "max_materials": 32,
   "max_condition_tests": 64,
   "max_flipbook_frames": 256,
-  "max_geometry_bytes": 1048576
+  "max_geometry_bytes": 1048576,
+  "max_network_blocks": 1024,
+  "max_network_data_bytes": 524288
 }

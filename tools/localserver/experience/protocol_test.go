@@ -33,6 +33,9 @@ type fixtureLimits struct {
 	MaxConditionTests    int `json:"max_condition_tests"`
 	MaxFlipbookFrames    int `json:"max_flipbook_frames"`
 	MaxGeometryBytes     int `json:"max_geometry_bytes"`
+	// The network bounds, which the adapter's flood keeps.
+	MaxNetworkBlocks    int `json:"max_network_blocks"`
+	MaxNetworkDataBytes int `json:"max_network_data_bytes"`
 }
 
 // rustLimits reads the limits fixture.
@@ -363,6 +366,8 @@ func TestCommitLimitsMatchRust(t *testing.T) {
 		{"maxConditionTests", maxConditionTests, rust.MaxConditionTests},
 		{"maxFlipbookFrames", maxFlipbookFrames, rust.MaxFlipbookFrames},
 		{"maxGeometryBytes", maxGeometryBytes, rust.MaxGeometryBytes},
+		{"maxNetworkBlocks", maxNetworkBlocks, rust.MaxNetworkBlocks},
+		{"maxNetworkDataBytes", maxNetworkDataBytes, rust.MaxNetworkDataBytes},
 	} {
 		if limit.goV != limit.rust {
 			t.Errorf("%s = %d, Rust has %d", limit.name, limit.goV, limit.rust)

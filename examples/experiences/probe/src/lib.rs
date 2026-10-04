@@ -36,7 +36,7 @@ static MEMORY: AtomicU32 = AtomicU32::new(0);
 struct Probe;
 
 impl Experience for Probe {
-    /// The 0.5 export: the counter and the lamp.
+    /// The 0.5 export: the counter, the lamp and the node.
     fn registration() -> Result<Registration, GuestError> {
         Ok(contract::registration(COUNTER))
     }
@@ -215,6 +215,7 @@ fn interact(ctx: &Callback, player: &str, p: BlockPos) -> Result<(), GuestError>
         23 => tell(&format!("focus {}", describe(ctx.focus()))),
         24 => tell(&contract::wit_0_5_calls(ctx, p, up)),
         25 => tell(&contract::toggle_lamp(ctx, p)),
+        26 => tell(&contract::mark_network(ctx)),
         x => return Err(GuestError::Rejected(format!("no probe behavior for x={x}"))),
     }
     Ok(())

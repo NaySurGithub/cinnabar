@@ -9,7 +9,8 @@ use common::{
 };
 use experience_runtime::limits::{MAX_REASON_BYTES, MAX_VALUE_DEPTH};
 use experience_runtime::protocol::{
-    BlockState, Call, Cause, Cell, Change, Face, FailKind, Op, Outcome, Request, Scalar, StateValue,
+    BlockState, Call, Cause, Cell, Change, Face, FailKind, Network, Op, Outcome, Request, Scalar,
+    StateValue,
 };
 
 /// `request` with its snapshot cell at `new.pos` replaced by `new`.
@@ -109,9 +110,9 @@ fn state(name: &str, value: StateValue) -> BlockState {
 }
 
 /// Server WIT 0.5's block-state calls work: a lamp set above the counter starts with its default
-/// states, and a lit lamp stages one state op after its placement. The calls of SP5 tasks F and
-/// G are still refused: each counts as a host call and is refused as `unsupported-state`,
-/// staging nothing.
+/// states, and a lit lamp stages one state op after its placement; `network` answers, none off
+/// a member. The calls of SP5 task G are still refused: each counts as a host call and is
+/// refused as `unsupported-state`, staging nothing.
 #[test]
 fn wit_0_5_block_states_work_and_the_rest_are_refused() {
     let refused = "unsupported-state";
@@ -128,7 +129,7 @@ fn wit_0_5_block_states_work_and_the_rest_are_refused() {
                 states: vec![state("probe:on", StateValue::Bool(true))],
             },
             tell(&format!(
-                "states {} set ok states {} network {refused} inventory {refused} \
+                "states {} set ok states {} network ok inventory {refused} \
                  set-slot {refused} drop-item {refused}",
                 lamp(false),
                 lamp(true),
@@ -531,4 +532,38 @@ fn malformed_client_message_or_epoch_is_rejected_unrun() {
     }
     let outcome = outcome(&client_message("probe.echo", 1, vec![too_deep]));
     assert!(matches!(outcome, Outcome::Rejected { .. }), "{outcome:?}");
+}
+
+/// A node's network reaches past the anchor's chunk column: the probe writes the member count to
+/// every member, the far one included, and reads `network` as the adapter snapshotted it.
+#[test]
+fn network_members_take_data_beyond_the_column() {
+    let far = p(40);
+    let mut request = with_cell(interact(26), cell(p(26), "probe:node", true, None));
+    if let Request::Callback {
+        snapshot, network, ..
+    } = &mut request
+    {
+        snapshot.push(cell(far, "probe:node", true, Some("ff")));
+        *network = Some(Network {
+            blocks: vec![p(26), far],
+            truncated: false,
+        });
+    }
+    let mark = |pos| Op::SetBlockData {
+        pos,
+        data: Some("02".to_owned()),
+    };
+    assert_eq!(
+        outcome(&request),
+        committed(vec![
+            mark(p(26)),
+            mark(far),
+            tell("network 2 truncated false wrote 2")
+        ])
+    );
+    assert_eq!(
+        outcome(&interact(26)),
+        committed(vec![tell("network none")])
+    );
 }

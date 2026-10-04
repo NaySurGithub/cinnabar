@@ -12,8 +12,8 @@ use crate::hex;
 use crate::limits::{
     MAX_BLOCK_DATA_BYTES, MAX_BONES, MAX_CLIENT_SEND_BYTES, MAX_CLIENT_SENDS, MAX_CONDITION_TESTS,
     MAX_FLIPBOOK_FRAMES, MAX_FRAME_BYTES, MAX_GEOMETRY_BYTES, MAX_MATERIALS, MAX_NAME_BYTES,
-    MAX_PERMUTATIONS, MAX_REASON_BYTES, MAX_STAGED_OPS, MAX_STATE_COMBINATIONS, MAX_STATE_VALUES,
-    MAX_TELL_BYTES, MAX_TELLS, MAX_VALUE_DEPTH,
+    MAX_NETWORK_BLOCKS, MAX_NETWORK_DATA_BYTES, MAX_PERMUTATIONS, MAX_REASON_BYTES, MAX_STAGED_OPS,
+    MAX_STATE_COMBINATIONS, MAX_STATE_VALUES, MAX_TELL_BYTES, MAX_TELLS, MAX_VALUE_DEPTH,
 };
 
 mod player;
@@ -391,6 +391,8 @@ struct Limits {
     max_condition_tests: usize,
     max_flipbook_frames: usize,
     max_geometry_bytes: usize,
+    max_network_blocks: usize,
+    max_network_data_bytes: usize,
 }
 
 /// A placement trait's state and its values, in the client's order.
@@ -865,6 +867,8 @@ pub fn fixtures() -> Vec<(&'static str, String)> {
                 max_condition_tests: MAX_CONDITION_TESTS,
                 max_flipbook_frames: MAX_FLIPBOOK_FRAMES,
                 max_geometry_bytes: MAX_GEOMETRY_BYTES,
+                max_network_blocks: MAX_NETWORK_BLOCKS,
+                max_network_data_bytes: MAX_NETWORK_DATA_BYTES,
             }),
         ),
         (

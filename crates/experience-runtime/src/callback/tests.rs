@@ -11,12 +11,13 @@ use crate::host::cinnabar::experience_server::types::{
 };
 use crate::limits::{
     MAX_BLOCK_DATA_BYTES, MAX_CLIENT_SEND_BYTES, MAX_CLIENT_SENDS, MAX_HOST_CALLS,
-    MAX_STAGED_DATA_BYTES, MAX_STAGED_OPS, MAX_TELL_BYTES, MAX_TELLS, MAX_VALUE_DEPTH,
+    MAX_NETWORK_BLOCKS, MAX_NETWORK_DATA_BYTES, MAX_STAGED_DATA_BYTES, MAX_STAGED_OPS,
+    MAX_TELL_BYTES, MAX_TELLS, MAX_VALUE_DEPTH,
 };
 use crate::load::{OwnBlocks, axes};
 use crate::protocol::{
-    BlockPos, BlockState, Call, Cell, Face, FailKind, Info, Op, Outcome, PlacementState, Request,
-    Scalar, StateDef, StateValue, StateValues,
+    BlockPos, BlockState, Call, Cell, Face, FailKind, Info, Network, Op, Outcome, PlacementState,
+    Request, Scalar, StateDef, StateValue, StateValues,
 };
 
 const ACTOR: &str = "3f2a7c1e-8b4d-4e6a-9c5f-1d2e3f4a5b6c";
@@ -41,6 +42,7 @@ struct Fixture {
     max_y: i32,
     budget: u64,
     cells: Vec<Cell>,
+    network: Option<Network>,
 }
 
 impl Fixture {
@@ -55,6 +57,7 @@ impl Fixture {
             max_y: 319,
             budget: 1 << 20,
             cells,
+            network: None,
         }
     }
 
@@ -88,7 +91,7 @@ impl Fixture {
             world_max_y: self.max_y,
             data_budget: self.budget,
             snapshot: self.cells,
-            network: None,
+            network: self.network,
             inventory: None,
             call: Call::Interact {
                 player: ACTOR.to_owned(),
@@ -116,6 +119,52 @@ impl Fixture {
         .into();
         let (res, _) = prepare(&Arc::new(own), &request).unwrap();
         res
+    }
+
+    /// The request this fixture makes, prepared for an Experience of probe:counter alone, or why
+    /// it is malformed.
+    fn prepared(self) -> Result<CallbackRes, String> {
+        let request = Request::Callback {
+            seq: 1,
+            info: Info {
+                world_id: "world".to_owned(),
+                dimension_id: "overworld".to_owned(),
+                tick: 1,
+                event_sequence: 1,
+            },
+            actor: self.actor.map(str::to_owned),
+            world_min_y: self.min_y,
+            world_max_y: self.max_y,
+            data_budget: self.budget,
+            snapshot: self.cells,
+            network: self.network,
+            inventory: None,
+            call: Call::Interact {
+                player: ACTOR.to_owned(),
+                pos: ANCHOR,
+                face: Face::Up,
+            },
+        };
+        let own: OwnBlocks = [(COUNTER.to_owned(), Vec::new())].into();
+        prepare(&Arc::new(own), &request).map(|(res, _)| res)
+    }
+
+    /// Adds loaded cells of `id` at `positions` beyond the anchor's neighbors, owned, with
+    /// `data` (hex).
+    fn far(mut self, id: &str, data: Option<&str>, positions: &[BlockPos]) -> Self {
+        for &pos in positions {
+            self.cells.push(loaded(pos, id, true, data));
+        }
+        self
+    }
+
+    /// Gives the callback a network of `blocks`.
+    fn network(mut self, blocks: &[BlockPos], truncated: bool) -> Self {
+        self.network = Some(Network {
+            blocks: blocks.to_vec(),
+            truncated,
+        });
+        self
     }
 }
 
@@ -740,4 +789,133 @@ fn replacement_resets_states() {
         res.set_block_state(ANCHOR, vec![on(true)]).unwrap(),
         Err(WorldError::NotOwned)
     );
+}
+
+/// A member of the anchor's network two chunk columns east, and one north of it.
+const FAR: BlockPos = BlockPos { x: 40, y: 64, z: 0 };
+const FAR_NORTH: BlockPos = BlockPos {
+    x: 40,
+    y: 64,
+    z: -1,
+};
+
+/// Without a network, `network` is none; with one, it is the members and whether a bound cut
+/// them short, as the adapter snapshotted them.
+#[test]
+fn network_reports_the_snapshotted_members() {
+    assert_eq!(Fixture::new().res().network().unwrap(), Ok(None));
+    let mut res = Fixture::new()
+        .far(LAMP, None, &[FAR])
+        .network(&[ANCHOR, FAR], true)
+        .res();
+    assert_eq!(
+        res.network().unwrap(),
+        Ok(Some(Network {
+            blocks: vec![ANCHOR, FAR],
+            truncated: true,
+        }))
+    );
+}
+
+/// Network members take data and states wherever they are, and are read like the anchor's
+/// neighbors; blocks are still set only in the anchor's chunk column, and a cell outside the
+/// network keeps the column's scope.
+#[test]
+fn network_members_take_data_and_states_but_not_blocks() {
+    let mut res = Fixture::new()
+        .cell(WEST, COUNTER, true, None)
+        .far(LAMP, Some("01"), &[FAR])
+        .far(COUNTER, None, &[FAR_NORTH])
+        .states(FAR, lamp("north", false, "red"))
+        .network(&[ANCHOR, FAR, FAR_NORTH], false)
+        .res();
+    assert_eq!(res.get_block(FAR).unwrap(), Ok(LAMP.to_owned()));
+    assert_eq!(res.block_data(FAR).unwrap(), Ok(Some(vec![1])));
+    assert_eq!(res.set_block_data(FAR, Some(vec![2])).unwrap(), Ok(()));
+    assert_eq!(res.set_block_state(FAR, vec![on(true)]).unwrap(), Ok(()));
+    assert_eq!(res.set_block_data(FAR_NORTH, None).unwrap(), Ok(()));
+    assert_eq!(
+        res.set_block(FAR, AIR.to_owned()).unwrap(),
+        Err(WorldError::Denied)
+    );
+    assert_eq!(
+        res.set_block_data(WEST, Some(vec![3])).unwrap(),
+        Err(WorldError::Denied)
+    );
+    assert_eq!(
+        res.ops,
+        vec![
+            Op::SetBlockData {
+                pos: FAR,
+                data: Some("02".to_owned()),
+            },
+            Op::SetBlockState {
+                pos: FAR,
+                states: vec![on(true)],
+            },
+            Op::SetBlockData {
+                pos: FAR_NORTH,
+                data: None,
+            },
+        ]
+    );
+}
+
+/// A network the adapter could not have built is malformed: a member outside the snapshot, an
+/// unloaded or foreign one, more than MAX_NETWORK_BLOCKS members, or more than
+/// MAX_NETWORK_DATA_BYTES of their data.
+#[test]
+fn malformed_networks_are_refused() {
+    let at = |i: usize| BlockPos {
+        x: 100 + i as i32,
+        y: 64,
+        z: 0,
+    };
+    let members = |count: usize| (0..count).map(at).collect::<Vec<_>>();
+    let chunk = "00".repeat(MAX_BLOCK_DATA_BYTES);
+    let full = MAX_NETWORK_DATA_BYTES / MAX_BLOCK_DATA_BYTES;
+    let accepted = [
+        Fixture::new()
+            .far(COUNTER, None, &members(MAX_NETWORK_BLOCKS))
+            .network(&members(MAX_NETWORK_BLOCKS), true),
+        Fixture::new()
+            .far(COUNTER, Some(&chunk), &members(full))
+            .network(&members(full), false),
+    ];
+    for fixture in accepted {
+        assert!(fixture.prepared().is_ok());
+    }
+    let mut unloaded = Fixture::new().network(&[ANCHOR, FAR], false);
+    unloaded.cells.push(Cell {
+        loaded: false,
+        ..loaded(FAR, "", false, None)
+    });
+    let refused = [
+        (Fixture::new().network(&[FAR], false), "not in the snapshot"),
+        (unloaded, "not a loaded block of its own"),
+        (
+            Fixture::new()
+                .cell(EAST, "minecraft:stone", false, None)
+                .network(&[EAST], false),
+            "not a loaded block of its own",
+        ),
+        (
+            Fixture::new()
+                .far(COUNTER, None, &members(MAX_NETWORK_BLOCKS + 1))
+                .network(&members(MAX_NETWORK_BLOCKS + 1), true),
+            "members",
+        ),
+        (
+            Fixture::new()
+                .far(COUNTER, Some(&chunk), &members(full + 1))
+                .network(&members(full + 1), true),
+            "bytes of data",
+        ),
+    ];
+    for (fixture, cause) in refused {
+        match fixture.prepared() {
+            Ok(_) => panic!("accepted, not {cause:?}"),
+            Err(error) => assert!(error.contains(cause), "{error:?} lacks {cause:?}"),
+        }
+    }
 }

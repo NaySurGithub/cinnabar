@@ -33,7 +33,7 @@ const shutdownGrace = time.Second
 
 // maxFrameBytes is the largest frame body. It must equal the Rust runtime's MAX_FRAME_BYTES,
 // which TestFrameLimitMatchesRust checks against the limits fixture.
-const maxFrameBytes = 1 << 20
+const maxFrameBytes = 4 << 20
 
 // stderrLineBytes is the longest helper stderr line that is logged; the rest of a longer line is
 // dropped.
@@ -109,4 +109,15 @@ const (
 	maxFlipbookFrames = 256
 	// maxGeometryBytes is the largest geometry file: Rust's MAX_GEOMETRY_BYTES.
 	maxGeometryBytes = 1 << 20
+)
+
+// The network bounds, which the flood keeps. Each must equal its Rust constant, which
+// TestCommitLimitsMatchRust checks against the limits fixture.
+const (
+	// maxNetworkBlocks is the most members of one callback's network: Rust's
+	// MAX_NETWORK_BLOCKS.
+	maxNetworkBlocks = 1024
+	// maxNetworkDataBytes is the most data of one callback's network, summed over its members:
+	// Rust's MAX_NETWORK_DATA_BYTES.
+	maxNetworkDataBytes = 524_288
 )

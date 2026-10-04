@@ -285,7 +285,7 @@ func TestBlockTypeRules(t *testing.T) {
 			b.Visual.Rotation = &QuarterTurns{Y: 2}
 			b.Permutations[0].Rotation = &QuarterTurns{}
 		}, "cannot replace the visual's rotation"},
-		{"a network member", func(b *BlockDef) { b.Network = true }, "not supported yet"},
+		{"a network member", func(b *BlockDef) { b.Network = true }, ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

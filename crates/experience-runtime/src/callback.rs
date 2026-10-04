@@ -1,7 +1,7 @@
 //! One callback: a fresh instance of the guest runs one export against the request's snapshot.
 //! What the guest stages through its borrowed `callback` becomes the outcome, or nothing does.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::sync::Arc;
 
@@ -17,13 +17,13 @@ use crate::host::cinnabar::experience_server::types::{
 use crate::host::{HostState, LimitExceeded, Pre};
 use crate::limits::{
     CALLBACK_DEADLINE, CALLBACK_FUEL, MAX_BLOCK_DATA_BYTES, MAX_CLIENT_SEND_BYTES,
-    MAX_CLIENT_SENDS, MAX_HOST_CALLS, MAX_STAGED_DATA_BYTES, MAX_STAGED_OPS, MAX_TELL_BYTES,
-    MAX_TELLS, MAX_VALUE_DEPTH,
+    MAX_CLIENT_SENDS, MAX_HOST_CALLS, MAX_NETWORK_BLOCKS, MAX_NETWORK_DATA_BYTES,
+    MAX_STAGED_DATA_BYTES, MAX_STAGED_OPS, MAX_TELL_BYTES, MAX_TELLS, MAX_VALUE_DEPTH,
 };
 use crate::load::{Loaded, OwnBlocks, holds};
 use crate::protocol::{
-    self, BlockPos, BlockState, Call, Cell, FailKind, Op, Outcome, Request, Scalar, StateDef,
-    StateValue, StateValues, bounded_reason,
+    self, BlockPos, BlockState, Call, Cell, FailKind, Network, Op, Outcome, Request, Scalar,
+    StateDef, StateValue, StateValues, bounded_reason,
 };
 use crate::value::{self, Refusal};
 
@@ -250,6 +250,8 @@ pub struct CallbackRes {
     /// The ids and state axes of this Experience's blocks.
     own: Arc<OwnBlocks>,
     snapshot: Snapshot,
+    /// The anchor's network when the anchor is a member, as the adapter snapshotted it.
+    network: Option<Network>,
     /// In the order they commit. A position has at most one `SetBlockData`, and it comes after
     /// any `SetBlock` there.
     ops: Vec<Op>,
@@ -275,6 +277,17 @@ struct Snapshot {
     /// The anchor's chunk column, which writes stay inside; a callback without an anchor writes
     /// nothing.
     column: Option<(i32, i32)>,
+    /// The members of the anchor's network, whose data and states may be written wherever they
+    /// are.
+    members: HashSet<BlockPos>,
+}
+
+/// Where a write may reach: blocks stay in the anchor's chunk column, data and states also reach
+/// the anchor's network.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Reach {
+    Column,
+    Network,
 }
 
 /// One snapshot cell. `owned` means it holds this Experience's block, which alone has data and
@@ -328,6 +341,7 @@ fn prepare<'a>(
         world_max_y,
         data_budget,
         snapshot,
+        network,
         call,
         ..
     } = request
@@ -402,7 +416,11 @@ fn prepare<'a>(
             };
             Ok((cell.pos, slot))
         })
-        .collect::<Result<_, String>>()?;
+        .collect::<Result<HashMap<_, _>, String>>()?;
+    let members = match network {
+        Some(network) => members(network, &cells)?,
+        None => HashSet::new(),
+    };
     let res = CallbackRes {
         info: CallbackInfo {
             world_id: info.world_id.clone(),
@@ -418,7 +436,9 @@ fn prepare<'a>(
             min_y: *world_min_y,
             max_y: *world_max_y,
             column: anchor.map(column),
+            members,
         },
+        network: network.clone(),
         ops: Vec::new(),
         budget: *data_budget,
         added: 0,
@@ -429,6 +449,38 @@ fn prepare<'a>(
         client_send_bytes: 0,
     };
     Ok((res, export))
+}
+
+/// The members of `network`, which the adapter builds from the snapshot's loaded own blocks
+/// within the network bounds; anything else is malformed.
+fn members(
+    network: &Network,
+    cells: &HashMap<BlockPos, Slot>,
+) -> Result<HashSet<BlockPos>, String> {
+    if network.blocks.len() > MAX_NETWORK_BLOCKS {
+        return Err(format!(
+            "the network has {} members; the limit is {MAX_NETWORK_BLOCKS}",
+            network.blocks.len()
+        ));
+    }
+    let mut data = 0;
+    for pos in &network.blocks {
+        let slot = cells
+            .get(pos)
+            .ok_or_else(|| format!("network member {pos:?} is not in the snapshot"))?;
+        if !slot.loaded || !slot.owned {
+            return Err(format!(
+                "network member {pos:?} is not a loaded block of its own"
+            ));
+        }
+        data += slot.data.as_ref().map_or(0, Vec::len);
+    }
+    if data > MAX_NETWORK_DATA_BYTES {
+        return Err(format!(
+            "the network holds {data} bytes of data; the limit is {MAX_NETWORK_DATA_BYTES}"
+        ));
+    }
+    Ok(network.blocks.iter().copied().collect())
 }
 
 fn block_change(change: &protocol::Change) -> Result<wit::BlockChange, String> {
@@ -495,10 +547,12 @@ impl Snapshot {
         }
     }
 
-    /// A cell the guest may read that is also in the anchor's chunk column, so it may write it.
-    fn write(&mut self, pos: BlockPos) -> Result<&mut Slot, WorldError> {
+    /// A cell the guest may read that is also in the anchor's chunk column, or with
+    /// [`Reach::Network`] a member of its network, so it may write it.
+    fn write(&mut self, pos: BlockPos, reach: Reach) -> Result<&mut Slot, WorldError> {
         self.within_height(pos)?;
-        if self.column != Some(column(pos)) {
+        let member = reach == Reach::Network && self.members.contains(&pos);
+        if self.column != Some(column(pos)) && !member {
             return Err(WorldError::Denied);
         }
         let slot = self.cells.get_mut(&pos).ok_or(WorldError::Denied)?;
@@ -526,8 +580,8 @@ impl CallbackRes {
         Ok(self.info.clone())
     }
 
-    /// A 0.5 call whose implementation has not landed (SP5 tasks F and G): it counts as a host
-    /// call and is refused as `unsupported-state`, staging nothing.
+    /// A 0.5 call whose implementation has not landed (SP5 task G): it counts as a host call and
+    /// is refused as `unsupported-state`, staging nothing.
     pub(crate) fn not_yet<T>(&mut self) -> Result<Result<T, WorldError>> {
         self.host_call()?;
         Ok(Err(WorldError::UnsupportedState))
@@ -553,7 +607,7 @@ impl CallbackRes {
         id: String,
     ) -> Result<Result<(), WorldError>> {
         self.host_call()?;
-        let slot = match self.snapshot.write(pos) {
+        let slot = match self.snapshot.write(pos, Reach::Column) {
             Ok(slot) => slot,
             Err(error) => return Ok(Err(error)),
         };
@@ -587,6 +641,12 @@ impl CallbackRes {
         Ok(Ok(()))
     }
 
+    /// The anchor's network, none when the anchor is not a member.
+    pub(crate) fn network(&mut self) -> Result<Result<Option<Network>, WorldError>> {
+        self.host_call()?;
+        Ok(Ok(self.network.clone()))
+    }
+
     /// The states of the block at `pos`, which only this Experience's blocks have.
     pub(crate) fn block_states(
         &mut self,
@@ -605,7 +665,7 @@ impl CallbackRes {
         states: Vec<BlockState>,
     ) -> Result<Result<(), WorldError>> {
         self.host_call()?;
-        let slot = match self.snapshot.write(pos) {
+        let slot = match self.snapshot.write(pos, Reach::Network) {
             Ok(slot) => slot,
             Err(error) => return Ok(Err(error)),
         };
@@ -662,7 +722,7 @@ impl CallbackRes {
         data: Option<Vec<u8>>,
     ) -> Result<Result<(), WorldError>> {
         self.host_call()?;
-        let slot = match self.snapshot.write(pos) {
+        let slot = match self.snapshot.write(pos, Reach::Network) {
             Ok(slot) => slot,
             Err(error) => return Ok(Err(error)),
         };

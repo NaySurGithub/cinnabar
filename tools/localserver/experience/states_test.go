@@ -56,7 +56,7 @@ func TestBlockStatesRoundTrip(t *testing.T) {
 	f.activate(at)
 	refused := "unsupported-state"
 	f.waitTells(5*time.Second, "states "+lampStates("down", false)+" set ok states "+
-		lampStates("down", true)+" network "+refused+" inventory "+refused+" set-slot "+refused+
+		lampStates("down", true)+" network ok inventory "+refused+" set-slot "+refused+
 		" drop-item "+refused)
 	up := BlockPos{X: at.X, Y: at.Y + 1, Z: at.Z}
 	lamp := f.blockAt(up)

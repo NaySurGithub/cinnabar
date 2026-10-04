@@ -87,10 +87,20 @@ pub const MAX_REASON_BYTES: usize = 512;
 pub const MAX_LOGS: usize = 32;
 /// Bytes per log line.
 pub const MAX_LOG_BYTES: usize = 512;
-/// Encoded JSON bytes per IPC frame, excluding the 4-byte length prefix.
-pub const MAX_FRAME_BYTES: usize = 1024 * 1024;
+/// Members one callback's network holds; the adapter's flood stops there and marks the network
+/// truncated.
+pub const MAX_NETWORK_BLOCKS: usize = 1024;
+/// Bytes of block data one callback's network holds, summed over its members; the adapter's
+/// flood stops before a member that would pass it and marks the network truncated.
+pub const MAX_NETWORK_DATA_BYTES: usize = 524_288;
+/// Encoded JSON bytes per IPC frame, excluding the 4-byte length prefix. A callback request
+/// carries a network, so it is room for the network's data as hex and its cells.
+pub const MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
 
 // Hex doubles staged data, which may fill at most half of a result frame; the other half is
 // room for the remaining ops, client messages included.
 const _: () = assert!(2 * MAX_STAGED_DATA_BYTES <= MAX_FRAME_BYTES / 2);
 const _: () = assert!(MAX_CLIENT_SEND_BYTES <= MAX_FRAME_BYTES / 8);
+// Hex doubles the network's data, which may fill at most half of a request frame; the other half
+// is room for its cells, which the Go adapter's tests check at the bounds, and the rest.
+const _: () = assert!(2 * MAX_NETWORK_DATA_BYTES <= MAX_FRAME_BYTES / 2);

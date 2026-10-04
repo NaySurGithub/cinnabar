@@ -166,7 +166,8 @@ type dataWrite struct {
 }
 
 // validate checks every op against the snapshot as the ops before it change it, by the rules
-// the runtime enforced: writes stay in the anchor's chunk column on loaded snapshot cells, set
+// the runtime enforced: writes stay on loaded snapshot cells in the anchor's chunk column, or for
+// data and states reach the members of its network, set
 // air or an own block over air or an own block, write data and states only to an own block,
 // within the size limit and among its states, and tell and send client messages only to the
 // actor, within the tell and client message limits. A position has at most one data op, after its last block op. Like the runtime, it holds
@@ -179,12 +180,21 @@ func (h *Host) validate(exp string, ev event, snap snapshot, ops []Op) ([]dataWr
 	column := func(pos cube.Pos) [2]int { return [2]int{pos[0] >> 4, pos[2] >> 4} }
 	cells := make(map[cube.Pos]*simCell, len(snap.cells))
 	for _, c := range snap.cells {
-		if c.loaded && column(c.pos) == column(ev.anchor) {
+		if c.loaded {
 			cells[c.pos] = &simCell{id: c.id, owned: c.owned, dataLen: c.dataLen}
 		}
 	}
-	writable := func(i int, pos BlockPos) (*simCell, error) {
-		if c, ok := cells[pos.cube()]; ok {
+	members := make(map[cube.Pos]bool)
+	if snap.req.Network != nil {
+		for _, pos := range snap.req.Network.Blocks {
+			members[pos.cube()] = true
+		}
+	}
+	// writable is the cell an op writes: in the anchor's chunk column, or for data and states a
+	// member of its network.
+	writable := func(i int, pos BlockPos, network bool) (*simCell, error) {
+		p := pos.cube()
+		if c, ok := cells[p]; ok && (column(p) == column(ev.anchor) || network && members[p]) {
 			return c, nil
 		}
 		return nil, fmt.Errorf("%w: op %d writes %v, outside the write scope", errInvalid, i, pos)
@@ -200,7 +210,7 @@ func (h *Host) validate(exp string, ev event, snap snapshot, ops []Op) ([]dataWr
 	for i, op := range ops {
 		switch {
 		case op.SetBlock != nil:
-			c, err := writable(i, op.SetBlock.Pos)
+			c, err := writable(i, op.SetBlock.Pos, false)
 			if err != nil {
 				return nil, err
 			}
@@ -218,7 +228,7 @@ func (h *Host) validate(exp string, ev event, snap snapshot, ops []Op) ([]dataWr
 			used -= int64(c.dataLen)
 			*c = simCell{id: id, owned: id != airID}
 		case op.SetBlockData != nil:
-			c, err := writable(i, op.SetBlockData.Pos)
+			c, err := writable(i, op.SetBlockData.Pos, true)
 			if err != nil {
 				return nil, err
 			}
@@ -267,7 +277,7 @@ func (h *Host) validate(exp string, ev event, snap snapshot, ops []Op) ([]dataWr
 				return nil, fmt.Errorf("%w: more than %d client messages", errInvalid, maxClientSends)
 			}
 		case op.SetBlockState != nil:
-			c, err := writable(i, op.SetBlockState.Pos)
+			c, err := writable(i, op.SetBlockState.Pos, true)
 			if err != nil {
 				return nil, err
 			}

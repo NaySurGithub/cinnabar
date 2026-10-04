@@ -46,6 +46,8 @@ type blockType struct {
 	declared map[string][]any
 	// visual is the block's look when it declares one; nil draws its textures on the full cube.
 	visual *visualType
+	// network is set for a network member, whose callbacks have the network around it.
+	network bool
 }
 
 // Block is an Experience block, in a world or as an item: its type and its state, an index of

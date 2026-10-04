@@ -1,5 +1,6 @@
-//! Server WIT 0.5's calls. x=24 makes each once: the block-state calls, which the runtime
-//! implements, and the rest, which it refuses until they are implemented. x=25 toggles a lamp.
+//! Server WIT 0.5's calls. x=24 makes each once: the block-state calls and `network`, which the
+//! runtime implements, and the rest, which it refuses until they are implemented. x=25 toggles a
+//! lamp; x=26 marks every member of a node's network.
 
 use experience_sdk::server::{
     BlockDef, BlockPos, BlockState, BlockType, Callback, Mining, NewStack, PlacementStates,
@@ -8,10 +9,13 @@ use experience_sdk::server::{
 
 /// A cube with the facing placement trait and one bool state, [`LAMP_ON`].
 const LAMP: &str = "probe:lamp";
+/// A cube that is a network member.
+const NODE: &str = "probe:node";
 pub(crate) const LAMP_ON: &str = "probe:on";
 
 /// The probe's blocks, each a cube showing `counter.png`: the counter `counter`, without states,
-/// and the lamp, with the facing trait and [`LAMP_ON`]; and no items.
+/// the lamp, with the facing trait and [`LAMP_ON`], and the node, a network member; and no
+/// items.
 pub(crate) fn registration(counter: &str) -> Registration {
     let def = |id: &str, display_name: &str| BlockDef {
         id: id.to_owned(),
@@ -31,7 +35,14 @@ pub(crate) fn registration(counter: &str) -> Registration {
         ..cube(def(LAMP, "Probe Lamp"))
     };
     Registration {
-        blocks: vec![cube(def(counter, "Probe Counter")), lamp],
+        blocks: vec![
+            cube(def(counter, "Probe Counter")),
+            lamp,
+            BlockType {
+                network: true,
+                ..cube(def(NODE, "Probe Node"))
+            },
+        ],
         items: Vec::new(),
     }
 }
@@ -73,6 +84,28 @@ pub(crate) fn toggle_lamp(ctx: &Callback, p: BlockPos) -> String {
             Ok(()) => format!("lamp {}", states(ctx.block_states(p))),
             Err(error) => format!("error {}", error.name()),
         },
+        Err(error) => format!("error {}", error.name()),
+    }
+}
+
+/// Writes, to every member of the anchor's network, the member count as one byte of data, and
+/// tells `network {members} truncated {bool} wrote {writes}`, or `network none` off a network.
+pub(crate) fn mark_network(ctx: &Callback) -> String {
+    match ctx.network() {
+        Ok(Some(network)) => {
+            let members = network.blocks.len();
+            let mark = [members as u8];
+            let wrote = network
+                .blocks
+                .iter()
+                .filter(|pos| ctx.set_block_data(**pos, Some(&mark)).is_ok())
+                .count();
+            format!(
+                "network {members} truncated {} wrote {wrote}",
+                network.truncated
+            )
+        }
+        Ok(None) => "network none".to_owned(),
         Err(error) => format!("error {}", error.name()),
     }
 }

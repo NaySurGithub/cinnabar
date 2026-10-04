@@ -127,11 +127,6 @@ func newBlockType(exp string, def BlockDef, cache *assetCache) (*blockType, erro
 }
 
 func blockTypeOf(exp string, def BlockDef, cache *assetCache) (*blockType, error) {
-	if def.Network {
-		// Server WIT 0.5's network scope is in the protocol before the adapter floods it (SP5
-		// task F).
-		return nil, errors.New("network membership is not supported yet")
-	}
 	t := &blockType{
 		exp:       exp,
 		id:        def.ID,
@@ -141,6 +136,7 @@ func blockTypeOf(exp string, def BlockDef, cache *assetCache) (*blockType, error
 		placement: def.Placement,
 		traits:    traitsOf(def.Placement),
 		declared:  make(map[string][]any, len(def.States)),
+		network:   def.Network,
 	}
 	b := Block{t: t}
 	info := block.BreakInfo{

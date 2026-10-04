@@ -446,7 +446,13 @@ impl world_access::HostCallback for HostState {
         &mut self,
         ctx: Resource<CallbackRes>,
     ) -> Result<Result<Option<Network>, WorldError>> {
-        self.table.get_mut(&ctx)?.not_yet()
+        let network = self.table.get_mut(&ctx)?.network()?;
+        Ok(network.map(|network| {
+            network.map(|network| Network {
+                blocks: network.blocks.into_iter().map(Into::into).collect(),
+                truncated: network.truncated,
+            })
+        }))
     }
 
     fn inventory(&mut self, ctx: Resource<CallbackRes>) -> Result<Result<Inventory, WorldError>> {

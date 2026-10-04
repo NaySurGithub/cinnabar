@@ -828,7 +828,7 @@ fn block_type_rules_accept_limits_and_refuse_violations() {
         (
             "a network member",
             cable_with(|block| block.network = true),
-            Some("does not support yet"),
+            None,
         ),
     ]);
 }
@@ -868,7 +868,10 @@ fn items_are_refused_until_implemented() {
 fn axes_put_placement_states_first() {
     let dir = tempfile::tempdir().unwrap();
     let manifest = rule_assets(dir.path());
-    let blocks = validate_blocks(dir.path(), &manifest, vec![cable()]).unwrap();
+    let mut member = cable();
+    member.network = true;
+    let blocks = validate_blocks(dir.path(), &manifest, vec![member]).unwrap();
+    assert!(blocks[0].network, "network membership reaches the adapter");
     let axes = axes(&blocks[0].states, &blocks[0].placement);
     let names: Vec<&str> = axes.iter().map(|axis| axis.name.as_str()).collect();
     assert_eq!(

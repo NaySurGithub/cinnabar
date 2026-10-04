@@ -275,8 +275,7 @@ fn is_lower_snake(name: &str) -> bool {
 }
 
 /// Checks one block type: its display name and mining, its states and placement traits, and
-/// either textures on the full cube or a visual with its permutations. Network membership is in
-/// the contract, but this runtime does not implement it yet (SP5 task F), so it is refused.
+/// either textures on the full cube or a visual with its permutations.
 fn validate_block(
     assets: &mut block_type::Assets<'_>,
     block: wit::BlockType,
@@ -289,10 +288,6 @@ fn validate_block(
         permutations,
         network,
     } = block;
-    ensure!(
-        !network,
-        "it is a network member, which this runtime does not support yet"
-    );
     let wit::BlockDef {
         id,
         display_name,
@@ -348,7 +343,7 @@ fn validate_block(
         placement,
         visual,
         permutations,
-        network: false,
+        network,
     })
 }
 
