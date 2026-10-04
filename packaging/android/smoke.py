@@ -18,6 +18,7 @@ import xml.etree.ElementTree as ET
 RUNTIME = Path(__file__).with_name('runtime.json')
 PORT = 5554
 SERVER_NAME = 'Smoke target'
+SERVER_CONFIG = 'files/config/servers.json'
 
 
 def observed_home_play(value):
@@ -171,10 +172,7 @@ class Smoke:
         self.adb('install', '-r', str(apk.resolve()), timeout=120)
         self.adb('exec-out', 'run-as', self.package, 'id')
         if self.args.server:
-            self.adb('shell', 'run-as', self.package, 'mkdir', '-p', 'files/config')
-            servers = json.dumps([{'name': SERVER_NAME, 'address': self.args.server, 'favorite': True}]).encode()
-            self.adb('exec-out', 'run-as', self.package, 'sh', '-c',
-                     shlex.quote('cat > files/config/servers.json'), input=servers)
+            self.seed_server()
         self.adb('logcat', '-c')
         with (self.output / 'logcat.txt').open('wb') as log:
             self.logcat = subprocess.Popen(self.adb_command + ['logcat', '-v', 'threadtime'],
@@ -189,6 +187,22 @@ class Smoke:
         if b'Error:' in started.stdout:
             raise RuntimeError(started.stdout.decode(errors='replace'))
         self.launched = time.monotonic()
+
+    def seed_server(self):
+        servers = [{'name': SERVER_NAME, 'address': self.args.server, 'favorite': True}]
+        self.adb('shell', '-T', 'run-as', self.package, 'mkdir', '-p', str(Path(SERVER_CONFIG).parent))
+        # shell -T forwards stdin and reports the remote exit code; exec-out only reads output.
+        self.adb('shell', '-T', 'run-as', self.package, 'sh', '-c',
+                 shlex.quote('cat > ' + SERVER_CONFIG), input=json.dumps(servers).encode())
+        written = self.private(SERVER_CONFIG)
+        (self.output / 'servers-fixture.json').write_bytes(written)
+        try:
+            actual = json.loads(written)
+        except (ValueError, UnicodeDecodeError) as error:
+            raise RuntimeError('Saved-server fixture readback is not valid JSON; app not launched') from error
+        if actual != servers:
+            raise RuntimeError('Saved-server fixture readback differs; app not launched')
+        self.result['server_fixture_verified'] = True
 
     def faults(self):
         try:
@@ -323,6 +337,8 @@ class Smoke:
             raise RuntimeError('Offline join could not be confirmed; inspect final frame and logs')
 
     def collect(self):
+        if self.args.server:
+            (self.output / 'servers-final.json').write_bytes(self.private(SERVER_CONFIG, timeout=5))
         for filename in ('first-run.log', 'first-run-status.json', 'client.log', 'client.log.1', 'core.log'):
             try:
                 (self.output / filename).write_bytes(self.private('files/data/logs/' + filename, timeout=5))
