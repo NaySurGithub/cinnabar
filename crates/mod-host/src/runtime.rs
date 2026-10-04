@@ -3,7 +3,11 @@ use crate::{
     ModScreens,
 };
 use anyhow::{Result, bail};
-use server_experience::{runtime::CALLBACK_FUEL, screen::ScreenLayout, session_data::SessionData};
+use server_experience::{
+    runtime::{CALLBACK_FUEL, LOAD_FUEL},
+    screen::ScreenLayout,
+    session_data::SessionData,
+};
 use std::{collections::BTreeSet, sync::Arc};
 use wasmtime::{
     Engine, Store, StoreLimits, StoreLimitsBuilder,
@@ -98,6 +102,8 @@ pub(super) struct Instance {
     store: Store<State>,
     exports: exports::Exports,
     pub(super) active: bool,
+    /// Fuel the last `init` or callback consumed.
+    last_fuel: u64,
 }
 
 impl Instance {
@@ -145,16 +151,18 @@ impl Instance {
         };
         let mut store = Store::new(engine, state);
         store.limiter(|state| &mut state.limits);
-        store.set_fuel(CALLBACK_FUEL)?;
+        store.set_fuel(LOAD_FUEL)?;
         let instance = linker.instantiate(&mut store, &component)?;
         let (init, exports) = exports::Exports::find(&mut store, &instance)?;
         init.call(&mut store, ())?;
         init.post_return(&mut store)?;
         commit(&mut store);
+        let last_fuel = LOAD_FUEL - store.get_fuel().unwrap_or(0).min(LOAD_FUEL);
         Ok(Self {
             store,
             exports,
             active: true,
+            last_fuel,
         })
     }
 
@@ -187,7 +195,13 @@ impl Instance {
             return Ok(());
         }
         self.store.data().check_event(event)?;
-        self.run(CALLBACK_FUEL, |exports, store| exports.event(store, event))
+        // Loading the session reads all of it across the ABI; every other event is bounded by
+        // the per-event budget.
+        let fuel = match event {
+            ModEvent::DataChanged => LOAD_FUEL,
+            _ => CALLBACK_FUEL,
+        };
+        self.run(fuel, |exports, store| exports.event(store, event))
     }
 
     /// Runs one callback with `fuel`; a trap discards its output and quarantines the guest,
@@ -206,7 +220,9 @@ impl Instance {
         state.output = 0;
         state.pending_screens = None;
         self.store.set_fuel(fuel)?;
-        if let Err(error) = call(&self.exports, &mut self.store) {
+        let called = call(&self.exports, &mut self.store);
+        self.last_fuel = fuel - self.store.get_fuel().unwrap_or(0).min(fuel);
+        if let Err(error) = called {
             self.quarantine();
             bail!("mod quarantined after a guest trap: {error:#}");
         }
@@ -263,12 +279,22 @@ impl Instance {
         state.layout = layout;
     }
 
-    /// Closes the view without the guest, as Escape does.
-    pub(super) fn close_view(&mut self) {
+    /// Closes the view without the guest, as Escape does; `true` when one was open.
+    pub(super) fn close_view(&mut self) -> bool {
         let screens = &mut self.store.data_mut().screens;
-        if screens.view.take().is_some() {
+        let open = screens.view.take().is_some();
+        if open {
             screens.data.revision += 1;
         }
+        open
+    }
+
+    pub(super) fn view_open(&self) -> bool {
+        self.store.data().screens.view.is_some()
+    }
+
+    pub(super) fn last_fuel(&self) -> u64 {
+        self.last_fuel
     }
 
     pub(super) fn set_session(&mut self, session: Arc<SessionData>) {

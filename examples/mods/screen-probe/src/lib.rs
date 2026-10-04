@@ -1,7 +1,8 @@
 //! The host tests' extension 0.2 mod. Each callback reports what it received or read as a bound
 //! value, so a test reads the guest's view of the host from the committed screens. A few inputs
-//! misbehave on purpose: the `probe.trap` key traps, the text `loop` never returns, and
-//! `probe.flood` binds until the host refuses.
+//! misbehave on purpose: the `probe.trap` key traps, the text `loop` never returns,
+//! `probe.flood` binds until the host refuses, and `probe.read_all` reads the whole session in
+//! an ordinary event, as `data-changed` does on the load budget.
 
 use mod_api::v0_2::{
     Guest, ScreenLayout, Stack,
@@ -15,6 +16,11 @@ mod declared {
 }
 
 struct Probe;
+
+thread_local! {
+    /// How often the host closed the view.
+    static VIEW_CLOSED: std::cell::Cell<i64> = const { std::cell::Cell::new(0) };
+}
 
 fn report(name: &str, value: Value) {
     let _ = screen::set_value(name, &value);
@@ -56,6 +62,27 @@ fn read_session() {
     }
 }
 
+/// Reads every item and recipe page by page, as a mod loading the session does, and reports
+/// how many it read.
+fn read_all() {
+    let mut items = 0;
+    while let Ok(page) = items::page(items, 256) {
+        if page.is_empty() {
+            break;
+        }
+        items += page.len() as u32;
+    }
+    let mut recipes = 0;
+    while let Ok(page) = recipes::page(recipes, 256) {
+        if page.is_empty() {
+            break;
+        }
+        recipes += page.len() as u32;
+    }
+    report("#items_read", Value::Integer(items.into()));
+    report("#recipes_read", Value::Integer(recipes.into()));
+}
+
 impl Guest for Probe {
     fn init() {
         let _ = screen::set_overlay(Some(declared::templates::OVERLAY));
@@ -88,6 +115,9 @@ impl Guest for Probe {
             screen::open_view(Some(declared::templates::VIEW))
         } else if id == declared::actions::CLOSE {
             screen::open_view(None)
+        } else if id == declared::actions::READ_ALL {
+            read_all();
+            Ok(())
         } else if id == declared::actions::FLOOD {
             let row = format!(
                 r##"{{"#n":{{"type":"text","value":"{}"}}}}"##,
@@ -124,7 +154,7 @@ impl Guest for Probe {
         text("#search", format!("{control}={text_now}"));
     }
 
-    fn key(id: String, hovered: Option<Stack>) {
+    fn key(id: String, hovered: Option<Stack>, row: Option<(String, u32)>) {
         if id == declared::keys::TRAP {
             panic!("probe trap");
         }
@@ -134,11 +164,18 @@ impl Guest for Probe {
                 stack.key.identifier, stack.key.aux, stack.count, stack.icon
             )
         });
-        text("#key", format!("{id}:{hovered}"));
+        text("#key", format!("{id}:{hovered}:{row:?}"));
     }
 
     fn data_changed() {
         read_session();
+        read_all();
+    }
+
+    fn view_closed() {
+        let closed = VIEW_CLOSED.get() + 1;
+        VIEW_CLOSED.set(closed);
+        report("#view_closed", Value::Integer(closed));
     }
 }
 

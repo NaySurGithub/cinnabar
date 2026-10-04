@@ -111,7 +111,10 @@ impl State {
                     "{id} is not a declared key"
                 );
             }
-            ModEvent::ScreenChanged(_) | ModEvent::Scrolled { .. } | ModEvent::DataChanged => {}
+            ModEvent::ScreenChanged(_)
+            | ModEvent::Scrolled { .. }
+            | ModEvent::DataChanged
+            | ModEvent::ViewClosed => {}
         }
         Ok(())
     }
@@ -323,6 +326,7 @@ pub(super) fn layout(layout: &HostLayout) -> Layout {
         },
         gui: rect(&layout.gui),
         exclusions: layout.exclusions.iter().map(rect).collect(),
+        view: layout.view.as_ref().map(rect),
     }
 }
 

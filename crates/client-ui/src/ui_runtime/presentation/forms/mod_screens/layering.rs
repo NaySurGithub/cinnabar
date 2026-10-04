@@ -43,10 +43,75 @@ pub(super) fn gui_rect(
     })
 }
 
-/// The GUI rect and exclusions in content-logical pixels, `[left, top, right, bottom]`, at
-/// `scale` logical pixels per GUI unit.
+/// The bounds of the visible nodes in `nodes`, in GUI units at `scale` logical pixels per unit,
+/// leaving out full-screen ones (a dimmed background) of a `content`-sized root.
+pub(super) fn drawn_bounds(nodes: &[UiNode], content: [f32; 2], scale: f32) -> Option<Rect> {
+    let origins: BTreeMap<UiNodeId, [f32; 2]> = nodes
+        .iter()
+        .map(|node| {
+            let min = node.bounds().min();
+            (node.id(), [min.x(), min.y()])
+        })
+        .collect();
+    let full_screen = |width: f32, height: f32| {
+        f64::from(width) >= f64::from(content[0]) * FULL_SCREEN_SHARE
+            && f64::from(height) >= f64::from(content[1]) * FULL_SCREEN_SHARE
+    };
+    let [left, top, right, bottom] = nodes
+        .iter()
+        .filter(|node| !matches!(node.visual(), UiVisual::None))
+        .filter(|node| !full_screen(node.bounds().width(), node.bounds().height()))
+        .map(|node| {
+            let origin = node
+                .parent()
+                .and_then(|parent| origins.get(&parent))
+                .copied()
+                .unwrap_or_default();
+            let bounds = node.bounds();
+            [
+                origin[0] + bounds.min().x(),
+                origin[1] + bounds.min().y(),
+                origin[0] + bounds.max().x(),
+                origin[1] + bounds.max().y(),
+            ]
+        })
+        .reduce(|a, b| {
+            [
+                a[0].min(b[0]),
+                a[1].min(b[1]),
+                a[2].max(b[2]),
+                a[3].max(b[3]),
+            ]
+        })?;
+    let gui = |value: f32| f64::from(value / scale);
+    Some(Rect {
+        x: gui(left),
+        y: gui(top),
+        width: gui(right - left),
+        height: gui(bottom - top),
+    })
+}
+
+/// The collection name and index of the topmost enabled control at GUI `point` that sits in a
+/// collection, by the rule `action` reports rows with (the control's nearest collection).
+/// `regions` are `(rect, collection and index, enabled)` in draw order.
+pub(super) fn nearest_row<'a>(
+    regions: impl DoubleEndedIterator<Item = ([f64; 4], Option<(&'a str, usize)>, bool)>,
+    [x, y]: [f64; 2],
+) -> Option<(String, u32)> {
+    regions
+        .rev()
+        .find_map(|([left, top, width, height], row, enabled)| {
+            let inside = x >= left && y >= top && x < left + width && y < top + height;
+            let (collection, index) = row.filter(|_| enabled && inside)?;
+            Some((collection.to_owned(), u32::try_from(index).ok()?))
+        })
+}
+
+/// The panels (the open view's while it is up) and exclusions in content-logical pixels,
+/// `[left, top, right, bottom]`, at `scale` logical pixels per GUI unit.
 pub(super) fn forbidden_logical(layout: &ScreenLayout, scale: f32) -> Vec<[f32; 4]> {
-    std::iter::once(&layout.gui)
+    std::iter::once(layout.panels())
         .chain(&layout.exclusions)
         .map(|rect| {
             [
@@ -183,10 +248,10 @@ pub(super) fn restore_lifted(nodes: &mut Vec<UiNode>, lifted: Lifted, next: &mut
     }
 }
 
-/// Whether an overlay control at GUI `rect` (`[x, y, w, h]`) lies wholly outside the GUI rect
-/// and every exclusion, so it can never intercept a vanilla control.
+/// Whether an overlay control at GUI `rect` (`[x, y, w, h]`) lies wholly outside the panels (the
+/// open view's while it is up) and every exclusion, so it can never intercept them.
 pub(super) fn overlay_hit_allowed(layout: &ScreenLayout, [x, y, w, h]: [f64; 4]) -> bool {
-    std::iter::once(&layout.gui)
+    std::iter::once(layout.panels())
         .chain(&layout.exclusions)
         .all(|area| {
             x + w <= area.x

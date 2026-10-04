@@ -111,9 +111,79 @@ fn hits_inside_a_forbidden_area_are_not_the_overlays() {
             width: 80.0,
             height: 30.0,
         }],
+        view: None,
     };
     assert!(overlay_hit_allowed(&layout, [340.0, 60.0, 18.0, 18.0]));
     assert!(!overlay_hit_allowed(&layout, [320.0, 60.0, 18.0, 18.0]));
     assert!(!overlay_hit_allowed(&layout, [420.0, 20.0, 18.0, 18.0]));
     assert!(!overlay_hit_allowed(&layout, [0.0, 0.0, 480.0, 270.0]));
+}
+
+fn view_layout() -> ScreenLayout {
+    ScreenLayout {
+        screen: "crafting.inventory_screen".into(),
+        size: server_experience::screen::GuiSize {
+            width: 480.0,
+            height: 270.0,
+            scale: 2.0,
+        },
+        gui: server_experience::screen::Rect {
+            x: 152.0,
+            y: 52.0,
+            width: 176.0,
+            height: 166.0,
+        },
+        exclusions: Vec::new(),
+        view: Some(server_experience::screen::Rect {
+            x: 100.0,
+            y: 40.0,
+            width: 250.0,
+            height: 190.0,
+        }),
+    }
+}
+
+#[test]
+fn an_open_view_stands_in_for_the_vanilla_panels() {
+    let layout = view_layout();
+    // Clear of the hidden container's panel but on the view.
+    assert!(!overlay_hit_allowed(&layout, [330.0, 60.0, 10.0, 10.0]));
+    // Beside the view.
+    assert!(overlay_hit_allowed(&layout, [360.0, 60.0, 18.0, 18.0]));
+    assert_eq!(
+        forbidden_logical(&layout, 2.0),
+        vec![[200.0, 80.0, 700.0, 460.0]]
+    );
+}
+
+#[test]
+fn the_views_bounds_are_its_drawn_nodes_but_full_screen_ones() {
+    let nodes = [
+        group(1, 0.0, 0.0, 960.0, 540.0),
+        // A full-screen dim behind the view does not count.
+        leaf(2, 1, 0.0, 0.0, 960.0, 540.0),
+        leaf(3, 1, 200.0, 80.0, 400.0, 300.0),
+        group(4, 600.0, 100.0, 100.0, 100.0),
+        leaf(5, 4, 0.0, 0.0, 50.0, 20.0),
+    ];
+    let bounds = drawn_bounds(&nodes[..], [960.0, 540.0], 2.0).unwrap();
+    assert_eq!(
+        [bounds.x, bounds.y, bounds.width, bounds.height],
+        [100.0, 40.0, 225.0, 150.0]
+    );
+    assert!(drawn_bounds(&nodes[..2], [960.0, 540.0], 2.0).is_none());
+}
+
+#[test]
+fn the_row_under_the_pointer_is_the_topmost_controls_nearest_collection() {
+    let regions = [
+        ([0.0, 0.0, 100.0, 100.0], Some(("grid", 4)), true),
+        ([10.0, 10.0, 18.0, 18.0], Some(("items", 7)), true),
+        ([10.0, 10.0, 18.0, 18.0], None, true),
+        ([40.0, 40.0, 18.0, 18.0], Some(("items", 9)), false),
+    ];
+    let row = |point| nearest_row(regions.iter().copied(), point);
+    assert_eq!(row([12.0, 12.0]), Some(("items".to_owned(), 7)));
+    assert_eq!(row([50.0, 50.0]), Some(("grid".to_owned(), 4)));
+    assert_eq!(row([200.0, 200.0]), None);
 }

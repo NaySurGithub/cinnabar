@@ -33,7 +33,7 @@ pub struct CameraDelta {
 use {
     anyhow::{Context, Result},
     experience_sdk::mod_manifest::{ModManifest, ModPermission},
-    package::{Package, read_bounded},
+    package::{Package, engine, read_component},
     runtime::{Declared, Instance},
     screens::{declared, grant, loaded},
     server_experience::{screen::ScreenLayout, session_data::SessionData},
@@ -42,7 +42,7 @@ use {
         path::{Path, PathBuf},
         sync::Arc,
     },
-    wasmtime::{Config, Engine},
+    wasmtime::Engine,
 };
 
 /// Maximum bytes accepted before compilation or allocation of a package buffer.
@@ -172,11 +172,16 @@ impl ModHost {
     /// event is refused, and a trap quarantines the guest.
     pub fn dispatch(&mut self, events: Vec<ModEvent>) -> Result<()> {
         for event in ModEvent::coalesce(events) {
+            let mut closed = false;
             if let ModEvent::ScreenChanged(layout) = &event {
                 self.layout.clone_from(layout);
+                closed = layout.is_none() && self.instance.view_open();
                 self.instance.set_layout(layout.clone());
             }
             self.instance.dispatch(&event)?;
+            if closed {
+                self.instance.dispatch(&ModEvent::ViewClosed)?;
+            }
         }
         Ok(())
     }
@@ -200,9 +205,18 @@ impl ModHost {
         self.instance.quarantine();
     }
 
-    /// Closes the view without entering the guest, as Escape does over it.
-    pub fn close_view(&mut self) {
-        self.instance.close_view();
+    /// Closes the view as Escape does over it, and tells the guest with `view-closed`.
+    pub fn close_view(&mut self) -> Result<()> {
+        if self.instance.close_view() {
+            self.instance.dispatch(&ModEvent::ViewClosed)?;
+        }
+        Ok(())
+    }
+
+    /// The fuel the last `init` or callback consumed: `init` and `data-changed` get
+    /// `LOAD_FUEL`, other events `CALLBACK_FUEL`, `frame` its own.
+    pub fn last_fuel_used(&self) -> u64 {
+        self.instance.last_fuel()
     }
 
     /// Consumes the last successful frame's rotation once, without entering the guest.
@@ -276,22 +290,6 @@ impl ModHost {
         }
         Ok(true)
     }
-}
-
-#[cfg(feature = "execution")]
-fn engine() -> Result<Engine> {
-    let mut config = Config::new();
-    config.wasm_component_model(true).consume_fuel(true);
-    config.max_wasm_stack(256 * 1024);
-    Engine::new(&config)
-}
-
-/// Bounds file reads even if a writer grows the file between metadata and read.
-#[cfg(feature = "execution")]
-fn read_component(path: &Path) -> Result<Vec<u8>> {
-    read_bounded(path, MAX_COMPONENT_BYTES)
-        .with_context(|| format!("open mod {}", path.display()))
-        .context("component exceeds byte limit or cannot be read")
 }
 
 #[cfg(all(test, feature = "execution"))]

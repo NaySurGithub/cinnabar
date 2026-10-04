@@ -275,7 +275,8 @@ pub(crate) fn drive_inventory_ui_actions(
 }
 
 /// Whether an open container screen gives `key` a vanilla meaning (closing, dropping, hotbar
-/// swaps, scrolling), so a player mod's declared key never takes it.
+/// swaps, scrolling), so a player mod's declared key never takes it. Over the mod's `view`,
+/// which hides the screen, only the inventory key and Escape keep theirs.
 #[cfg_attr(
     not(feature = "local-mods"),
     allow(dead_code, reason = "only player mods declare keys")
@@ -283,27 +284,30 @@ pub(crate) fn drive_inventory_ui_actions(
 pub(crate) fn inventory_consumes_key(
     menu: Option<&crate::menu::MenuRuntime>,
     key: KeyCode,
+    view: bool,
 ) -> bool {
-    binding_key(menu, "key.inventory", key)
-        || binding_key(menu, "key.drop", key)
-        || matches!(
-            key,
-            KeyCode::Escape
-                | KeyCode::KeyQ
-                | KeyCode::Digit1
-                | KeyCode::Digit2
-                | KeyCode::Digit3
-                | KeyCode::Digit4
-                | KeyCode::Digit5
-                | KeyCode::Digit6
-                | KeyCode::Digit7
-                | KeyCode::Digit8
-                | KeyCode::Digit9
-                | KeyCode::ArrowUp
-                | KeyCode::ArrowDown
-                | KeyCode::PageUp
-                | KeyCode::PageDown
-        )
+    if binding_key(menu, "key.inventory", key) || key == KeyCode::Escape {
+        return true;
+    }
+    !view
+        && (binding_key(menu, "key.drop", key)
+            || matches!(
+                key,
+                KeyCode::KeyQ
+                    | KeyCode::Digit1
+                    | KeyCode::Digit2
+                    | KeyCode::Digit3
+                    | KeyCode::Digit4
+                    | KeyCode::Digit5
+                    | KeyCode::Digit6
+                    | KeyCode::Digit7
+                    | KeyCode::Digit8
+                    | KeyCode::Digit9
+                    | KeyCode::ArrowUp
+                    | KeyCode::ArrowDown
+                    | KeyCode::PageUp
+                    | KeyCode::PageDown
+            ))
 }
 
 /// Wheel notches over an engine-drawn screen scroll the view under the pointer.
@@ -529,8 +533,10 @@ pub(crate) fn drive_chat_keyboard_input(
                     runtime.toggle_inventory(&mut player_runtime);
                     inventory_ownership_changed = true;
                 }
-                // Escape returns from a player mod's view to the container (`modding`).
+                // Escape returns from a player mod's view to the container, and the hidden
+                // screen's own keys do nothing under the view (`modding`).
                 KeyCode::Escape if mod_view => {}
+                _ if mod_view => {}
                 KeyCode::Escape => {
                     runtime.close_inventory(&mut player_runtime);
                     inventory_ownership_changed = true;
@@ -708,5 +714,24 @@ pub(crate) fn drive_chat_keyboard_input(
                 &mut mouse_motion,
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod consumes_key_tests {
+    use super::*;
+
+    /// Over a container screen its keys are vanilla's; over a player mod's view, which hides the
+    /// screen, only the keys that close it are.
+    #[test]
+    fn a_shown_view_frees_the_container_screens_keys() {
+        for key in [KeyCode::PageUp, KeyCode::Digit1, KeyCode::KeyQ] {
+            assert!(inventory_consumes_key(None, key, false), "{key:?}");
+            assert!(!inventory_consumes_key(None, key, true), "{key:?}");
+        }
+        assert!(inventory_consumes_key(None, KeyCode::Escape, true));
+        assert!(inventory_consumes_key(None, KeyCode::KeyE, true));
+        assert!(!inventory_consumes_key(None, KeyCode::KeyR, false));
+        assert!(!inventory_consumes_key(None, KeyCode::Backspace, false));
     }
 }

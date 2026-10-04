@@ -134,6 +134,25 @@ impl UiPresentationRuntime {
         screens.view.frame.is_some() || screens.overlay.control_at(point).is_some()
     }
 
+    /// The collection name and index of the mod's control under window-logical `point`, on the
+    /// view while it is shown, else the overlay; what a declared key reports as its row.
+    pub fn mod_screens_row(&self, point: [f32; 2]) -> Option<(String, u32)> {
+        let screens = self.form_presentation.mod_screens.as_ref()?;
+        let frame = match &screens.view.frame {
+            Some(frame) => frame,
+            None => screens.overlay.frame.as_ref()?,
+        };
+        let regions = frame.hits.iter().map(|hit| {
+            let row = hit.collection.as_deref().zip(hit.collection_index);
+            (
+                [hit.rect.x, hit.rect.y, hit.rect.w, hit.rect.h],
+                row,
+                hit.enabled,
+            )
+        });
+        layering::nearest_row(regions, layering::to_gui(frame, point))
+    }
+
     /// Lights the control under the pointer on the view, else the overlay.
     pub fn hover_mod_screens(&mut self, point: Option<[f32; 2]>) {
         let Some(screens) = self.form_presentation.mod_screens.as_mut() else {
@@ -272,7 +291,7 @@ impl UiPresentationRuntime {
         let Some(reference) = super::container_screen_reference(player_runtime, runtime) else {
             return;
         };
-        let layout = ScreenLayout {
+        let mut layout = ScreenLayout {
             screen: reference.to_owned(),
             size: GuiSize {
                 width: root[0],
@@ -281,6 +300,7 @@ impl UiPresentationRuntime {
             },
             gui,
             exclusions: Vec::new(),
+            view: None,
         };
         let lifted = layering::take_lifted(nodes, &frame.top);
         let translate = |key: &str| runtime.translation(key);
@@ -311,7 +331,9 @@ impl UiPresentationRuntime {
                 .view
                 .draw(&mut screens.art, renderer, inputs!(), (nodes, next), art())
             {
-                // The view stands in for the container screen, which stays open underneath.
+                // The view stands in for the container screen, which stays open underneath,
+                // and for its panels as what the overlay keeps clear of.
+                layout.view = layering::drawn_bounds(&nodes[view_start..], content, px);
                 nodes.drain(container_start..view_start);
             }
         }

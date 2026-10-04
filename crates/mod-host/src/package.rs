@@ -87,6 +87,21 @@ fn package_path(dir: &Path, path: &str) -> PathBuf {
         .fold(dir.to_owned(), |out, part| out.join(part))
 }
 
+/// A Wasmtime engine for player mods: the component model with fuel metering.
+pub(crate) fn engine() -> Result<wasmtime::Engine> {
+    let mut config = wasmtime::Config::new();
+    config.wasm_component_model(true).consume_fuel(true);
+    config.max_wasm_stack(256 * 1024);
+    wasmtime::Engine::new(&config)
+}
+
+/// A bare component, bounded even if a writer grows the file between metadata and read.
+pub(crate) fn read_component(path: &Path) -> Result<Vec<u8>> {
+    read_bounded(path, MAX_COMPONENT_BYTES)
+        .with_context(|| format!("open mod {}", path.display()))
+        .context("component exceeds byte limit or cannot be read")
+}
+
 /// Reads at most `limit` bytes, refusing a larger file even if it grows while read.
 pub(crate) fn read_bounded(path: &Path, limit: usize) -> Result<Vec<u8>> {
     let mut bytes = Vec::new();

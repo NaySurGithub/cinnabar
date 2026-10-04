@@ -10,6 +10,8 @@ use wasmtime::{
 };
 
 type Index = Option<u32>;
+/// A collection name and the index of a row in it.
+type Row = Option<(String, u32)>;
 
 struct Events {
     screen_changed: TypedFunc<(Option<v0_2::Layout>,), ()>,
@@ -17,8 +19,9 @@ struct Events {
     secondary: TypedFunc<(String, Index), ()>,
     scrolled: TypedFunc<(f64, f64, f64), ()>,
     text: TypedFunc<(String, String), ()>,
-    key: TypedFunc<(String, Option<v0_2::GuestStack>), ()>,
+    key: TypedFunc<(String, Option<v0_2::GuestStack>, Row), ()>,
     data_changed: TypedFunc<(), ()>,
+    view_closed: TypedFunc<(), ()>,
 }
 
 pub(super) struct Exports {
@@ -27,7 +30,7 @@ pub(super) struct Exports {
 }
 
 /// The 0.2 event exports, all or none of which a component has.
-const EVENTS: [&str; 7] = [
+const EVENTS: [&str; 8] = [
     "screen-changed",
     "action",
     "secondary-action",
@@ -35,6 +38,7 @@ const EVENTS: [&str; 7] = [
     "text-changed",
     "key",
     "data-changed",
+    "view-closed",
 ];
 
 impl Exports {
@@ -59,6 +63,7 @@ impl Exports {
                     text: func(4).typed(&*store)?,
                     key: func(5).typed(&*store)?,
                     data_changed: func(6).typed(&*store)?,
+                    view_closed: func(7).typed(&*store)?,
                 })
             }
             _ => bail!("component exports only some of the 0.2 event callbacks"),
@@ -107,12 +112,13 @@ impl Exports {
             ModEvent::TextChanged { control, text } => {
                 call(&events.text, store, (control.clone(), text.clone()))
             }
-            ModEvent::Key { id, hovered } => call(
+            ModEvent::Key { id, hovered, row } => call(
                 &events.key,
                 store,
-                (id.clone(), hovered.as_ref().map(v0_2::stack)),
+                (id.clone(), hovered.as_ref().map(v0_2::stack), row.clone()),
             ),
             ModEvent::DataChanged => call(&events.data_changed, store, ()),
+            ModEvent::ViewClosed => call(&events.view_closed, store, ()),
         }
     }
 }

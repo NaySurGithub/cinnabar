@@ -794,8 +794,8 @@ items and recipes (`cinnabar:session`) are read-only. Provisional, labeled
 incomplete: the GUI rect is the bounding box of `root_panel` and every laid-out
 non-full-screen control, not a per-panel union read from the vanilla pack; the
 exclusion list is empty (vanilla status-effect and toast areas are not yet
-reported); an overlay node that meets the GUI rect is dropped whole rather than
-clipped; Escape closing the view sends the mod no event. Not yet verified on a
+reported); an overlay node that meets the GUI rect (the view's drawn bounds while it
+is open) is dropped whole rather than clipped. Not yet verified on a
 rendered frame (the `.local` carriers were absent when it landed). Session data
 gaps: no smelting at 1.26.x, brewing skipped, recipes with Molang/complex/deferred
 ingredients dropped. Incomplete as for the spike: process isolation, signing,

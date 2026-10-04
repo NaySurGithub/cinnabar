@@ -5,7 +5,7 @@ version = "0.1.0"
 api = "0.2"
 permissions = ["screen", "items", "recipes", "keys"]
 templates = ["ui/overlay.json", "ui/view.json"]
-actions = ["probe.view", "probe.close", "probe.flood", "probe.search"]
+actions = ["probe.view", "probe.close", "probe.flood", "probe.search", "probe.read_all"]
 
 [[keys]]
 id = "probe.show"

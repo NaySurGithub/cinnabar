@@ -112,6 +112,7 @@ fn layout() -> ScreenLayout {
             height: 166.0,
         },
         exclusions: vec![Rect::default()],
+        view: None,
     }
 }
 
@@ -123,6 +124,11 @@ fn key(identifier: &str) -> ItemKey {
 }
 
 fn session(items: usize, revision: u64) -> Arc<SessionData> {
+    session_sized(items, 3, revision)
+}
+
+/// `items` items and `recipes` three-by-three crafting recipes, named like vanilla's.
+fn session_sized(items: usize, recipes: usize, revision: u64) -> Arc<SessionData> {
     let item = |index: usize| Item {
         key: key(&format!("minecraft:item_{index}")),
         icon: SessionData::icon_key(index as i32, 0),
@@ -136,20 +142,24 @@ fn session(items: usize, revision: u64) -> Arc<SessionData> {
         network_id: 7,
         category: RecipeCategory::Crafting,
         shapeless: false,
-        width: 2,
-        height: 2,
-        ingredients: vec![
-            Some(Ingredient {
-                kind: IngredientKind::Tag("minecraft:planks".into()),
-                count: 1,
-            }),
-            None,
-            Some(Ingredient {
-                kind: IngredientKind::AnyAux("minecraft:wool".into()),
-                count: 1,
-            }),
-            None,
-        ],
+        width: 3,
+        height: 3,
+        ingredients: (0..9)
+            .map(|cell| match cell % 3 {
+                0 => Some(Ingredient {
+                    kind: IngredientKind::Tag("minecraft:planks".into()),
+                    count: 1,
+                }),
+                1 => Some(Ingredient {
+                    kind: IngredientKind::Item(ItemKey {
+                        identifier: "minecraft:white_wool".into(),
+                        aux: 0,
+                    }),
+                    count: 1,
+                }),
+                _ => None,
+            })
+            .collect(),
         outputs: vec![Stack {
             key: key("minecraft:bed"),
             icon: SessionData::icon_key(9, 0),
@@ -160,7 +170,7 @@ fn session(items: usize, revision: u64) -> Arc<SessionData> {
         item_revision: revision,
         items: (0..items).map(item).collect(),
         recipe_revision: revision,
-        recipes: vec![recipe; 3].into(),
+        recipes: vec![recipe; recipes].into(),
         ..SessionData::default()
     })
 }
@@ -188,7 +198,7 @@ fn a_package_initializes_its_overlay_and_reads_the_session_on_data_changed() {
     );
     assert_eq!(text(&host, "#first"), "Item 0");
     assert_eq!(value(&host, "#recipes"), Some(&Value::Integer(3)));
-    assert_eq!(value(&host, "#first_cells"), Some(&Value::Integer(4)));
+    assert_eq!(value(&host, "#first_cells"), Some(&Value::Integer(9)));
     // The same revisions deliver nothing new.
     let revision = host.screens().data.revision;
     host.set_session(session(600, 1)).unwrap();
@@ -210,6 +220,7 @@ fn session_reads_without_their_permission_are_denied() {
     let key = ModEvent::Key {
         id: "probe.show".into(),
         hovered: None,
+        row: None,
     };
     assert!(host.dispatch(vec![key]).is_err());
 }
@@ -236,10 +247,15 @@ fn layout_changes_coalesce_and_the_view_needs_an_open_container() {
     assert_eq!(value(&host, "#exclusions"), Some(&Value::Integer(1)));
     assert_eq!(value(&host, "#layout_open"), Some(&Value::Bool(true)));
     assert_eq!(host.screens().view.as_deref(), Some("ui/view.json"));
-    host.close_view();
+    // The host closing the view tells the mod, once.
+    host.close_view().unwrap();
     assert_eq!(host.screens().view, None);
+    assert_eq!(value(&host, "#view_closed"), Some(&Value::Integer(1)));
+    host.close_view().unwrap();
+    assert_eq!(value(&host, "#view_closed"), Some(&Value::Integer(1)));
     host.dispatch(vec![action("probe.view")]).unwrap();
     host.dispatch(vec![ModEvent::ScreenChanged(None)]).unwrap();
+    assert_eq!(value(&host, "#view_closed"), Some(&Value::Integer(2)));
     assert_eq!(host.screens().view, None);
     assert_eq!(value(&host, "#layout_open"), Some(&Value::Bool(false)));
 }
@@ -272,6 +288,7 @@ fn input_events_reach_their_callbacks() {
                 icon: SessionData::icon_key(3, 0),
                 count: 12,
             }),
+            row: Some(("items".into(), 5)),
         },
     ])
     .unwrap();
@@ -281,7 +298,10 @@ fn input_events_reach_their_callbacks() {
         Some(&Value::Numbers(vec![-2.0, 400.0, 30.0]))
     );
     assert_eq!(text(&host, "#search"), "probe.search=dirt");
-    assert_eq!(text(&host, "#key"), "probe.show:minecraft:dirt@0x12#196608");
+    assert_eq!(
+        text(&host, "#key"),
+        "probe.show:minecraft:dirt@0x12#196608:Some((\"items\", 5))"
+    );
 }
 
 #[test]
@@ -291,6 +311,7 @@ fn undeclared_events_are_refused_without_quarantine() {
     let key = ModEvent::Key {
         id: "probe.unknown".into(),
         hovered: None,
+        row: None,
     };
     assert!(host.dispatch(vec![key]).is_err());
     assert!(host.is_active());
@@ -308,6 +329,7 @@ fn a_trap_in_key_quarantines_and_removes_the_overlay() {
     let trap = ModEvent::Key {
         id: "probe.trap".into(),
         hovered: None,
+        row: None,
     };
     assert!(host.dispatch(vec![trap]).is_err());
     assert!(!host.is_active());
@@ -391,4 +413,22 @@ fn coalescing_keeps_the_latest_layout_and_text_per_box() {
             text("a", "2"),
         ]
     );
+}
+
+/// Twice vanilla's session at the target (about 1,800 items and 2,000 recipes) loads through
+/// `data-changed` on the load budget; the same reads in an ordinary event exceed
+/// `CALLBACK_FUEL` and trap.
+#[test]
+fn a_twice_vanilla_session_loads_but_an_event_may_not_spend_that_much() {
+    use server_experience::runtime::{CALLBACK_FUEL, LOAD_FUEL};
+    let (_dir, mut host) = probe();
+    host.set_session(session_sized(4_000, 3_000, 1)).unwrap();
+    assert_eq!(value(&host, "#items_read"), Some(&Value::Integer(4_000)));
+    assert_eq!(value(&host, "#recipes_read"), Some(&Value::Integer(3_000)));
+    let used = host.last_fuel_used();
+    eprintln!("twice-vanilla data-changed used {used} fuel");
+    assert!(used > CALLBACK_FUEL && used < LOAD_FUEL, "{used}");
+    let error = host.dispatch(vec![action("probe.read_all")]).unwrap_err();
+    assert!(format!("{error:#}").contains("fuel"), "{error:#}");
+    assert!(!host.is_active());
 }

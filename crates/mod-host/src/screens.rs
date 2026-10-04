@@ -13,11 +13,31 @@ use std::sync::Arc;
 #[derive(Clone, Debug, PartialEq)]
 pub enum ModEvent {
     ScreenChanged(Option<ScreenLayout>),
-    Action { id: String, index: Option<u32> },
-    SecondaryAction { id: String, index: Option<u32> },
-    Scrolled { delta: f64, x: f64, y: f64 },
-    TextChanged { control: String, text: String },
-    Key { id: String, hovered: Option<Stack> },
+    Action {
+        id: String,
+        index: Option<u32>,
+    },
+    SecondaryAction {
+        id: String,
+        index: Option<u32>,
+    },
+    Scrolled {
+        delta: f64,
+        x: f64,
+        y: f64,
+    },
+    TextChanged {
+        control: String,
+        text: String,
+    },
+    /// `row` is the collection and index of the mod's control under the pointer.
+    Key {
+        id: String,
+        hovered: Option<Stack>,
+        row: Option<(String, u32)>,
+    },
+    /// The host closed the view: Escape, or the container closing.
+    ViewClosed,
     DataChanged,
 }
 

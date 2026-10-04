@@ -142,13 +142,20 @@ pub struct ScreenLayout {
     pub size: GuiSize,
     pub gui: Rect,
     pub exclusions: Vec<Rect>,
+    /// The open view's laid-out bounds, which stand in for `gui` while the view is up.
+    pub view: Option<Rect>,
 }
 
 impl ScreenLayout {
-    /// Whether a mod's overlay may draw or take input at `point`: outside the panels and every
-    /// exclusion.
+    /// What the overlay keeps clear of: the open view, else the vanilla panels.
+    pub fn panels(&self) -> &Rect {
+        self.view.as_ref().unwrap_or(&self.gui)
+    }
+
+    /// Whether a mod's overlay may draw or take input at `point`: outside the panels (the open
+    /// view's while it is up) and every exclusion.
     pub fn overlay_allows(&self, point: [f64; 2]) -> bool {
-        !self.gui.contains(point) && !self.exclusions.iter().any(|area| area.contains(point))
+        !self.panels().contains(point) && !self.exclusions.iter().any(|area| area.contains(point))
     }
 }
 

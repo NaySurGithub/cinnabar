@@ -156,6 +156,34 @@ fn an_id_that_is_not_a_lowercase_name_is_refused() {
     assert!(error.contains("Bei Mod"), "{error}");
 }
 
+/// JEI's recipe view keys: Backspace for history, Page Up and Page Down (and Shift with them) for
+/// pages, and Control combinations.
+#[test]
+fn named_keys_and_modifier_combinations_parse() {
+    let keys: String = [
+        ("back", "backspace", ""),
+        ("prev", "page_up", ""),
+        ("next", "page_down", ""),
+        ("prev_category", "page_up", "\"shift\""),
+        ("find", "f", "\"ctrl\""),
+    ]
+    .iter()
+    .map(|(id, key, modifiers)| {
+        format!(
+            "[[keys]]\nid = \"bei.{id}\"\nkey = \"{key}\"\nmodifiers = [{modifiers}]\nlabel = \"k\"\n"
+        )
+    })
+    .collect();
+    let parsed = ModManifest::parse(&manifest(&format!("{keys}{}", files(&[])))).unwrap();
+    assert_eq!(parsed.keys.len(), 5);
+    assert_eq!(parsed.keys[3].modifiers, [Modifier::Shift]);
+    let error = refusal(&manifest(&format!(
+        "[[keys]]\nid = \"bei.a\"\nkey = \"pageup\"\nlabel = \"k\"\n{}",
+        files(&[])
+    )));
+    assert!(error.contains("pageup"), "{error}");
+}
+
 #[test]
 fn declarations_parse_before_the_files_are_hashed() {
     let text = manifest(

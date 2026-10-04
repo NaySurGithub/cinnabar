@@ -196,6 +196,7 @@ fn key_events(
         alt: held(KeyCode::AltLeft, KeyCode::AltRight),
     };
     let text_focused = presentation.mod_text_focused();
+    let view = presentation.mod_view_shown();
     let presses: Vec<(KeyCode, Option<String>)> = input
         .keyboard
         .read()
@@ -218,14 +219,18 @@ fn key_events(
     for (control, text) in edits.edits {
         events.push(ModEvent::TextChanged { control, text });
     }
-    if escape && !edits.escape_consumed && presentation.mod_view_shown() {
-        host.close_view();
+    if escape
+        && !edits.escape_consumed
+        && presentation.mod_view_shown()
+        && let Err(error) = host.close_view()
+    {
+        eprintln!("Cinnabar mod view-closed failed: {error:#}");
     }
     if text_focused || ui.screen_state().text_focused() {
         return;
     }
     for (key, _) in &presses {
-        if crate::ui_runtime::interaction::inventory_consumes_key(menu, *key) {
+        if crate::ui_runtime::interaction::inventory_consumes_key(menu, *key, view) {
             continue;
         }
         let Some(declared) = keys
@@ -239,9 +244,11 @@ fn key_events(
             .negotiated_item_registry();
         let hovered = hovered_stack(player_runtime, ui)
             .and_then(|(stack, _)| session_stack(registry, &stack));
+        let row = cursor.and_then(|point| presentation.mod_screens_row(point));
         events.push(ModEvent::Key {
             id: declared.id.clone(),
             hovered,
+            row,
         });
     }
 }
@@ -263,7 +270,8 @@ impl Held {
     }
 }
 
-/// The key a declaration's name binds: letters, digits and F1 to F12.
+/// The key a declaration's name binds: letters, digits, F1 to F12, Backspace, Page Up and
+/// Page Down.
 fn key_code(name: &str) -> Option<KeyCode> {
     const LETTERS: [KeyCode; 26] = [
         KeyCode::KeyA,
@@ -319,6 +327,12 @@ fn key_code(name: &str) -> Option<KeyCode> {
         KeyCode::F11,
         KeyCode::F12,
     ];
+    match name {
+        "backspace" => return Some(KeyCode::Backspace),
+        "page_up" => return Some(KeyCode::PageUp),
+        "page_down" => return Some(KeyCode::PageDown),
+        _ => {}
+    }
     let mut chars = name.chars();
     match (chars.next()?, chars.as_str()) {
         (letter @ 'a'..='z', "") => LETTERS.get(usize::from(letter as u8 - b'a')).copied(),
@@ -362,6 +376,9 @@ mod tests {
         assert_eq!(key_code("f13"), None);
         assert_eq!(key_code("f0"), None);
         assert_eq!(key_code("space"), None);
+        assert_eq!(key_code("backspace"), Some(KeyCode::Backspace));
+        assert_eq!(key_code("page_up"), Some(KeyCode::PageUp));
+        assert_eq!(key_code("page_down"), Some(KeyCode::PageDown));
         for name in mod_host::KEY_NAMES {
             assert!(key_code(name).is_some(), "{name}");
         }

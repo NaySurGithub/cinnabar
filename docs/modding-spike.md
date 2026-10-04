@@ -233,7 +233,7 @@ actions = ["bei.next_page"]  # control ids and edit box names, in the mod's name
 
 [[keys]]
 id = "bei.show_recipes"
-key = "r"                    # a-z, 0-9, f1-f12
+key = "r"                    # a-z, 0-9, f1-f12, backspace, page_up, page_down
 modifiers = []               # any of "ctrl", "shift", "alt"; must match exactly
 label = "key.bei.show_recipes"
 
@@ -255,10 +255,15 @@ control of it that meets the GUI rect (the union of vanilla's laid-out panels, a
 book included) or an exclusion area, so a mod cannot cover or intercept a vanilla slot, and
 vanilla's held stack and tooltips draw above it. A press on an overlay control is the mod's
 and never drops the held stack. `screen.open-view(template)` draws a template over the
-still-open container (no `ContainerClose`) and hides vanilla's screen. Escape (when no edit
-box is selected) or `open-view(none)` returns; the inventory key or closing the container
-closes both. `screen.layout()` and the `screen-changed` callback report the vanilla screen
-name, the root size and GUI scale, the GUI rect and the exclusions, in GUI units. Templates,
+still-open container (no `ContainerClose`) and hides vanilla's screen and its keys. Escape
+(when no edit box is selected) or `open-view(none)` returns; the inventory key or closing the
+container closes both. When the host closes the view (Escape, the container closing) the mod
+gets `view-closed`. While the view is up the overlay is clipped against the view's drawn
+bounds (`screen-layout.view`) instead of the hidden screen's GUI rect, so it sits beside the
+view as JEI's list sits beside its recipes screen. `screen.layout()` and `screen-changed`
+report the vanilla screen name, the root size and GUI scale, the GUI rect, the exclusions and
+the view's bounds, in GUI units; opening, closing or resizing the view delivers
+`screen-changed`. Templates,
 data binding (`set-collection`, `set-value`, `set-text`) and their limits are the client part
 modal's (server-experiences.md, Modal screens); `focus-text` selects an edit box. Rows bind
 `#item_id_aux` (network id << 16 | aux) and `item_renderer` draws the item. The mod's atlas
@@ -282,13 +287,20 @@ reads `client/deps/server-experience`) instead of restating it in `capabilities.
 
 **Keys.** While a container screen or the view is up and no edit box is selected, a press of
 a declared key that vanilla's container screen does not use (the inventory and drop
-bindings, Escape, Q, 1 to 9, arrows, Page Up and Page Down) delivers `key(id, hovered)`.
-`hovered` is the vanilla slot's stack under the pointer. No key reaches the mod during
-gameplay.
+bindings, Escape, Q, 1 to 9, arrows, Page Up and Page Down; over the view only the inventory
+key and Escape) delivers `key(id, hovered, row)`. `hovered` is the vanilla slot's stack under
+the pointer; `row` is the collection name and index of the mod's control under it, by the
+rule `action` uses. Modifiers must match exactly, so `o` with `["ctrl"]` is Ctrl+O. No key
+reaches the mod during gameplay.
 
 **Callbacks.** 0.2 exports `screen-changed`, `action`, `secondary-action`, `scrolled`,
-`text-changed`, `key` and `data-changed` beside `init` and `frame`. `init` and every event
-callback get `CALLBACK_FUEL` (10,000,000); `frame` keeps 100,000. One frame's events are
+`text-changed`, `key`, `data-changed` and `view-closed` beside `init` and `frame`. `scrolled`
+reports wheel notches (a pixel wheel's pixels / 16), positive scrolling down. `init` and
+`data-changed`, which copy the whole session across the ABI, get `LOAD_FUEL` (100,000,000;
+twice vanilla's session measured 27.7M in the probe), after the Experience runtime's
+`REGISTER_FUEL`; every other event callback gets `CALLBACK_FUEL` (10,000,000) and `frame`
+keeps 100,000. A session that outgrows the load budget calls for a host-side query API
+(items and recipes on demand) rather than a larger copy. One frame's events are
 coalesced: the latest layout first, one data change, then the rest in order with the latest
 text per edit box. A trap or exhausted fuel quarantines the mod and removes its overlay and
 view; a refused template does too. An undeclared action or key is refused without

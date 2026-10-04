@@ -29,6 +29,9 @@ interface screen {
         /// Other vanilla areas outside `gui` that the overlay may not draw on: the recipe book's
         /// tabs, the status effects and toasts.
         exclusions: list<rect>,
+        /// The open view's laid-out bounds. While the view is up the vanilla screen is hidden,
+        /// and the overlay is clipped against this rect (and the exclusions) instead of `gui`.
+        view: option<rect>,
     }
 
     /// The open container screen's layout; none while no container screen is up.
@@ -63,7 +66,8 @@ world player-mod {
     use screen.{screen-layout};
     use cinnabar:session/items@0.1.0.{stack};
 
-    /// Creates the initial retained UI state.
+    /// Creates the initial retained UI state. `init` and `data-changed` get the host's load
+    /// fuel budget, every other event callback the smaller per-event budget.
     export init: func();
     /// Every frame, with a small fuel budget; a mod that needs nothing per frame returns.
     export frame: func();
@@ -75,14 +79,19 @@ world player-mod {
     /// A secondary press (a right click) on a control that maps `button.menu_secondary_select`
     /// to a declared action.
     export secondary-action: func(id: string, collection-index: option<u32>);
-    /// Wheel `delta` notches (positive scrolls down) with the pointer at `x`, `y` in GUI units,
-    /// over the overlay's drawn area or the view.
+    /// The wheel turned `delta` notches (one per detent; a pixel-precise wheel reports its
+    /// pixels / 16) with the pointer at `x`, `y` in GUI units, over the overlay's drawn area or
+    /// the view. Positive scrolls down, towards the end; negative scrolls up.
     export scrolled: func(delta: f64, x: f64, y: f64);
     /// The text of the edit box named `control`, a declared action, changed.
     export text-changed: func(control: string, text: string);
     /// A declared key was pressed while a container screen or the view was up and no edit box
-    /// had focus; `hovered` is the vanilla slot's stack under the pointer.
-    export key: func(id: string, hovered: option<stack>);
-    /// The session's items or recipes changed revision.
+    /// had focus. `hovered` is the vanilla slot's stack under the pointer; `row` is the
+    /// collection name and index of the mod's control under the pointer, by the rule `action`
+    /// uses (its nearest collection).
+    export key: func(id: string, hovered: option<stack>, row: option<tuple<string, u32>>);
+    /// The session's items or recipes changed revision; gets the load fuel budget.
     export data-changed: func();
+    /// The host closed the view (Escape, or the container closing), not the mod.
+    export view-closed: func();
 }
