@@ -136,6 +136,7 @@ pub(crate) struct AuthSupervisor {
 
 impl AuthSupervisor {
     pub(crate) fn spawn(executable: &Path, cache: &Path) -> Result<Self> {
+        let lifetime = super::auth_lifetime::AuthLifetime::start()?;
         let child = crate::lifecycle::children::spawn(
             Command::new(executable)
                 .arg("-auth-events")
@@ -146,16 +147,25 @@ impl AuthSupervisor {
                 .stderr(Stdio::null()),
         )
         .with_context(|| format!("start sign-in helper {}", executable.display()))?;
-        Self::from_child(child)
+        Self::supervise(child, lifetime)
     }
 
+    #[cfg(test)]
     pub(super) fn from_child(child: impl Into<Spawned>) -> Result<Self> {
+        Self::supervise(child, ())
+    }
+
+    fn supervise(child: impl Into<Spawned>, lifetime: impl Send + 'static) -> Result<Self> {
         let child = child.into();
         let stdout = child
             .take_stdout()
             .context("sign-in helper stdout was not piped")?;
         let (sender, receiver) = bounded(EVENT_CAPACITY);
-        let reader = thread::spawn(move || read_events(stdout, sender));
+        let reader = thread::spawn(move || {
+            read_events(stdout, sender);
+            // EOF releases Android's service even when rendering/UI polling is suspended.
+            drop(lifetime);
+        });
         Ok(Self {
             child: Some(child),
             receiver,
@@ -554,6 +564,51 @@ mod tests {
             }
             assert!(matches!(state, AuthState::Failed(_)));
             assert!(terminal);
+        }
+    }
+
+    #[test]
+    fn auth_lifetime_ends_without_ui_polling_on_completion_or_cancellation() {
+        struct Lease(Arc<AtomicBool>);
+        impl Drop for Lease {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::Release);
+            }
+        }
+        for terminal in [
+            Some(r#"{"v":1,"event":"authenticated","method":"cached"}"#),
+            Some(r#"{"v":1,"event":"error","stage":"cache","message":"failed"}"#),
+            None,
+        ] {
+            let mut lines = vec![r#"{"v":1,"event":"checking_cache"}"#];
+            if let Some(terminal) = terminal {
+                lines.push(terminal);
+            }
+            let (child, directory) = event_child_with_policy(&lines, terminal.is_none());
+            let released = Arc::new(AtomicBool::new(false));
+            let mut supervisor =
+                AuthSupervisor::supervise(child, Lease(Arc::clone(&released))).unwrap();
+            if terminal.is_none() {
+                supervisor.request_cancel();
+            }
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !released.load(Ordering::Acquire) && Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(5));
+            }
+            assert!(
+                released.load(Ordering::Acquire),
+                "auth lease outlived its helper"
+            );
+            if terminal.is_some() {
+                assert_eq!(supervisor.state(), &AuthState::Checking);
+                supervisor.poll();
+                assert!(matches!(
+                    supervisor.state(),
+                    AuthState::Authenticated | AuthState::Failed(_)
+                ));
+            }
+            drop(supervisor);
+            fs::remove_dir_all(directory).unwrap();
         }
     }
 

@@ -9,6 +9,7 @@
 mod account;
 mod account_control;
 pub(crate) mod auth;
+mod auth_lifetime;
 mod construction;
 pub(crate) mod core_process;
 pub(crate) mod disconnect;

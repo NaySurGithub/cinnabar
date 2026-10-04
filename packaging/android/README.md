@@ -5,6 +5,12 @@ server as immutable PIE executables inside the APK's native-library directory. T
 private internal storage for settings, logs, authentication and generated carriers. It does not
 request broad storage access.
 
+Microsoft sign-in temporarily runs a non-sticky `dataSync` foreground service so Android
+does not freeze the auth helper while the browser is open. Its notification returns to the
+client. The helper reader stops the service on completion, failure or cancellation without
+waiting for a rendered frame; closing the client also stops it. No account credentials are
+sent through the notification or JNI bridge.
+
 The bootstrap Activity asks for the Minecraft EULA, downloads the manifest-pinned official
 sample pack and OFL fonts, verifies their hashes, and runs the same checked asset compiler and
 preparation plan in-process. It then launches NativeActivity so Bevy receives its first window
@@ -32,6 +38,9 @@ To smoke-test an existing x86_64 artifact without rebuilding, dispatch `android.
 with `apk_run` set to its Actions run ID. The optional `server` input attempts an offline join to
 that address. The smoke artifact includes frames, private logs and crash reports; no account tokens
 are supplied, so servers requiring Microsoft sign-in may reject the attempt.
+With no server specified, the smoke starts Microsoft device-code sign-in, backgrounds the Activity
+past the cached-app freeze delay, checks that the helper continues consuming CPU, then returns and
+cancels sign-in. It checks that the foreground service stops; it never approves the device code.
 
 For release signing, pass `--keystore` and `--key-alias`, with
 `CINNABAR_ANDROID_STORE_PASSWORD` and `CINNABAR_ANDROID_KEY_PASSWORD` in the environment. APK

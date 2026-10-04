@@ -22,7 +22,15 @@ public final class CinnabarActivity extends NativeActivity {
         // Bevy owns a process-wide AndroidApp OnceLock. Finish native teardown
         // before ending this client process so a later launch gets a fresh app.
         super.onDestroy();
+        setAuthenticationActive(false);
         android.os.Process.killProcess(android.os.Process.myPid());
+    }
+
+    /** Called before launching the browser; the Go auth reader ends this lease on EOF. */
+    public void setAuthenticationActive(boolean active) {
+        android.content.Intent service = new android.content.Intent(this, AuthenticationService.class);
+        if (active) startForegroundService(service);
+        else stopService(service);
     }
 
     public void showFailure(String title, String message) {

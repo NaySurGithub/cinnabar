@@ -314,7 +314,8 @@ class Smoke:
             time.sleep(3)
         self.frame('native-menu')
         if not self.args.server:
-            self.result['outcome'] = 'native_startup_observed'
+            self.background_auth()
+            self.result['outcome'] = 'native_background_auth_observed'
             return
         # The active start screen opens OreUI. A saved row selects details; hero Play joins.
         if self.args.home_play is not None:
@@ -340,6 +341,49 @@ class Smoke:
             raise RuntimeError('Offline server attempt was authentication-blocked; no MSA credentials were supplied')
         if self.result['outcome'] == 'offline_join_unconfirmed':
             raise RuntimeError('Offline join could not be confirmed; inspect final frame and logs')
+
+    def background_auth(self):
+        """Exercise the real helper while the Activity is stopped, without approving a login."""
+        self.click_text('Sign In', 'auth-start')
+        component = self.package + '/.' + self.activity
+        try:
+            end = min(self.deadline - 75, time.monotonic() + 45)
+            helper = None
+            while time.monotonic() < end:
+                services = self.adb('shell', 'dumpsys', 'activity', 'services', self.package).stdout
+                processes = self.adb('shell', 'ps', '-A', '-o', 'PID,PPID,ARGS').stdout.decode()
+                helpers = [line.split()[0] for line in processes.splitlines() if '-auth-events' in line]
+                if b'isForeground=true' in services and len(helpers) == 1:
+                    helper = helpers[0]
+                    break
+                time.sleep(2)
+            if helper is None:
+                raise RuntimeError('Sign-in did not start its foreground service and auth helper')
+            self.adb('shell', 'input', 'keyevent', 'KEYCODE_HOME')
+            time.sleep(15)  # Beyond Android 14+'s documented cached-process freeze delay.
+            before = int(self.private(f'/proc/{helper}/schedstat').split()[0])
+            time.sleep(20)
+            after = int(self.private(f'/proc/{helper}/schedstat').split()[0])
+            services = self.adb('shell', 'dumpsys', 'activity', 'services', self.package).stdout
+            (self.output / 'auth-background-services.txt').write_bytes(services)
+            if b'isForeground=true' not in services or after <= before:
+                raise RuntimeError('Auth helper stopped running while the Activity was backgrounded')
+            self.result['background_auth'] = {'helper_cpu_ns_before': before,
+                                              'helper_cpu_ns_after': after,
+                                              'foreground_service': True}
+            self.adb('shell', 'am', 'start', '-W', '-n', component)
+            self.click_text('Cancel', 'auth-cancel')
+            end = min(self.deadline - 15, time.monotonic() + 20)
+            while time.monotonic() < end:
+                services = self.adb('shell', 'dumpsys', 'activity', 'services', self.package).stdout
+                if b'AuthenticationService' not in services:
+                    self.result['background_auth']['cancel_stopped_service'] = True
+                    return
+                time.sleep(1)
+            raise RuntimeError('Cancelling sign-in did not stop the foreground service')
+        except Exception:
+            self.adb('shell', 'am', 'force-stop', self.package, check=False)
+            raise
 
     def collect(self):
         if self.args.server:

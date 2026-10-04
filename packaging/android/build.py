@@ -125,7 +125,7 @@ def build_apk(args: argparse.Namespace) -> Path:
     for directory in (source_root, classes, dex):
         shutil.rmtree(directory, ignore_errors=True)
         directory.mkdir(parents=True)
-    for name in ("BootstrapActivity", RUNTIME["activity"]):
+    for name in ("BootstrapActivity", RUNTIME["activity"], "AuthenticationService"):
         render(ROOT / "packaging/android" / f"{name}.java", source_root / f"{name}.java", values)
     execute(["javac", "--release", "8", "-classpath", android_jar, "-d", classes, *sorted(source_root.glob("*.java"))])
     execute([tools / "d8", "--min-api", str(RUNTIME["min_sdk"]), "--lib", android_jar, "--output", dex, *sorted(classes.rglob("*.class"))])
@@ -135,11 +135,15 @@ def build_apk(args: argparse.Namespace) -> Path:
     <uses-sdk android:minSdkVersion="{RUNTIME['min_sdk']}" android:targetSdkVersion="{RUNTIME['target_sdk']}" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-feature android:name="android.hardware.vulkan.level" android:version="1" android:required="false" />
     <application android:label="{escape(product_name())}" android:icon="@drawable/icon"
         android:theme="@android:style/Theme.Material.NoActionBar" android:hasCode="true"
         android:allowBackup="false" android:usesCleartextTraffic="false" android:extractNativeLibs="true"
         android:debuggable="{str(not args.keystore).lower()}">
+        <service android:name=".AuthenticationService" android:exported="false"
+            android:foregroundServiceType="dataSync" />
         <activity android:name=".BootstrapActivity" android:exported="true" android:screenOrientation="landscape"
             android:configChanges="orientation|keyboardHidden|screenSize|screenLayout|uiMode|density">
             <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
