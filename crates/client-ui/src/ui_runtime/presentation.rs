@@ -579,6 +579,14 @@ impl UiPresentationRuntime {
                         self.append_touch_controls(
                             runtime, nodes, next, metrics, content, now_millis,
                         )?;
+                        self.append_player_list(
+                            player_runtime,
+                            runtime,
+                            nodes,
+                            next,
+                            metrics,
+                            content,
+                        )?;
                     }
                 }
                 Scene::Bed => {
@@ -686,6 +694,7 @@ impl UiPresentationRuntime {
             metrics,
             [content_width, content_height],
         );
+        self.append_mod_panel(runtime, &mut nodes, &mut next_id, metrics, content);
         if scenes.contains(&Scene::Gameplay)
             && stack
                 .scenes()
