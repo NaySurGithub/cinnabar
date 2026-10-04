@@ -15,6 +15,9 @@ on:
       server_play:
         default: ''
         type: string
+      auth_start:
+        default: ''
+        type: string
 
 permissions:
   actions: read
@@ -73,6 +76,7 @@ jobs:
           SMOKE_SERVER: ${{ inputs.server }}
           SMOKE_HOME_PLAY: ${{ inputs.home_play }}
           SMOKE_SERVER_PLAY: ${{ inputs.server_play }}
+          SMOKE_AUTH_START: ${{ inputs.auth_start }}
         run: |
           sudo systemd-run --wait --collect --pipe \
             --property=MemoryMax=7G --property=MemorySwapMax=0 --property=CPUQuota=200% \
@@ -83,7 +87,7 @@ jobs:
             python3 packaging/android/smoke.py --avd cinnabar-smoke \
               --apk-dir "$RUNNER_TEMP/cinnabar-smoke-apk" --output "$SMOKE_OUTPUT" \
               --server "$SMOKE_SERVER" --home-play "$SMOKE_HOME_PLAY" \
-              --server-play "$SMOKE_SERVER_PLAY" --seconds 1200
+              --server-play "$SMOKE_SERVER_PLAY" --auth-start "$SMOKE_AUTH_START" --seconds 1200
       - name: Upload frames, logs and crash reports
         if: always()
         uses: actions/upload-artifact@v4

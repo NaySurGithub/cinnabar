@@ -60,6 +60,11 @@ on:
         required: false
         default: ''
         type: string
+      auth_start:
+        description: 'Optional observed Sign In tap x,y@WIDTHxHEIGHT for emulator smoke'
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
@@ -163,3 +168,4 @@ jobs:
       server: ${{ inputs.server }}
       home_play: ${{ inputs.home_play }}
       server_play: ${{ inputs.server_play }}
+      auth_start: ${{ inputs.auth_start }}

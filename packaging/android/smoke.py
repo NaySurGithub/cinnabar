@@ -21,7 +21,7 @@ SERVER_NAME = 'Smoke target'
 SERVER_CONFIG = 'files/config/servers.json'
 
 
-def observed_play(value):
+def observed_tap(value):
     if not value:
         return None
     match = re.fullmatch(r'(\d+),(\d+)@(\d+)x(\d+)', value)
@@ -29,7 +29,7 @@ def observed_play(value):
         x, y, width, height = map(int, match.groups())
         if 0 <= x < width and 0 <= y < height:
             return x, y, width, height
-    raise argparse.ArgumentTypeError('observed Play must be x,y@WIDTHxHEIGHT within that frame')
+    raise argparse.ArgumentTypeError('observed tap must be x,y@WIDTHxHEIGHT within that frame')
 
 
 def text_target(tsv, label, placement='unique', width=None):
@@ -294,16 +294,16 @@ class Smoke:
             time.sleep(3)
         raise RuntimeError(f'Could not locate observed UI label {label!r} ({placement}); join not attempted')
 
-    def click_observed_play(self, tap, index, source):
+    def click_observed_tap(self, tap, index, source, label='Play'):
         x, y, width, height = tap
         frame = self.frame(f'join-{index}').read_bytes()
         actual = (int.from_bytes(frame[16:20], 'big'), int.from_bytes(frame[20:24], 'big'))
         if actual != (width, height):
-            raise RuntimeError(f'Observed {source} Play frame size {(width, height)} differs from {actual}')
-        self.result.setdefault('taps', []).append({'label': 'Play', 'x': x, 'y': y,
+            raise RuntimeError(f'Observed {source} {label} frame size {(width, height)} differs from {actual}')
+        self.result.setdefault('taps', []).append({'label': label, 'x': x, 'y': y,
                                                  'source': 'observed_input', 'input': source,
                                                  'frame_size': [width, height]})
-        print(f'Click supplied observed {source} Play at {(x, y)} in {actual}', flush=True)
+        print(f'Click supplied observed {source} {label} at {(x, y)} in {actual}', flush=True)
         self.adb('shell', 'input', 'tap', str(x), str(y))
         time.sleep(3)
 
@@ -319,14 +319,14 @@ class Smoke:
             return
         # The active start screen opens OreUI. A saved row selects details; hero Play joins.
         if self.args.home_play is not None:
-            self.click_observed_play(self.args.home_play, 0, 'home')
+            self.click_observed_tap(self.args.home_play, 0, 'home')
         else:
             self.click_text('Play', 0)
         for index, (label, placement) in enumerate((('Servers', 'unique'),
                                                    (SERVER_NAME, 'left')), start=1):
             self.click_text(label, index, placement)
         if self.args.server_play is not None:
-            self.click_observed_play(self.args.server_play, 3, 'server')
+            self.click_observed_tap(self.args.server_play, 3, 'server')
         else:
             self.click_text('Play', 3, 'right')
         self.result['join_attempted'] = True
@@ -344,7 +344,10 @@ class Smoke:
 
     def background_auth(self):
         """Exercise the real helper while the Activity is stopped, without approving a login."""
-        self.click_text('Sign In', 'auth-start')
+        if self.args.auth_start is not None:
+            self.click_observed_tap(self.args.auth_start, 'auth-start', 'home', 'Sign In')
+        else:
+            self.click_text('Sign In', 'auth-start')
         component = self.package + '/.' + self.activity
         try:
             end = min(self.deadline - 75, time.monotonic() + 45)
@@ -449,10 +452,12 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--avd', required=True)
     parser.add_argument('--server', default='')
-    parser.add_argument('--home-play', type=observed_play, default='',
+    parser.add_argument('--home-play', type=observed_tap, default='',
                         help='optional observed home Play tap x,y@WIDTHxHEIGHT; size checked before tapping')
-    parser.add_argument('--server-play', type=observed_play, default='',
+    parser.add_argument('--server-play', type=observed_tap, default='',
                         help='optional observed saved-server Play tap x,y@WIDTHxHEIGHT; size checked before tapping')
+    parser.add_argument('--auth-start', type=observed_tap, default='',
+                        help='optional observed Sign In tap x,y@WIDTHxHEIGHT; size checked before tapping')
     parser.add_argument('--seconds', type=int, default=1200)
     args = parser.parse_args()
     if not 120 <= args.seconds <= 1200:
