@@ -182,7 +182,7 @@ function Copy-ProtocolDependencyProvenanceFixture {
     New-Item -ItemType Directory -Path $DestinationRoot -Force | Out-Null
     Copy-Item -LiteralPath (Join-Path $SourceRoot 'Cargo.toml') -Destination $DestinationRoot
     Copy-Item -LiteralPath (Join-Path $SourceRoot 'Cargo.lock') -Destination $DestinationRoot
-    foreach ($workspaceDirectory in @('app', 'crates', 'tools', 'examples')) {
+    foreach ($workspaceDirectory in @('app', 'crates', 'tools', 'examples', 'packaging')) {
         Copy-Item -LiteralPath (Join-Path $SourceRoot $workspaceDirectory) `
             -Destination $DestinationRoot -Recurse
     }

@@ -73,7 +73,8 @@ def build_native(args: argparse.Namespace, ndk: Path, output: Path, triple: str,
         environment["RUSTFLAGS"] = environment.get("RUSTFLAGS", "") + " -C link-arg=-Wl,-z,max-page-size=16384"
         execute(["cargo", "ndk", "-t", args.abi, "-p", str(RUNTIME["min_sdk"]), "build", "--locked", "-p", CLIENT_PACKAGE, "--profile", args.profile], env=environment)
         environment.update(GOOS="android", GOARCH=goarch, CGO_ENABLED="1", CC=str(compiler), GOWORK="off", GOFLAGS=environment.get("GOFLAGS", "-p=1"))
-        flags = "-s -w -extldflags=-Wl,-z,max-page-size=16384"
+        # anet's Android interface workaround requires private net linknames on Go 1.23+.
+        flags = "-s -w -checklinkname=0 -extldflags=-Wl,-z,max-page-size=16384"
         execute(["go", "build", "-buildmode=pie", "-trimpath", "-ldflags", flags, "-o", natives[RUNTIME["core_library"]], "./cmd/bedrock-core"], cwd=ROOT / "core", env=environment)
         execute(["go", "build", "-buildmode=pie", "-trimpath", "-ldflags", flags, "-o", natives[RUNTIME["local_server_library"]], "."], cwd=ROOT / "tools/localserver", env=environment)
     libcxx = toolchain / "sysroot/usr/lib" / clang_triple / "libc++_shared.so"

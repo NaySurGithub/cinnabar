@@ -108,6 +108,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: android-${{ matrix.abi }}
+          cache-on-failure: true
       - name: Build and verify APK payload and signature
         run: python3 packaging/android/build.py --abi "${{ matrix.abi }}" --profile play
       - name: Upload the installable APK
