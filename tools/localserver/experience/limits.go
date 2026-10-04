@@ -57,9 +57,16 @@ const maxNeighborEventsPerTick = 64
 const dropLogInterval = time.Second
 
 // provisionalFocusRange is the farthest, in blocks from a player's eyes to the block's centre,
-// that a player's focus counts. PROVISIONAL, labeled incomplete in plan.md: it should be the
-// distance at which vanilla Bedrock closes an open container's screen, but no vanilla reference
-// for that distance has been identified, so it is Dragonfly's survival reach for using a block.
+// that a player's focus counts. PROVISIONAL, labeled incomplete in plan.md. Vanilla closes a
+// block container screen when the player is farther than its pick range from the block
+// (26.30 reconstruction: BlockContainerScreenController::_isStillValid, RVA 0x00882d70, passes
+// ClientInstanceScreenModel::getPickRange to LevelContainerManagerModel::isValid(float), RVA
+// 0x0a00d8e0, which compares the squared distance from the player's actor position, a
+// Bedrock player's eye position, to the block's centre). That range is GameMode::getPickRange
+// (RVA 0x0a0c1450): one constant for touch input, one for input mode 3, and otherwise one for
+// survival and one for creative. The reconstruction does not resolve those constants, so the
+// value is still Dragonfly's survival reach for using a block, and one range serves every input
+// mode and game mode.
 const provisionalFocusRange = 8.0
 
 // The commit check enforces these runtime limits again. Each must equal its Rust constant, which
