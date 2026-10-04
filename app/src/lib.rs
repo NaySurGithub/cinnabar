@@ -52,6 +52,7 @@ pub mod settings_runtime;
 mod store;
 mod survival_mining;
 pub mod ui_runtime;
+mod window_icon;
 
 mod acceptance;
 mod app;
