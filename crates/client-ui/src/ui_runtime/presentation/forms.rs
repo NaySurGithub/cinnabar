@@ -11,6 +11,7 @@ pub mod containers;
 pub mod emote_screen;
 pub mod engine;
 pub mod experience;
+pub mod experience_modal;
 pub mod fallback;
 #[cfg(test)]
 mod formatting_tests;
@@ -73,6 +74,7 @@ pub mod toast_screen;
 pub use chat_screen::{CHAT_SCREEN, ChatHit};
 pub use container_data::observe_station_block;
 pub use emote_screen::{EMOTE_EQUIP_POPUP, EMOTE_SCREEN, EmoteHit};
+pub use experience_modal::ExperienceModal;
 pub use loading_screen::{LOADING_SCREEN, LoadingStage};
 pub use menu_screens::menu_reference;
 pub use npc::NPC_SCREEN;
@@ -115,6 +117,8 @@ pub(super) struct FormPresentation {
     hud: hud::HudScreens,
     mod_hud: Option<mod_hud::ModHud>,
     experience: Option<experience::ExperienceChrome>,
+    /// A client part's modal screen; carried across the per-frame reset.
+    experience_modal: Option<experience_modal::ModalScreen>,
     /// The last container screen's layout; carried across the per-frame reset.
     container_cache: Option<containers::ScreenCache>,
     /// Immutable creative rows reused across hover and scroll frames.
@@ -233,11 +237,12 @@ impl UiPresentationRuntime {
     /// Hands changed server atlas pages to the dynamic texture pages; runs
     /// after the frame's screens drew, before the frame publishes.
     pub(super) fn sync_server_ui_pages(&mut self) {
-        let changed = self
+        let server = self
             .form_presentation
             .engine
             .as_mut()
             .is_some_and(|engine| engine.take_server_pages().is_some());
+        let changed = self.refresh_experience_modal_pages() | server;
         // Server textures too big for a server page draw from full-resolution art.
         let set = super::menu_artwork::ArtworkSet {
             paths: self.menu_artwork_set.paths.clone(),
@@ -426,6 +431,7 @@ impl UiPresentationRuntime {
             hud: state.hud,
             mod_hud: state.mod_hud,
             experience: state.experience,
+            experience_modal: state.experience_modal,
             container_cache: state.container_cache,
             book_cache: state.book_cache,
             ready_menu: state.ready_menu,
