@@ -342,6 +342,23 @@ class Smoke:
         if self.result['outcome'] == 'offline_join_unconfirmed':
             raise RuntimeError('Offline join could not be confirmed; inspect final frame and logs')
 
+    def helper_cpu(self, helper, name):
+        """Sum Go worker-thread CPU time; the process leader may be parked."""
+        tasks = self.adb('exec-out', 'run-as', self.package, 'ls', f'/proc/{helper}/task').stdout
+        samples = {}
+        for task in tasks.decode().split():
+            if not task.isdecimal():
+                raise RuntimeError('Unexpected auth helper thread ID')
+            sample = self.adb('exec-out', 'run-as', self.package, 'cat',
+                              f'/proc/{helper}/task/{task}/schedstat', check=False)
+            if sample.returncode:
+                continue  # A worker can exit between listing and reading.
+            samples[task] = int(sample.stdout.split()[0])
+        (self.output / f'auth-cpu-{name}.json').write_text(json.dumps(samples, indent=2) + '\n')
+        if not samples:
+            raise RuntimeError('Could not read auth helper worker CPU times')
+        return sum(samples.values())
+
     def background_auth(self):
         """Exercise the real helper while the Activity is stopped, without approving a login."""
         if self.args.auth_start is not None:
@@ -364,16 +381,16 @@ class Smoke:
                 raise RuntimeError('Sign-in did not start its foreground service and auth helper')
             self.adb('shell', 'input', 'keyevent', 'KEYCODE_HOME')
             time.sleep(15)  # Beyond Android 14+'s documented cached-process freeze delay.
-            before = int(self.private(f'/proc/{helper}/schedstat').split()[0])
+            before = self.helper_cpu(helper, 'before')
             time.sleep(20)
-            after = int(self.private(f'/proc/{helper}/schedstat').split()[0])
+            after = self.helper_cpu(helper, 'after')
             services = self.adb('shell', 'dumpsys', 'activity', 'services', self.package).stdout
             (self.output / 'auth-background-services.txt').write_bytes(services)
-            if b'isForeground=true' not in services or after <= before:
-                raise RuntimeError('Auth helper stopped running while the Activity was backgrounded')
             self.result['background_auth'] = {'helper_cpu_ns_before': before,
                                               'helper_cpu_ns_after': after,
-                                              'foreground_service': True}
+                                              'foreground_service': b'isForeground=true' in services}
+            if not self.result['background_auth']['foreground_service'] or after <= before:
+                raise RuntimeError('Auth helper stopped running while the Activity was backgrounded')
             self.adb('shell', 'am', 'start', '-W', '-n', component)
             self.click_text('Cancel', 'auth-cancel')
             end = min(self.deadline - 15, time.monotonic() + 20)
