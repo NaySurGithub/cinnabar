@@ -18,9 +18,6 @@ jobs:
   runtime:
     runs-on: ubuntu-24.04
     timeout-minutes: 35
-    env:
-      ANDROID_AVD_HOME: ${{ runner.temp }}/cinnabar-smoke-avds
-      SMOKE_OUTPUT: ${{ runner.temp }}/cinnabar-smoke-evidence
     steps:
       - uses: actions/checkout@v4
         with:
@@ -31,6 +28,7 @@ jobs:
           java-version: '21'
       - name: Resolve the pinned Android runtime
         run: |
+          printf 'ANDROID_AVD_HOME=%s/cinnabar-smoke-avds\nSMOKE_OUTPUT=%s/cinnabar-smoke-evidence\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
           python3 - <<'PY' >> "$GITHUB_ENV"
           import json
           runtime = json.load(open('packaging/android/runtime.json'))

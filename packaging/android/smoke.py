@@ -193,7 +193,7 @@ class Smoke:
                 activities = self.adb('shell', 'dumpsys', 'activity', 'activities').stdout.decode(errors='replace')
                 if self.launched is not None and time.monotonic() - self.launched > 30:
                     process = self.adb('shell', 'pidof', self.package, check=False)
-                    if not process.stdout.strip():
+                    if process.returncode == 1 and not process.stdout.strip() and not process.stderr.strip():
                         raise RuntimeError('App process exited during setup; see logcat.txt')
             except subprocess.TimeoutExpired:
                 time.sleep(3)
