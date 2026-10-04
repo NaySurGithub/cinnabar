@@ -88,9 +88,17 @@ jobs:
           for env, key in [('ANDROID_API', 'target_sdk'), ('ANDROID_BUILD_TOOLS', 'build_tools'), ('ANDROID_NDK_VERSION', 'ndk'), ('CARGO_NDK_VERSION', 'cargo_ndk')]:
               print(f'{env}={runtime[key]}')
           PY
-      - name: Install Android and Rust tooling
+      - name: Set up the pinned Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          accept-android-sdk-licenses: true
+          log-accepted-android-sdk-licenses: false
+          packages: >-
+            platforms;android-${{ env.ANDROID_API }}
+            build-tools;${{ env.ANDROID_BUILD_TOOLS }}
+            ndk;${{ env.ANDROID_NDK_VERSION }}
+      - name: Install Rust and APK tooling
         run: |
-          sdkmanager "platforms;android-$ANDROID_API" "build-tools;$ANDROID_BUILD_TOOLS" "ndk;$ANDROID_NDK_VERSION"
           printf 'ANDROID_NDK_HOME=%s/ndk/%s\n' "$ANDROID_HOME" "$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
           rustup toolchain install
           rustup target add aarch64-linux-android x86_64-linux-android
