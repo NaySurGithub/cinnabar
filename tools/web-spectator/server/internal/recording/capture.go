@@ -22,6 +22,10 @@ type Detail struct {
 }
 
 func (s *Service) consume(e event) {
+	if e.rejectedID != "" {
+		s.abort(e.rejectedID)
+		return
+	}
 	var err error
 	switch e.subject {
 	case spectator.ReplayStartSubject:

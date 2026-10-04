@@ -340,3 +340,30 @@ func TestTerminalFrameContainsFinalHealthAndResult(t *testing.T) {
 		t.Fatal("final outcome missing")
 	}
 }
+
+func TestRejectedExportPreservesOtherRecording(t *testing.T) {
+	s, now := harness(t)
+	frame := fixtureFrame(now)
+	s.consume(enqueueOpening(t, s, frame))
+	other := frame
+	other.ID = "other-match"
+	s.consume(enqueueOpening(t, s, other))
+	s.RejectExport([]byte(`{"id":"other-match"}`))
+	s.consume(<-s.queue)
+	if s.active[other.ID] != nil {
+		t.Fatal("rejected recording retained")
+	}
+	if s.active[frame.ID] == nil {
+		t.Fatal("unrelated recording discarded")
+	}
+	frame.UpdatedAt = now.Add(50 * time.Millisecond)
+	s.consume(enqueue(t, s, spectator.FrameSubject, frame, frame.UpdatedAt))
+	finish(t, s, frame.UpdatedAt, "finished")
+	if len(s.store.List()) != 1 {
+		t.Fatal("unrelated complete replay was not published")
+	}
+	s.consume(enqueueOpening(t, s, other))
+	if s.active[other.ID] != nil {
+		t.Fatal("failed recording restarted")
+	}
+}

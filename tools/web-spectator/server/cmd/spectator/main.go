@@ -98,7 +98,7 @@ func run(log *slog.Logger) error {
 			if err != nil {
 				rejected.Add(1)
 				if capture != nil {
-					capture.Disconnect()
+					capture.RejectExport(message.Data)
 				}
 			} else if capture != nil {
 				capture.AcceptReplayStart(opening, arena, message.Data, now)
@@ -108,7 +108,7 @@ func run(log *slog.Logger) error {
 		if err := store.Accept(message.Subject, message.Data, now); err != nil {
 			rejected.Add(1)
 			if capture != nil && message.Subject == spectator.FrameSubject {
-				capture.Disconnect()
+				capture.RejectExport(message.Data)
 			}
 		} else if capture != nil {
 			capture.Accept(message.Subject, message.Data, now)

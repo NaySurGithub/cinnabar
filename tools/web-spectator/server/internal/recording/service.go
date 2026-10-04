@@ -17,6 +17,7 @@ const maxPendingBytes = 8 << 20
 const maxFailedIDs = 1024
 
 type event struct {
+	rejectedID  string
 	subject     string
 	data        []byte
 	frame       spectator.Frame
@@ -142,6 +143,28 @@ func (s *Service) AcceptReplayStart(start spectator.ReplayStart, arena *spectato
 		s.Disconnect()
 	}
 }
+
+// RejectExport discards only the recording named by a rejected export.
+// A malformed or stale match must not invalidate other matches on the bus.
+func (s *Service) RejectExport(data []byte) {
+	var identity struct {
+		ID string `json:"id"`
+	}
+	if json.Unmarshal(data, &identity) != nil || !spectator.ValidID(identity.ID) {
+		return
+	}
+	select {
+	case <-s.stop:
+		return
+	default:
+	}
+	select {
+	case s.queue <- event{rejectedID: identity.ID, generation: s.generation.Load()}:
+	default:
+		s.Disconnect()
+	}
+}
+
 func (s *Service) Close()      { s.closeOnce.Do(func() { close(s.stop) }); <-s.done }
 func (s *Service) Disconnect() { s.generation.Add(1); s.lost.Store(true) }
 
