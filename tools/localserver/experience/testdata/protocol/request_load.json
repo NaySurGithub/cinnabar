@@ -1,4 +1,14 @@
 {
   "type": "load",
-  "dir": "/srv/experiences/benergistics"
+  "dir": "/srv/experiences/benergistics",
+  "items": [
+    {
+      "id": "minecraft:stone",
+      "max_count": 64
+    },
+    {
+      "id": "minecraft:ender_pearl",
+      "max_count": 16
+    }
+  ]
 }

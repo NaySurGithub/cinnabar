@@ -3,6 +3,7 @@
 
 mod block_type;
 mod geometry;
+mod items;
 
 use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
@@ -37,8 +38,15 @@ const ALL_FACES: &str = "*";
 /// it binds all of these.
 const FACES: [&str; 6] = ["up", "down", "north", "south", "east", "west"];
 
-/// The state axes of each of an Experience's blocks, by block id: [`axes`] of its states.
-pub(crate) type OwnBlocks = HashMap<String, Vec<StateDef>>;
+/// What an Experience's callbacks may name: its blocks with their state axes ([`axes`] of their
+/// states), its items with the most one stack of each holds, and the server's items, which the
+/// adapter lists when it loads the Experience.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct Catalog {
+    pub blocks: HashMap<String, Vec<StateDef>>,
+    pub items: HashMap<String, u8>,
+    pub server: HashMap<String, u8>,
+}
 
 /// A verified artifact: its manifest, its validated blocks, and the component pre-linked against
 /// the `server` world of its `api`, ready for a fresh instance per callback.
@@ -46,8 +54,10 @@ pub struct Loaded {
     pub manifest: Manifest,
     /// Asset paths are absolute.
     pub blocks: Vec<protocol::BlockDef>,
-    /// The ids and state axes of `blocks`, shared by every callback.
-    pub(crate) own: Arc<OwnBlocks>,
+    /// Icon paths are absolute.
+    pub items: Vec<protocol::ItemDef>,
+    /// What callbacks may name, shared by every callback.
+    pub(crate) catalog: Arc<Catalog>,
     /// Whether the world of its `api` takes its player's focus in client messages and epochs.
     pub focus: bool,
     pub(crate) pre: Pre,
@@ -125,15 +135,23 @@ fn load_dir(engine: &Engine, dir: &Path) -> Result<Loaded> {
     let pre = link(engine, &module, api)
         .with_context(|| format!("{SERVER_WASM} is not a {} server component", api.package()))?;
     let registration = register(engine, &pre, &manifest.id)?;
-    let blocks = validate_registration(dir, &manifest, registration)?;
-    let own = blocks
-        .iter()
-        .map(|block| (block.id.clone(), axes(&block.states, &block.placement)))
-        .collect();
+    let (blocks, items) = validate_registration(dir, &manifest, registration)?;
+    let catalog = Catalog {
+        blocks: blocks
+            .iter()
+            .map(|block| (block.id.clone(), axes(&block.states, &block.placement)))
+            .collect(),
+        items: items
+            .iter()
+            .map(|item| (item.id.clone(), item.max_stack))
+            .collect(),
+        server: HashMap::new(),
+    };
     Ok(Loaded {
         manifest,
         blocks,
-        own: Arc::new(own),
+        items,
+        catalog: Arc::new(catalog),
         focus: api.focus(),
         pre,
     })
@@ -204,18 +222,34 @@ pub(crate) fn axes(states: &[StateDef], placement: &[PlacementState]) -> Vec<Sta
         .collect()
 }
 
-/// Checks what `register` declared. Items are in the contract, but this runtime does not
-/// implement them yet (SP5 task G), so a registration with any is refused.
+impl Loaded {
+    /// The loaded artifact whose callbacks may make stacks of the server's `items` besides its
+    /// own, as the adapter lists them at load.
+    pub fn with_server_items(mut self, items: Vec<protocol::ServerItem>) -> Result<Self> {
+        let mut catalog = (*self.catalog).clone();
+        catalog.server = items::server_items(items)?;
+        self.catalog = Arc::new(catalog);
+        Ok(self)
+    }
+}
+
+/// Checks what `register` declared, its blocks and then its items; asset paths become absolute
+/// under the artifact directory.
 fn validate_registration(
     dir: &Path,
     manifest: &Manifest,
     registration: wit::Registration,
-) -> Result<Vec<protocol::BlockDef>> {
-    ensure!(
-        registration.items.is_empty(),
-        "register declared items, which this runtime does not support yet"
-    );
-    validate_blocks(dir, manifest, registration.blocks)
+) -> Result<(Vec<protocol::BlockDef>, Vec<protocol::ItemDef>)> {
+    let blocks = validate_blocks(dir, manifest, registration.blocks)?;
+    let root = std::path::absolute(dir).context("resolving the artifact directory")?;
+    let items = items::validate_items(
+        &root,
+        &manifest.files,
+        &manifest.id,
+        &blocks,
+        registration.items,
+    )?;
+    Ok((blocks, items))
 }
 
 /// Checks every declared block; asset paths become absolute under the artifact directory.
@@ -294,15 +328,7 @@ fn validate_block(
         textures,
         mining,
     } = def;
-    ensure!(
-        (1..=MAX_DISPLAY_NAME_BYTES).contains(&display_name.len()),
-        "display name has {} bytes; it needs 1 to {MAX_DISPLAY_NAME_BYTES}",
-        display_name.len()
-    );
-    ensure!(
-        !display_name.chars().any(char::is_control),
-        "display name {display_name:?} has a control character"
-    );
+    check_display_name(&display_name)?;
     let mining = match mining {
         wit::Mining::Unbreakable => protocol::Mining::Unbreakable {},
         wit::Mining::Breakable(hardness) => {
@@ -345,6 +371,21 @@ fn validate_block(
         permutations,
         network,
     })
+}
+
+/// Checks a block's or an item's display name: 1 to [`MAX_DISPLAY_NAME_BYTES`] bytes without a
+/// control character.
+fn check_display_name(display_name: &str) -> Result<()> {
+    ensure!(
+        (1..=MAX_DISPLAY_NAME_BYTES).contains(&display_name.len()),
+        "display name has {} bytes; it needs 1 to {MAX_DISPLAY_NAME_BYTES}",
+        display_name.len()
+    );
+    ensure!(
+        !display_name.chars().any(char::is_control),
+        "display name {display_name:?} has a control character"
+    );
+    Ok(())
 }
 
 /// Checks a full cube's texture bindings: each slot once, covering every face.

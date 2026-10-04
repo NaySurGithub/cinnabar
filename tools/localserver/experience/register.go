@@ -38,27 +38,29 @@ var (
 // in it would collide with a vanilla block, which Dragonfly refuses with a panic, or pose as one.
 const vanillaNamespace = "minecraft"
 
-// Registry holds the registered Experience blocks.
+// Registry holds the registered Experience blocks and items.
 type Registry struct {
 	types map[string]*blockType // by block id
+	items map[string]*itemType  // by item id
 }
 
-// Register checks the blocks of every loaded Experience and reads their textures and geometries.
-// Then it registers every state of each block and its item with Dragonfly, and for each
-// Experience a construction creative group named after it, which holds its blocks and shows the
-// first. A reserved or repeated Experience id, items, or a bad definition, texture or geometry,
-// fails before anything is registered, with an error naming the Experience and the block or
-// file.
+// Register checks the blocks and items of every loaded Experience and reads their textures,
+// geometries and icons. Then it registers every state of each block, its item and each item with
+// Dragonfly, and for each Experience a construction creative group named after it, which holds
+// its blocks, then its items, and shows the first. A reserved or repeated Experience id, or a bad
+// definition, texture, geometry or icon, fails before anything is registered, with an error
+// naming the Experience and the block, item or file.
 //
 // Dragonfly's registries are global: Register may succeed once per process, before
 // server.Config.New finalizes them and builds the resource pack from the registered blocks. It is
 // not safe for concurrent use.
 func Register(loaded []Loaded) (*Registry, error) {
-	r := &Registry{types: make(map[string]*blockType)}
+	r := &Registry{types: make(map[string]*blockType), items: make(map[string]*itemType)}
 	experiences := make(map[string]bool, len(loaded))
 	cache := newAssetCache() // several slots, materials and blocks may share a file
-	// blocks[i] holds the types of loaded[i]'s blocks in their order.
+	// blocks[i] and items[i] hold the types of loaded[i]'s blocks and items in their order.
 	blocks := make([][]*blockType, len(loaded))
+	items := make([][]*itemType, len(loaded))
 	for i, l := range loaded {
 		if l.ID == vanillaNamespace {
 			return nil, fmt.Errorf("experience id %q is reserved", l.ID)
@@ -67,10 +69,8 @@ func Register(loaded []Loaded) (*Registry, error) {
 			return nil, fmt.Errorf("experience %q is loaded twice", l.ID)
 		}
 		experiences[l.ID] = true
-		if len(l.Items) > 0 {
-			// Server WIT 0.5's items are in the protocol before the adapter registers them (SP5
-			// task G).
-			return nil, fmt.Errorf("experience %q declares items, which are not supported yet", l.ID)
+		if len(l.Items) > maxItems {
+			return nil, fmt.Errorf("experience %q declares %d items; the limit is %d", l.ID, len(l.Items), maxItems)
 		}
 		for _, def := range l.Blocks {
 			if _, ok := r.types[def.ID]; ok {
@@ -83,6 +83,17 @@ func Register(loaded []Loaded) (*Registry, error) {
 			r.types[def.ID] = t
 			blocks[i] = append(blocks[i], t)
 		}
+		for _, def := range l.Items {
+			if _, ok := r.items[def.ID]; ok {
+				return nil, fmt.Errorf("experience %q: item %q is declared twice", l.ID, def.ID)
+			}
+			t, err := newItemType(l.ID, def, l.Blocks, cache)
+			if err != nil {
+				return nil, err
+			}
+			r.items[def.ID] = t
+			items[i] = append(items[i], t)
+		}
 	}
 	// Every definition is valid; only now does anything reach Dragonfly.
 	for i, types := range blocks {
@@ -93,17 +104,27 @@ func Register(loaded []Loaded) (*Registry, error) {
 			}
 			world.RegisterItem(Block{t, 0})
 		}
-		if len(types) == 0 {
+		for _, t := range items[i] {
+			world.RegisterItem(Item{t})
+		}
+		var stacks []item.Stack
+		for _, t := range types {
+			stacks = append(stacks, item.NewStack(Block{t: t}, 1))
+		}
+		for _, t := range items[i] {
+			stacks = append(stacks, item.NewStack(Item{t}, 1))
+		}
+		if len(stacks) == 0 {
 			continue
 		}
 		exp := loaded[i].ID
 		creative.RegisterGroup(creative.Group{
 			Category: creative.ConstructionCategory(),
 			Name:     exp,
-			Icon:     item.NewStack(Block{t: types[0]}, 1),
+			Icon:     stacks[0],
 		})
-		for _, t := range types {
-			creative.RegisterItem(creative.Item{Stack: item.NewStack(Block{t: t}, 1), Group: exp})
+		for _, stack := range stacks {
+			creative.RegisterItem(creative.Item{Stack: stack, Group: exp})
 		}
 	}
 	return r, nil

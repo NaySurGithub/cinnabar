@@ -14,6 +14,7 @@ import (
 	"github.com/df-mc/dragonfly/server/block"
 	"github.com/df-mc/dragonfly/server/block/cube"
 	"github.com/df-mc/dragonfly/server/item"
+	"github.com/df-mc/dragonfly/server/player"
 	"github.com/df-mc/dragonfly/server/world"
 	"github.com/go-gl/mathgl/mgl64"
 	"github.com/google/uuid"
@@ -469,6 +470,9 @@ func (h *Host) dispatch(ctx context.Context, d *dispatcher, ev event) {
 type snapshot struct {
 	req   CallbackRequest
 	cells []cellState
+	// slots are the actor's inventory slots as the snapshot holds them, which the commit checks
+	// again where it writes; nil without an actor.
+	slots []item.Stack
 }
 
 // cellState is the state of one snapshot cell that a commit must find unchanged, and the length
@@ -548,6 +552,11 @@ func (h *Host) read(tx *world.Tx, d *dispatcher, ev event) snapshot {
 	if ev.actor != nil {
 		id := ev.actor.UUID().String()
 		snap.req.Actor = &id
+		if e, ok := ev.actor.Entity(tx); ok {
+			if p, ok := e.(*player.Player); ok {
+				snap.req.Inventory, snap.slots = inventoryOf(d.id, p)
+			}
+		}
 	}
 	var positions []cube.Pos
 	if ev.call.anchored() {

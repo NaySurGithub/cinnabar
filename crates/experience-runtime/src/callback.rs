@@ -20,10 +20,10 @@ use crate::limits::{
     MAX_CLIENT_SENDS, MAX_HOST_CALLS, MAX_NETWORK_BLOCKS, MAX_NETWORK_DATA_BYTES,
     MAX_STAGED_DATA_BYTES, MAX_STAGED_OPS, MAX_TELL_BYTES, MAX_TELLS, MAX_VALUE_DEPTH,
 };
-use crate::load::{Loaded, OwnBlocks, holds};
+use crate::load::{Catalog, Loaded, holds};
 use crate::protocol::{
-    self, BlockPos, BlockState, Call, Cell, FailKind, Network, Op, Outcome, Request, Scalar,
-    StateDef, StateValue, StateValues, bounded_reason,
+    self, BlockPos, BlockState, Call, Cell, FailKind, Inventory, Network, Op, Outcome, Request,
+    Scalar, StateDef, StateValue, StateValues, bounded_reason,
 };
 use crate::value::{self, Refusal};
 
@@ -42,7 +42,7 @@ pub fn run(engine: &Engine, loaded: &Loaded, request: &Request) -> Outcome {
 
 /// [`run`], which also returns the fuel that the callback consumed.
 pub fn run_metered(engine: &Engine, loaded: &Loaded, request: &Request) -> (Outcome, u64) {
-    let (res, export) = match prepare(&loaded.own, request) {
+    let (res, export) = match prepare(&loaded.catalog, request) {
         Ok(prepared) => prepared,
         Err(reason) => {
             let reason = format!("malformed callback request: {reason}");
@@ -247,11 +247,13 @@ pub struct CallbackRes {
     /// The actor's focus, which a client message or an epoch may have; its snapshot is the one
     /// its anchor would have.
     focus: Option<BlockPos>,
-    /// The ids and state axes of this Experience's blocks.
-    own: Arc<OwnBlocks>,
+    /// This Experience's blocks and items and the server's items.
+    own: Arc<Catalog>,
     snapshot: Snapshot,
     /// The anchor's network when the anchor is a member, as the adapter snapshotted it.
     network: Option<Network>,
+    /// The actor's inventory with the staged slots applied; none without an actor.
+    inventory: Option<Inventory>,
     /// In the order they commit. A position has at most one `SetBlockData`, and it comes after
     /// any `SetBlock` there.
     ops: Vec<Op>,
@@ -331,7 +333,7 @@ enum Export<'a> {
 /// that is not a callback, holds bad hex or a player id that is not canonical fails before
 /// anything runs.
 fn prepare<'a>(
-    own: &Arc<OwnBlocks>,
+    own: &Arc<Catalog>,
     request: &'a Request,
 ) -> Result<(CallbackRes, Export<'a>), String> {
     let Request::Callback {
@@ -342,6 +344,7 @@ fn prepare<'a>(
         data_budget,
         snapshot,
         network,
+        inventory,
         call,
         ..
     } = request
@@ -421,6 +424,9 @@ fn prepare<'a>(
         Some(network) => members(network, &cells)?,
         None => HashSet::new(),
     };
+    if let Some(inventory) = inventory {
+        items::check_inventory(own, inventory, actor.as_deref())?;
+    }
     let res = CallbackRes {
         info: CallbackInfo {
             world_id: info.world_id.clone(),
@@ -439,6 +445,7 @@ fn prepare<'a>(
             members,
         },
         network: network.clone(),
+        inventory: inventory.clone(),
         ops: Vec::new(),
         budget: *data_budget,
         added: 0,
@@ -580,13 +587,6 @@ impl CallbackRes {
         Ok(self.info.clone())
     }
 
-    /// A 0.5 call whose implementation has not landed (SP5 task G): it counts as a host call and
-    /// is refused as `unsupported-state`, staging nothing.
-    pub(crate) fn not_yet<T>(&mut self) -> Result<Result<T, WorldError>> {
-        self.host_call()?;
-        Ok(Err(WorldError::UnsupportedState))
-    }
-
     /// The actor's focus, which only a client message or an epoch may have.
     pub(crate) fn focus(&mut self) -> Result<Option<BlockPos>> {
         self.host_call()?;
@@ -614,7 +614,7 @@ impl CallbackRes {
         if slot.id != AIR && !slot.owned {
             return Ok(Err(WorldError::NotOwned));
         }
-        let axes = match self.own.get(&id) {
+        let axes = match self.own.blocks.get(&id) {
             Some(axes) => axes.as_slice(),
             None if id == AIR => &[],
             None => return Ok(Err(WorldError::UnknownBlock)),
@@ -669,7 +669,7 @@ impl CallbackRes {
             Ok(slot) => slot,
             Err(error) => return Ok(Err(error)),
         };
-        let Some(axes) = self.own.get(&slot.id).filter(|_| slot.owned) else {
+        let Some(axes) = self.own.blocks.get(&slot.id).filter(|_| slot.owned) else {
             return Ok(Err(WorldError::NotOwned));
         };
         for (i, state) in states.iter().enumerate() {
@@ -953,5 +953,6 @@ impl From<protocol::Cause> for ChangeCause {
     }
 }
 
+mod items;
 #[cfg(test)]
 mod tests;

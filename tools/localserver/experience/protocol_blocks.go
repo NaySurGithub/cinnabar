@@ -9,8 +9,7 @@ import (
 // The Go mirror of protocol 5's additions in crates/experience-runtime/src/protocol/visuals.rs
 // and player.rs: server WIT 0.5's block states and visuals and the Experience's items, which
 // Loaded carries, and the actor's inventory and the network scope, which a CallbackRequest may
-// carry. The adapter registers block states and visuals, applies set_block_state and floods the
-// network scope; items are not implemented yet (SP5 task G). The goldens keep all of it exact.
+// carry, and the server's items, which LoadRequest lists. The goldens keep all of it exact.
 
 // Pixel is a point in a block, in pixels: 0 to 16 on each axis, x east, y up, z south.
 type Pixel struct {
@@ -148,6 +147,13 @@ type Permutation struct {
 	Collision *PixelBox         `json:"collision"`
 	Selection *PixelBox         `json:"selection"`
 	Rotation  *QuarterTurns     `json:"rotation"`
+}
+
+// ServerItem is an item the server knows, which the adapter lists at load: its id and the most
+// one stack of it holds.
+type ServerItem struct {
+	ID       string `json:"id"`
+	MaxCount uint8  `json:"max_count"`
 }
 
 // ItemDef is an item of the Experience; Icon is absolute.

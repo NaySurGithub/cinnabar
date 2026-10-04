@@ -2,6 +2,8 @@
 
 use std::time::Duration;
 
+use crate::protocol::INVENTORY_SLOTS;
+
 /// Fuel granted to one callback.
 pub const CALLBACK_FUEL: u64 = 10_000_000;
 /// Fuel granted to `register`.
@@ -87,6 +89,14 @@ pub const MAX_REASON_BYTES: usize = 512;
 pub const MAX_LOGS: usize = 32;
 /// Bytes per log line.
 pub const MAX_LOG_BYTES: usize = 512;
+/// Items one Experience may register.
+pub const MAX_ITEMS: usize = 64;
+/// The most one stack of an Experience's item may hold: a Bedrock stack's.
+pub const MAX_STACK_SIZE: u8 = 64;
+/// Bytes of an Experience's own data on one item stack.
+pub const MAX_ITEM_DATA_BYTES: usize = 8192;
+/// Items the adapter may list as the server's when it loads an Experience.
+pub const MAX_SERVER_ITEMS: usize = 16_384;
 /// Members one callback's network holds; the adapter's flood stops there and marks the network
 /// truncated.
 pub const MAX_NETWORK_BLOCKS: usize = 1024;
@@ -104,3 +114,9 @@ const _: () = assert!(MAX_CLIENT_SEND_BYTES <= MAX_FRAME_BYTES / 8);
 // Hex doubles the network's data, which may fill at most half of a request frame; the other half
 // is room for its cells, which the Go adapter's tests check at the bounds, and the rest.
 const _: () = assert!(2 * MAX_NETWORK_DATA_BYTES <= MAX_FRAME_BYTES / 2);
+// Hex doubles item data: a result's staged item data, one stack per op, fits beside its staged
+// block data in half a result frame, and an inventory's in an eighth of a request frame.
+const _: () = assert!(
+    2 * (MAX_STAGED_DATA_BYTES + MAX_STAGED_OPS * MAX_ITEM_DATA_BYTES) <= MAX_FRAME_BYTES / 2
+);
+const _: () = assert!(2 * INVENTORY_SLOTS * MAX_ITEM_DATA_BYTES <= MAX_FRAME_BYTES / 4);

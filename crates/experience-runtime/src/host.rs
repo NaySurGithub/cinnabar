@@ -456,25 +456,30 @@ impl world_access::HostCallback for HostState {
     }
 
     fn inventory(&mut self, ctx: Resource<CallbackRes>) -> Result<Result<Inventory, WorldError>> {
-        self.table.get_mut(&ctx)?.not_yet()
+        let inventory = self.table.get_mut(&ctx)?.inventory()?;
+        Ok(inventory.map(Into::into))
     }
 
     fn set_slot(
         &mut self,
         ctx: Resource<CallbackRes>,
-        _slot: u32,
-        _stack: Option<NewStack>,
+        slot: u32,
+        stack: Option<NewStack>,
     ) -> Result<Result<(), WorldError>> {
-        self.table.get_mut(&ctx)?.not_yet()
+        self.table
+            .get_mut(&ctx)?
+            .set_slot(slot, stack.map(Into::into))
     }
 
     fn drop_item(
         &mut self,
         ctx: Resource<CallbackRes>,
-        _pos: BlockPos,
-        _stack: NewStack,
+        pos: BlockPos,
+        stack: NewStack,
     ) -> Result<Result<(), WorldError>> {
-        self.table.get_mut(&ctx)?.not_yet()
+        self.table
+            .get_mut(&ctx)?
+            .drop_item(pos.into(), stack.into())
     }
 
     /// Only reachable for an owned handle, and the guest is only ever lent a callback.

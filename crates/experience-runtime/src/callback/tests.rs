@@ -11,19 +11,25 @@ use crate::host::cinnabar::experience_server::types::{
 };
 use crate::limits::{
     MAX_BLOCK_DATA_BYTES, MAX_CLIENT_SEND_BYTES, MAX_CLIENT_SENDS, MAX_HOST_CALLS,
-    MAX_NETWORK_BLOCKS, MAX_NETWORK_DATA_BYTES, MAX_STAGED_DATA_BYTES, MAX_STAGED_OPS,
-    MAX_TELL_BYTES, MAX_TELLS, MAX_VALUE_DEPTH,
+    MAX_ITEM_DATA_BYTES, MAX_NETWORK_BLOCKS, MAX_NETWORK_DATA_BYTES, MAX_STAGED_DATA_BYTES,
+    MAX_STAGED_OPS, MAX_TELL_BYTES, MAX_TELLS, MAX_VALUE_DEPTH,
 };
-use crate::load::{OwnBlocks, axes};
+use crate::load::{Catalog, axes};
 use crate::protocol::{
-    BlockPos, BlockState, Call, Cell, Face, FailKind, Info, Network, Op, Outcome, PlacementState,
-    Request, Scalar, StateDef, StateValue, StateValues,
+    BlockPos, BlockState, Call, Cell, Face, FailKind, INVENTORY_SLOTS, Info, Inventory, ItemStack,
+    Network, NewStack, Op, Outcome, PlacementState, Request, Scalar, StateDef, StateValue,
+    StateValues,
 };
 
 const ACTOR: &str = "3f2a7c1e-8b4d-4e6a-9c5f-1d2e3f4a5b6c";
 const COUNTER: &str = "probe:counter";
 /// A block with states: the facing trait's, then `probe:on` and `probe:colour`.
 const LAMP: &str = "probe:lamp";
+/// The Experience's item, one to a stack.
+const CELL: &str = "probe:cell";
+/// Server items, as the adapter lists them at load.
+const STONE: &str = "minecraft:stone";
+const PEARL: &str = "minecraft:ender_pearl";
 const AIR: &str = "minecraft:air";
 
 const ANCHOR: BlockPos = BlockPos { x: 0, y: 64, z: 0 };
@@ -43,6 +49,7 @@ struct Fixture {
     budget: u64,
     cells: Vec<Cell>,
     network: Option<Network>,
+    inventory: Option<Inventory>,
 }
 
 impl Fixture {
@@ -58,6 +65,10 @@ impl Fixture {
             budget: 1 << 20,
             cells,
             network: None,
+            inventory: Some(Inventory {
+                selected: 0,
+                slots: vec![None; INVENTORY_SLOTS],
+            }),
         }
     }
 
@@ -92,7 +103,8 @@ impl Fixture {
             data_budget: self.budget,
             snapshot: self.cells,
             network: self.network,
-            inventory: None,
+            // The adapter snapshots an inventory only for an actor.
+            inventory: self.actor.and(self.inventory),
             call: Call::Interact {
                 player: ACTOR.to_owned(),
                 pos: ANCHOR,
@@ -109,14 +121,18 @@ impl Fixture {
                 values: StateValues::Choices(vec!["red".to_owned(), "blue".to_owned()]),
             },
         ];
-        let own: OwnBlocks = [
-            (COUNTER.to_owned(), Vec::new()),
-            (
-                LAMP.to_owned(),
-                axes(&lamp, &[PlacementState::FacingDirection]),
-            ),
-        ]
-        .into();
+        let own = Catalog {
+            blocks: [
+                (COUNTER.to_owned(), Vec::new()),
+                (
+                    LAMP.to_owned(),
+                    axes(&lamp, &[PlacementState::FacingDirection]),
+                ),
+            ]
+            .into(),
+            items: [(CELL.to_owned(), 1)].into(),
+            server: [(STONE.to_owned(), 64), (PEARL.to_owned(), 16)].into(),
+        };
         let (res, _) = prepare(&Arc::new(own), &request).unwrap();
         res
     }
@@ -138,14 +154,18 @@ impl Fixture {
             data_budget: self.budget,
             snapshot: self.cells,
             network: self.network,
-            inventory: None,
+            inventory: self.inventory,
             call: Call::Interact {
                 player: ACTOR.to_owned(),
                 pos: ANCHOR,
                 face: Face::Up,
             },
         };
-        let own: OwnBlocks = [(COUNTER.to_owned(), Vec::new())].into();
+        let own = Catalog {
+            blocks: [(COUNTER.to_owned(), Vec::new())].into(),
+            items: [(CELL.to_owned(), 1)].into(),
+            server: [(STONE.to_owned(), 64)].into(),
+        };
         prepare(&Arc::new(own), &request).map(|(res, _)| res)
     }
 
@@ -917,5 +937,254 @@ fn malformed_networks_are_refused() {
             Ok(_) => panic!("accepted, not {cause:?}"),
             Err(error) => assert!(error.contains(cause), "{error:?} lacks {cause:?}"),
         }
+    }
+}
+
+/// A stack the guest makes: `count` of `id` with `data` (bytes).
+fn new_stack(id: &str, count: u8, data: Option<&[u8]>) -> NewStack {
+    NewStack {
+        id: id.to_owned(),
+        metadata: 0,
+        count,
+        data: data.map(crate::hex::encode),
+    }
+}
+
+/// A plain snapshot stack of `count` of `id`, `max` to a stack.
+fn stack(id: &str, count: u8, max: u8) -> ItemStack {
+    ItemStack {
+        id: id.to_owned(),
+        metadata: 0,
+        count,
+        max_count: max,
+        data: None,
+        plain: true,
+    }
+}
+
+impl Fixture {
+    /// Puts `stack` in the actor's inventory slot `slot`.
+    fn slot(mut self, slot: usize, stack: Option<ItemStack>) -> Self {
+        self.inventory.as_mut().expect("an inventory").slots[slot] = stack;
+        self
+    }
+}
+
+/// `inventory` is the snapshot with the staged slots applied, each staged stack plain with the
+/// most one stack holds; writing a slot again replaces its op, and none empties it.
+#[test]
+fn inventory_reads_the_snapshot_with_staged_slots() {
+    let mut res = Fixture::new()
+        .slot(0, Some(stack(STONE, 32, 64)))
+        .slot(36, Some(stack(CELL, 1, 1)))
+        .res();
+    let read = res.inventory().unwrap().unwrap();
+    assert_eq!(read.selected, 0);
+    assert_eq!(read.slots[0], Some(stack(STONE, 32, 64)));
+    assert_eq!(read.slots.len(), INVENTORY_SLOTS);
+    let cell = new_stack(CELL, 1, Some(&[1, 2]));
+    assert_eq!(
+        res.set_slot(1, Some(new_stack(STONE, 1, None))).unwrap(),
+        Ok(())
+    );
+    assert_eq!(res.set_slot(1, Some(cell.clone())).unwrap(), Ok(()));
+    assert_eq!(res.set_slot(0, None).unwrap(), Ok(()));
+    let read = res.inventory().unwrap().unwrap();
+    assert_eq!(read.slots[0], None);
+    assert_eq!(
+        read.slots[1],
+        Some(ItemStack {
+            data: Some("0102".to_owned()),
+            ..stack(CELL, 1, 1)
+        })
+    );
+    assert_eq!(
+        res.ops,
+        vec![
+            Op::SetSlot {
+                slot: 1,
+                stack: Some(cell),
+            },
+            Op::SetSlot {
+                slot: 0,
+                stack: None,
+            },
+        ]
+    );
+}
+
+/// The guest makes only plain stacks of the server's items and its own blocks and items, within
+/// the most one stack holds and data only on its own items; anything else is refused, staging
+/// nothing.
+#[test]
+fn set_slot_refuses_what_the_guest_cannot_make() {
+    let mut res = Fixture::new().res();
+    let big = vec![0; MAX_ITEM_DATA_BYTES + 1];
+    let cases = [
+        (37, Some(new_stack(STONE, 1, None)), WorldError::OutOfBounds),
+        (
+            0,
+            Some(new_stack("minecraft:nonsense", 1, None)),
+            WorldError::UnknownBlock,
+        ),
+        (
+            0,
+            Some(new_stack("other:cell", 1, None)),
+            WorldError::UnknownBlock,
+        ),
+        (0, Some(new_stack(STONE, 65, None)), WorldError::TooLarge),
+        (0, Some(new_stack(PEARL, 17, None)), WorldError::TooLarge),
+        (0, Some(new_stack(CELL, 2, None)), WorldError::TooLarge),
+        (0, Some(new_stack(COUNTER, 65, None)), WorldError::TooLarge),
+        (
+            0,
+            Some(new_stack(STONE, 1, Some(&[1]))),
+            WorldError::NotOwned,
+        ),
+        (
+            0,
+            Some(new_stack(COUNTER, 1, Some(&[1]))),
+            WorldError::NotOwned,
+        ),
+        (
+            0,
+            Some(new_stack(CELL, 1, Some(&big))),
+            WorldError::TooLarge,
+        ),
+        (
+            0,
+            Some(new_stack(STONE, 0, None)),
+            WorldError::UnsupportedState,
+        ),
+        (
+            0,
+            Some(NewStack {
+                metadata: 1,
+                ..new_stack(CELL, 1, None)
+            }),
+            WorldError::UnsupportedState,
+        ),
+    ];
+    for (slot, stack, error) in cases {
+        assert_eq!(
+            res.set_slot(slot, stack.clone()).unwrap(),
+            Err(error),
+            "{slot} {stack:?}"
+        );
+    }
+    assert_eq!(res.ops, Vec::new());
+    for ok in [
+        new_stack(PEARL, 16, None),
+        new_stack(COUNTER, 64, None),
+        new_stack(CELL, 1, Some(&vec![0; MAX_ITEM_DATA_BYTES])),
+    ] {
+        assert_eq!(res.set_slot(0, Some(ok.clone())).unwrap(), Ok(()), "{ok:?}");
+    }
+}
+
+/// Without an actor there is no inventory to read or write.
+#[test]
+fn inventory_needs_an_actor() {
+    let mut res = Fixture {
+        actor: None,
+        inventory: None,
+        ..Fixture::new()
+    }
+    .res();
+    assert_eq!(res.inventory().unwrap(), Err(WorldError::PlayerUnavailable));
+    assert_eq!(
+        res.set_slot(0, None).unwrap(),
+        Err(WorldError::PlayerUnavailable)
+    );
+}
+
+/// An item drops where a block may be set, from a stack the guest may make.
+#[test]
+fn drop_item_stays_in_the_column() {
+    let mut res = Fixture::new().res();
+    let stone = new_stack(STONE, 3, None);
+    assert_eq!(res.drop_item(UP, stone.clone()).unwrap(), Ok(()));
+    assert_eq!(
+        res.drop_item(WEST, stone.clone()).unwrap(),
+        Err(WorldError::Denied)
+    );
+    assert_eq!(
+        res.drop_item(BlockPos { x: 5, ..ANCHOR }, stone.clone())
+            .unwrap(),
+        Err(WorldError::Denied)
+    );
+    assert_eq!(
+        res.drop_item(UP, new_stack("minecraft:nonsense", 1, None))
+            .unwrap(),
+        Err(WorldError::UnknownBlock)
+    );
+    assert_eq!(
+        res.ops,
+        vec![Op::DropItem {
+            pos: UP,
+            stack: stone,
+        }]
+    );
+}
+
+/// An inventory the adapter could not have built is malformed: not 37 slots, a selected slot
+/// outside the hotbar, a stack past its most, data on a stack not the Experience's own, data
+/// past MAX_ITEM_DATA_BYTES, or an inventory without an actor.
+#[test]
+fn malformed_inventories_are_refused() {
+    let big = "00".repeat(MAX_ITEM_DATA_BYTES + 1);
+    let with = |edit: fn(&mut Inventory)| {
+        let mut fixture = Fixture::new();
+        edit(fixture.inventory.as_mut().unwrap());
+        fixture
+    };
+    let mut no_actor = Fixture::new();
+    no_actor.actor = None;
+    let refused = [
+        (
+            with(|i| {
+                i.slots.pop();
+            }),
+            "slots",
+        ),
+        (with(|i| i.selected = 9), "selected"),
+        (
+            with(|i| i.slots[0] = Some(stack(STONE, 65, 64))),
+            "more than",
+        ),
+        (
+            with(|i| {
+                i.slots[0] = Some(ItemStack {
+                    data: Some("01".to_owned()),
+                    ..stack(STONE, 1, 64)
+                })
+            }),
+            "data",
+        ),
+        (
+            with(|i| {
+                i.slots[0] = Some(ItemStack {
+                    data: Some("zz".to_owned()),
+                    ..stack(CELL, 1, 1)
+                })
+            }),
+            "hex",
+        ),
+        (no_actor, "without an actor"),
+    ];
+    for (fixture, cause) in refused {
+        match fixture.prepared() {
+            Ok(_) => panic!("accepted, not {cause:?}"),
+            Err(error) => assert!(error.contains(cause), "{error:?} lacks {cause:?}"),
+        }
+    }
+    let mut over = Fixture::new();
+    over.inventory.as_mut().unwrap().slots[0] = Some(ItemStack {
+        data: Some(big),
+        ..stack(CELL, 1, 1)
+    });
+    match over.prepared() {
+        Ok(_) => panic!("accepted item data past the limit"),
+        Err(error) => assert!(error.contains("bytes"), "{error}"),
     }
 }

@@ -17,7 +17,7 @@ import (
 const (
 	probeLamp = "probe:lamp"
 	// probeStates places a lamp above the block, lights it and reports both reads of its
-	// states and the refusals of the 0.5 calls that are not implemented yet.
+	// states and the outcome of every other 0.5 call.
 	probeStates = 24
 	// probeToggle toggles the lamp it runs on and tells its states.
 	probeToggle = 25
@@ -54,10 +54,8 @@ func TestBlockStatesRoundTrip(t *testing.T) {
 	at := probePos(probeStates)
 	f.place(probeCounter, at, nil)
 	f.activate(at)
-	refused := "unsupported-state"
 	f.waitTells(5*time.Second, "states "+lampStates("down", false)+" set ok states "+
-		lampStates("down", true)+" network ok inventory "+refused+" set-slot "+refused+
-		" drop-item "+refused)
+		lampStates("down", true)+" network ok inventory ok set-slot ok drop-item ok")
 	up := BlockPos{X: at.X, Y: at.Y + 1, Z: at.Z}
 	lamp := f.blockAt(up)
 	if lamp.t.id != probeLamp || jsonOf(lamp.states()) != jsonOf(BlockStates{

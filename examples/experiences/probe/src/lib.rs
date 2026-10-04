@@ -216,6 +216,7 @@ fn interact(ctx: &Callback, player: &str, p: BlockPos) -> Result<(), GuestError>
         24 => tell(&contract::wit_0_5_calls(ctx, p, up)),
         25 => tell(&contract::toggle_lamp(ctx, p)),
         26 => tell(&contract::mark_network(ctx)),
+        27 => tell(&contract::make_stacks(ctx, up)),
         x => return Err(GuestError::Rejected(format!("no probe behavior for x={x}"))),
     }
     Ok(())

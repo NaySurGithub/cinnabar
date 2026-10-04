@@ -9,10 +9,10 @@ use super::{axes, engine, validate_blocks, validate_registration, wit};
 use crate::host::{Api, HostState};
 use crate::limits::{
     MAX_BLOCK_NAME_BYTES, MAX_BLOCKS, MAX_BONES, MAX_CONDITION_TESTS, MAX_DISPLAY_NAME_BYTES,
-    MAX_PERMUTATIONS, MAX_STATE_VALUES,
+    MAX_ITEMS, MAX_PERMUTATIONS, MAX_STACK_SIZE, MAX_STATE_VALUES,
 };
 use crate::manifest::{ASSETS_DIR, DATA_SCHEMA, Manifest, SERVER_WASM};
-use crate::protocol::{PlacementState, StateDef, StateValues};
+use crate::protocol::{ItemDef, PlacementState, StateDef, StateValues};
 
 /// The ticker keeps the epoch on wall time, so a store with fuel to spare still stops at its
 /// deadline, and not long before or after it.
@@ -833,32 +833,121 @@ fn block_type_rules_accept_limits_and_refuse_violations() {
     ]);
 }
 
-/// A registration's items stay refused until the runtime implements them (SP5 task G).
+fn item(name: &str) -> wit::ItemDef {
+    wit::ItemDef {
+        id: format!("probe:{name}"),
+        display_name: "Probe Cell".to_owned(),
+        icon: "counter.png".to_owned(),
+        max_stack: 1,
+    }
+}
+
+/// Each row changes a valid registration of one block and one item in one way. Items are
+/// `<id>:<name>` like blocks, distinct from every block, with an indexed icon, a display name like
+/// a block's, and 1 to MAX_STACK_SIZE to a stack, at most MAX_ITEMS of them.
 #[test]
-fn items_are_refused_until_implemented() {
+fn item_rules_accept_limits_and_refuse_violations() {
     let dir = tempfile::tempdir().unwrap();
     let manifest = rule_assets(dir.path());
-    let registration = wit::Registration {
-        blocks: vec![cable()],
-        items: Vec::new(),
+    let items = |count: usize| {
+        (0..count)
+            .map(|i| item(&format!("i{i}")))
+            .collect::<Vec<_>>()
     };
-    let blocks = validate_registration(dir.path(), &manifest, registration).unwrap();
+    let with = |edit: fn(&mut wit::ItemDef)| {
+        let mut cell = item("cell");
+        edit(&mut cell);
+        vec![cell]
+    };
+    let cases: Vec<(&str, Vec<wit::ItemDef>, Option<&str>)> = vec![
+        ("the cell", with(|_| {}), None),
+        ("MAX_ITEMS items", items(MAX_ITEMS), None),
+        (
+            "MAX_ITEMS + 1 items",
+            items(MAX_ITEMS + 1),
+            Some("the limit is"),
+        ),
+        (
+            "a foreign namespace",
+            with(|i| i.id = "other:cell".to_owned()),
+            Some("outside namespace"),
+        ),
+        (
+            "an invalid name",
+            with(|i| i.id = "probe:Cell".to_owned()),
+            Some("invalid name"),
+        ),
+        (
+            "an item twice",
+            vec![item("cell"), item("cell")],
+            Some("declared twice"),
+        ),
+        (
+            "an item with a block's id",
+            with(|i| i.id = "probe:cable".to_owned()),
+            Some("is also a block"),
+        ),
+        (
+            "an empty display name",
+            with(|i| i.display_name.clear()),
+            Some("display name has"),
+        ),
+        (
+            "an unindexed icon",
+            with(|i| i.icon = "missing.png".to_owned()),
+            Some("not an indexed file"),
+        ),
+        ("a stack of 0", with(|i| i.max_stack = 0), Some("1 to 64")),
+        (
+            "a stack of MAX_STACK_SIZE",
+            with(|i| i.max_stack = MAX_STACK_SIZE),
+            None,
+        ),
+        (
+            "a stack of MAX_STACK_SIZE + 1",
+            with(|i| i.max_stack = MAX_STACK_SIZE + 1),
+            Some("1 to 64"),
+        ),
+    ];
+    let mut failures = Vec::new();
+    for (case, items, refusal) in cases {
+        let registration = wit::Registration {
+            blocks: vec![cable()],
+            items,
+        };
+        let outcome = validate_registration(dir.path(), &manifest, registration)
+            .map_err(|error| format!("{error:#}"));
+        match (outcome, refusal) {
+            (Ok(_), None) => {}
+            (Ok(_), Some(cause)) => failures.push(format!("{case}: accepted, not {cause:?}")),
+            (Err(error), None) => failures.push(format!("{case}: refused: {error}")),
+            (Err(error), Some(cause)) if !error.contains(cause) => {
+                failures.push(format!("{case}: {error:?} lacks {cause:?}"));
+            }
+            (Err(_), Some(_)) => {}
+        }
+    }
+    assert!(failures.is_empty(), "\n{}", failures.join("\n"));
+
+    let (blocks, items) = validate_registration(
+        dir.path(),
+        &manifest,
+        wit::Registration {
+            blocks: vec![cable()],
+            items: vec![item("cell")],
+        },
+    )
+    .unwrap();
     assert_eq!(blocks.len(), 1);
-    let with_item = wit::Registration {
-        blocks: vec![cable()],
-        items: vec![wit::ItemDef {
+    let icon = dir.path().join(ASSETS_DIR).join("counter.png");
+    assert_eq!(
+        items,
+        vec![ItemDef {
             id: "probe:cell".to_owned(),
             display_name: "Probe Cell".to_owned(),
-            icon: "counter.png".to_owned(),
+            icon: icon.to_str().unwrap().to_owned(),
             max_stack: 1,
-        }],
-    };
-    let error = validate_registration(dir.path(), &manifest, with_item)
-        .unwrap_err()
-        .to_string();
-    assert!(
-        error.contains("items") && error.contains("does not support yet"),
-        "{error}"
+        }]
     );
 }
 

@@ -121,3 +121,23 @@ const (
 	// Rust's MAX_NETWORK_DATA_BYTES.
 	maxNetworkDataBytes = 524_288
 )
+
+// The inventory's shape and the item bounds. Each must equal its Rust constant, which
+// TestCommitLimitsMatchRust checks against the limits fixture.
+const (
+	// inventorySlots is the slots of an actor's inventory: the 36 of the main inventory, the
+	// hotbar first, then the offhand. Rust's INVENTORY_SLOTS.
+	inventorySlots = 37
+	// hotbarSlots is the slots of the hotbar, of which one is selected: Rust's HOTBAR_SLOTS.
+	hotbarSlots = 9
+	// maxItems is the most items one Experience registers: Rust's MAX_ITEMS.
+	maxItems = 64
+	// maxStackSize is the most one stack of an Experience's item holds: Rust's MAX_STACK_SIZE.
+	maxStackSize = 64
+	// maxItemDataBytes is the most data of an Experience's own on one stack: Rust's
+	// MAX_ITEM_DATA_BYTES.
+	maxItemDataBytes = 8192
+	// maxServerItems is the most items the adapter lists as the server's: Rust's
+	// MAX_SERVER_ITEMS.
+	maxServerItems = 16_384
+)

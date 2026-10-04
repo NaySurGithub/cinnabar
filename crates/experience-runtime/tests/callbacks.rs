@@ -9,8 +9,8 @@ use common::{
 };
 use experience_runtime::limits::{MAX_REASON_BYTES, MAX_VALUE_DEPTH};
 use experience_runtime::protocol::{
-    BlockState, Call, Cause, Cell, Change, Face, FailKind, Network, Op, Outcome, Request, Scalar,
-    StateValue,
+    BlockState, Call, Cause, Cell, Change, Face, FailKind, ItemStack, Network, NewStack, Op,
+    Outcome, Request, Scalar, StateValue,
 };
 
 /// `request` with its snapshot cell at `new.pos` replaced by `new`.
@@ -109,13 +109,17 @@ fn state(name: &str, value: StateValue) -> BlockState {
     }
 }
 
-/// Server WIT 0.5's block-state calls work: a lamp set above the counter starts with its default
-/// states, and a lit lamp stages one state op after its placement; `network` answers, none off
-/// a member. The calls of SP5 task G are still refused: each counts as a host call and is
-/// refused as `unsupported-state`, staging nothing.
+/// Server WIT 0.5's calls work: a lamp set above the counter starts with its default states, and
+/// a lit lamp stages one state op after its placement; `network` answers, none off a member; the
+/// inventory reads, and a slot and a drop are staged.
 #[test]
-fn wit_0_5_block_states_work_and_the_rest_are_refused() {
-    let refused = "unsupported-state";
+fn wit_0_5_calls_work() {
+    let stone = NewStack {
+        id: "minecraft:stone".to_owned(),
+        metadata: 0,
+        count: 1,
+        data: None,
+    };
     let lamp = |lit: bool| format!("minecraft:facing_direction=down,probe:on={lit}");
     assert_eq!(
         outcome(&interact(24)),
@@ -128,9 +132,16 @@ fn wit_0_5_block_states_work_and_the_rest_are_refused() {
                 pos: up(24),
                 states: vec![state("probe:on", StateValue::Bool(true))],
             },
+            Op::SetSlot {
+                slot: 0,
+                stack: Some(stone.clone()),
+            },
+            Op::DropItem {
+                pos: p(24),
+                stack: stone,
+            },
             tell(&format!(
-                "states {} set ok states {} network ok inventory {refused} \
-                 set-slot {refused} drop-item {refused}",
+                "states {} set ok states {} network ok inventory ok set-slot ok drop-item ok",
                 lamp(false),
                 lamp(true),
             )),
@@ -329,9 +340,16 @@ fn non_canonical_player_ids_are_rejected_unrun() {
         )
     };
     let with_actor = |mut request: Request, id: Option<String>| {
-        let Request::Callback { actor, .. } = &mut request else {
+        let Request::Callback {
+            actor, inventory, ..
+        } = &mut request
+        else {
             unreachable!("a callback request");
         };
+        // The adapter snapshots an inventory only for an actor.
+        if id.is_none() {
+            *inventory = None;
+        }
         *actor = id;
         request
     };
@@ -565,5 +583,42 @@ fn network_members_take_data_beyond_the_column() {
     assert_eq!(
         outcome(&interact(26)),
         committed(vec![tell("network none")])
+    );
+}
+
+/// The probe reads the held stack, as plain with its most, and makes its own cell with data and a
+/// drop of stone; both are staged as made.
+#[test]
+fn stacks_are_read_and_made() {
+    let mut request = interact(27);
+    if let Request::Callback { inventory, .. } = &mut request {
+        inventory.as_mut().unwrap().slots[0] = Some(ItemStack {
+            id: "minecraft:stone".to_owned(),
+            metadata: 0,
+            count: 32,
+            max_count: 64,
+            data: None,
+            plain: true,
+        });
+    }
+    let stack = |id: &str, count, data: Option<&str>| NewStack {
+        id: id.to_owned(),
+        metadata: 0,
+        count,
+        data: data.map(str::to_owned),
+    };
+    assert_eq!(
+        outcome(&request),
+        committed(vec![
+            Op::SetSlot {
+                slot: 0,
+                stack: Some(stack("probe:cell", 1, Some("07"))),
+            },
+            Op::DropItem {
+                pos: up(27),
+                stack: stack("minecraft:stone", 2, None),
+            },
+            tell("held minecraft:stone 32/64 plain true cell ok drop ok"),
+        ])
     );
 }

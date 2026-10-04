@@ -105,7 +105,8 @@ func registerTestExperiences() (*Registry, *server.Server, *resource.Pack, error
 	return reg, srv, pack, nil
 }
 
-// renamed is loaded as the Experience id, its blocks and their states moved into that namespace.
+// renamed is loaded as the Experience id, its blocks, their states and its items moved into that
+// namespace.
 // It renames no state in a visual, so it serves blocks without one.
 func renamed(loaded Loaded, id string) Loaded {
 	out := loaded
@@ -122,6 +123,11 @@ func renamed(loaded Loaded, id string) Loaded {
 			def.States[i].Name = move(def.States[i].Name)
 		}
 		out.Blocks = append(out.Blocks, def)
+	}
+	out.Items = nil
+	for _, def := range loaded.Items {
+		def.ID = move(def.ID)
+		out.Items = append(out.Items, def)
 	}
 	return out
 }

@@ -11,15 +11,18 @@ use serde::{Deserialize, Serialize};
 use crate::hex;
 use crate::limits::{
     MAX_BLOCK_DATA_BYTES, MAX_BONES, MAX_CLIENT_SEND_BYTES, MAX_CLIENT_SENDS, MAX_CONDITION_TESTS,
-    MAX_FLIPBOOK_FRAMES, MAX_FRAME_BYTES, MAX_GEOMETRY_BYTES, MAX_MATERIALS, MAX_NAME_BYTES,
-    MAX_NETWORK_BLOCKS, MAX_NETWORK_DATA_BYTES, MAX_PERMUTATIONS, MAX_REASON_BYTES, MAX_STAGED_OPS,
-    MAX_STATE_COMBINATIONS, MAX_STATE_VALUES, MAX_TELL_BYTES, MAX_TELLS, MAX_VALUE_DEPTH,
+    MAX_FLIPBOOK_FRAMES, MAX_FRAME_BYTES, MAX_GEOMETRY_BYTES, MAX_ITEM_DATA_BYTES, MAX_ITEMS,
+    MAX_MATERIALS, MAX_NAME_BYTES, MAX_NETWORK_BLOCKS, MAX_NETWORK_DATA_BYTES, MAX_PERMUTATIONS,
+    MAX_REASON_BYTES, MAX_SERVER_ITEMS, MAX_STACK_SIZE, MAX_STAGED_OPS, MAX_STATE_COMBINATIONS,
+    MAX_STATE_VALUES, MAX_TELL_BYTES, MAX_TELLS, MAX_VALUE_DEPTH,
 };
 
 mod player;
 mod visuals;
 
-pub use player::{Inventory, ItemStack, Network, NewStack};
+pub use player::{
+    HOTBAR_SLOTS, INVENTORY_SLOTS, Inventory, ItemStack, Network, NewStack, ServerItem,
+};
 pub use visuals::{
     BlockState, BoneVisibility, Condition, Flipbook, ItemDef, Material, Permutation, Pixel,
     PixelBox, PlacementState, QuarterTurns, RenderMethod, StateDef, StateTest, StateValue,
@@ -166,9 +169,8 @@ pub(crate) fn is_player_id(id: &str) -> bool {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Request {
-    Load {
-        dir: String,
-    },
+    /// `items` are the server's items, which the guest may make stacks of besides its own.
+    Load { dir: String, items: Vec<ServerItem> },
     Callback {
         seq: u64,
         info: Info,
@@ -393,6 +395,12 @@ struct Limits {
     max_geometry_bytes: usize,
     max_network_blocks: usize,
     max_network_data_bytes: usize,
+    inventory_slots: usize,
+    hotbar_slots: u8,
+    max_items: usize,
+    max_stack_size: u8,
+    max_item_data_bytes: usize,
+    max_server_items: usize,
 }
 
 /// A placement trait's state and its values, in the client's order.
@@ -597,6 +605,16 @@ pub fn fixtures() -> Vec<(&'static str, String)> {
             "request_load",
             pretty(&Request::Load {
                 dir: "/srv/experiences/benergistics".to_owned(),
+                items: vec![
+                    ServerItem {
+                        id: "minecraft:stone".to_owned(),
+                        max_count: 64,
+                    },
+                    ServerItem {
+                        id: "minecraft:ender_pearl".to_owned(),
+                        max_count: 16,
+                    },
+                ],
             }),
         ),
         (
@@ -869,6 +887,12 @@ pub fn fixtures() -> Vec<(&'static str, String)> {
                 max_geometry_bytes: MAX_GEOMETRY_BYTES,
                 max_network_blocks: MAX_NETWORK_BLOCKS,
                 max_network_data_bytes: MAX_NETWORK_DATA_BYTES,
+                inventory_slots: INVENTORY_SLOTS,
+                hotbar_slots: HOTBAR_SLOTS,
+                max_items: MAX_ITEMS,
+                max_stack_size: MAX_STACK_SIZE,
+                max_item_data_bytes: MAX_ITEM_DATA_BYTES,
+                max_server_items: MAX_SERVER_ITEMS,
             }),
         ),
         (

@@ -12,8 +12,22 @@ use experience_runtime::callback::run;
 use experience_runtime::load::{EpochTicker, Loaded, engine, load};
 use experience_runtime::manifest::{ASSETS_DIR, MANIFEST_FILE, SERVER_WASM};
 use experience_runtime::protocol::{
-    BlockPos, Call, Cell, Face, Info, Op, Outcome, Request, Scalar,
+    BlockPos, Call, Cell, Face, INVENTORY_SLOTS, Info, Inventory, Op, Outcome, Request, Scalar,
+    ServerItem,
 };
+
+/// The server's items as an adapter lists them for the probe: stone, 64 to a stack, and ender
+/// pearls, 16.
+pub fn server_items() -> Vec<ServerItem> {
+    let item = |id: &str, max_count| ServerItem {
+        id: id.to_owned(),
+        max_count,
+    };
+    vec![
+        item("minecraft:stone", 64),
+        item("minecraft:ender_pearl", 16),
+    ]
+}
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 use wasmtime::Engine;
@@ -497,7 +511,10 @@ pub fn probe() -> &'static Probe {
         let (engine, ticker) = engine().unwrap();
         // The artifact is only read while loading.
         let dir = probe_dir();
-        let loaded = load(&engine, dir.path()).unwrap();
+        let loaded = load(&engine, dir.path())
+            .unwrap()
+            .with_server_items(server_items())
+            .unwrap();
         Probe {
             engine,
             loaded,
@@ -566,7 +583,10 @@ pub fn callback(anchor: BlockPos, call: Call) -> Request {
         data_budget: 1 << 20,
         snapshot,
         network: None,
-        inventory: None,
+        inventory: Some(Inventory {
+            selected: 0,
+            slots: vec![None; INVENTORY_SLOTS],
+        }),
         call,
     }
 }

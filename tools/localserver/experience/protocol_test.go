@@ -36,6 +36,13 @@ type fixtureLimits struct {
 	// The network bounds, which the adapter's flood keeps.
 	MaxNetworkBlocks    int `json:"max_network_blocks"`
 	MaxNetworkDataBytes int `json:"max_network_data_bytes"`
+	// The inventory's shape and the item bounds, which registration and the commit check keep.
+	InventorySlots   int `json:"inventory_slots"`
+	HotbarSlots      int `json:"hotbar_slots"`
+	MaxItems         int `json:"max_items"`
+	MaxStackSize     int `json:"max_stack_size"`
+	MaxItemDataBytes int `json:"max_item_data_bytes"`
+	MaxServerItems   int `json:"max_server_items"`
 }
 
 // rustLimits reads the limits fixture.
@@ -332,13 +339,13 @@ func TestFrameLimitMatchesRust(t *testing.T) {
 	})
 
 	t.Run("write", func(t *testing.T) {
-		const head, tail = `{"type":"load","dir":"`, `"}`
+		const head, tail = `{"type":"load","dir":"`, `","items":[]}`
 		dir := strings.Repeat("d", maxFrameBytes-len(head)-len(tail))
-		body, err := encodeFrame(Request{Load: &LoadRequest{Dir: dir}})
+		body, err := encodeFrame(Request{Load: &LoadRequest{Dir: dir, Items: []ServerItem{}}})
 		if err != nil || len(body) != maxFrameBytes {
 			t.Fatalf("a body of exactly maxFrameBytes: %d bytes, %v", len(body), err)
 		}
-		if _, err := encodeFrame(Request{Load: &LoadRequest{Dir: dir + "d"}}); err == nil {
+		if _, err := encodeFrame(Request{Load: &LoadRequest{Dir: dir + "d", Items: []ServerItem{}}}); err == nil {
 			t.Fatal("a body of maxFrameBytes+1 was encoded")
 		}
 	})
@@ -368,6 +375,12 @@ func TestCommitLimitsMatchRust(t *testing.T) {
 		{"maxGeometryBytes", maxGeometryBytes, rust.MaxGeometryBytes},
 		{"maxNetworkBlocks", maxNetworkBlocks, rust.MaxNetworkBlocks},
 		{"maxNetworkDataBytes", maxNetworkDataBytes, rust.MaxNetworkDataBytes},
+		{"inventorySlots", inventorySlots, rust.InventorySlots},
+		{"hotbarSlots", hotbarSlots, rust.HotbarSlots},
+		{"maxItems", maxItems, rust.MaxItems},
+		{"maxStackSize", maxStackSize, rust.MaxStackSize},
+		{"maxItemDataBytes", maxItemDataBytes, rust.MaxItemDataBytes},
+		{"maxServerItems", maxServerItems, rust.MaxServerItems},
 	} {
 		if limit.goV != limit.rust {
 			t.Errorf("%s = %d, Rust has %d", limit.name, limit.goV, limit.rust)

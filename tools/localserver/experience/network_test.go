@@ -126,7 +126,8 @@ func TestFloodBounds(t *testing.T) {
 }
 
 // A request at the network bounds fits a frame: maxNetworkBlocks members with many states each
-// and maxNetworkDataBytes of data as hex, beside the anchor's neighbors.
+// and maxNetworkDataBytes of data as hex, beside the anchor's neighbors, with an inventory whose
+// every slot holds maxItemDataBytes of an Experience's data.
 func TestNetworkAtItsBoundsFitsAFrame(t *testing.T) {
 	req := probeInteract(probeMark)
 	var states BlockStates
@@ -145,6 +146,11 @@ func TestNetworkAtItsBoundsFitsAFrame(t *testing.T) {
 		net.Blocks = append(net.Blocks, pos)
 	}
 	req.Network = net
+	itemData := hex.EncodeToString(make([]byte, maxItemDataBytes))
+	req.Inventory = &Inventory{Slots: make([]*ItemStack, inventorySlots)}
+	for i := range req.Inventory.Slots {
+		req.Inventory.Slots[i] = &ItemStack{ID: "benergistics:" + strings.Repeat("c", 32), Count: 1, MaxCount: 1, Data: &itemData}
+	}
 	body, err := encodeFrame(Request{Callback: &req})
 	if err != nil {
 		t.Fatalf("a request at the network bounds does not fit a frame: %v", err)

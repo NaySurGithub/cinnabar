@@ -167,16 +167,30 @@ still runs older artifacts against their frozen worlds, by the manifest's `api`:
 WIT cannot express the rules below; the runtime (`crates/experience-runtime`) and the adapter
 (`tools/localserver/experience`) both enforce them.
 
-- **0.5, contract first, then implemented in parts.** 0.5 declares block states and placement
-  traits, visuals (geometry, material instances with render methods and flipbooks, bone
-  visibility, boxes, rotation, permutations over structured conditions), network membership and
-  items, and the callback calls `block-states`, `set-block-state`, `network`, `inventory`,
-  `set-slot` and `drop-item`; IPC protocol 5 carries all of them. States, placement traits,
-  visuals and permutations, `block-states` and `set-block-state` (SP5 task E of the Applied
-  Benergistics plan) and the network scope (task F) are implemented. Items (task G) are not
-  yet: a `registration` that declares any fails the load, `inventory`, `set-slot` and
-  `drop-item` count as host calls and are refused as `unsupported-state`, and the adapter
-  refuses their ops as invalid.
+- **0.5.** 0.5 declares block states and placement traits, visuals (geometry, material
+  instances with render methods and flipbooks, bone visibility, boxes, rotation, permutations
+  over structured conditions), network membership and items, and the callback calls
+  `block-states`, `set-block-state`, `network`, `inventory`, `set-slot` and `drop-item`; IPC
+  protocol 5 carries all of them (SP5 tasks C, E, F and G of the Applied Benergistics plan).
+- **Items (0.5).** `register` declares items: `<experience id>:<name>` like blocks and distinct
+  from them, with a display name, an indexed icon and 1 to `MAX_STACK_SIZE` to a stack, at most
+  `MAX_ITEMS`. The adapter registers each as a Dragonfly custom item in the Experience's creative
+  group, its icon in the pack under its whole id. A callback with an actor has the actor's
+  inventory: 37 slots, the hotbar's 9 first and the offhand last, and the selected hotbar slot.
+  Each stack is its id, metadata, count and the most one stack holds, which the adapter derives;
+  its data only on this Experience's own items; and `plain` when it carries nothing else (no
+  name, lore, enchantment, wear, anvil cost, block NBT or other value). The guest makes plain
+  stacks only: of its own items, with data up to `MAX_ITEM_DATA_BYTES`, or of its blocks or the
+  server's items, without data, within the most one stack holds. The adapter lists the server's
+  vanilla items, each with that most, in `load`, so a guest learns an item's stack size by being
+  refused: an unknown item is `unknown-block`, a stack past its most or data past its bound
+  `too-large`, data on an item not its own `not-owned`, an empty stack or metadata on its own
+  item `unsupported-state`. `set-slot` stages a slot's new content, a slot written again
+  replacing its op, and `inventory` reads the staged slots back; commit discards the whole
+  result if a slot it writes changed since the snapshot. `drop-item` spawns an item entity at a
+  position `set-block` may write. Own-item data is a Dragonfly stack value: it is saved with the
+  stack and, unlike block data, reaches clients in the stack's NBT, as AE2's cell contents do,
+  so guests decode it as untrusted.
 - **Network scope (0.5).** A block type may be a network member. A callback anchored on a member
   (place, interact, neighbor, or a client message or epoch whose focus is one) has the anchor's
   network: the adapter floods from the anchor through face-adjacent members of the Experience

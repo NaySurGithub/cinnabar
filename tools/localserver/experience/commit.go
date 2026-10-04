@@ -9,6 +9,8 @@ import (
 	"unicode"
 
 	"github.com/df-mc/dragonfly/server/block/cube"
+	"github.com/df-mc/dragonfly/server/entity"
+	"github.com/df-mc/dragonfly/server/item"
 	"github.com/df-mc/dragonfly/server/player"
 	"github.com/df-mc/dragonfly/server/world"
 )
@@ -64,7 +66,8 @@ func (h *Host) commit(ctx context.Context, d *dispatcher, ev event, snap snapsho
 }
 
 // apply checks snap against the world in tx and validates every op before it applies any. Then
-// it applies the block and state ops in their order, the data writes, and last the tells, and
+// it applies the block and state ops in their order, the data writes, the slots and drops, and
+// last the tells, and
 // returns the client messages for commit to send. A position's data write follows its last block
 // op, as validate checks, so applying the data writes after every block op changes nothing; a
 // state op keeps the block's data and generation. Writes that shrink data go before those that
@@ -75,8 +78,11 @@ func (h *Host) apply(tx *world.Tx, exp string, ev event, snap snapshot, ops []Op
 	if err != nil {
 		return nil, err
 	}
-	writes, err := h.validate(exp, ev, snap, ops)
+	plan, err := h.validate(exp, ev, snap, ops)
 	if err != nil {
+		return nil, err
+	}
+	if err := slotsCurrent(actor, snap, plan.slots); err != nil {
 		return nil, err
 	}
 	for _, op := range ops {
@@ -103,7 +109,7 @@ func (h *Host) apply(tx *world.Tx, exp string, ev event, snap snapshot, ops []Op
 		h.store.Place(exp, ev.dim.storeKey(pos))
 	}
 	for _, grow := range []bool{false, true} {
-		for _, w := range writes {
+		for _, w := range plan.writes {
 			if (w.delta > 0) != grow {
 				continue
 			}
@@ -112,6 +118,15 @@ func (h *Host) apply(tx *world.Tx, exp string, ev event, snap snapshot, ops []Op
 				h.log.Error("validated data write failed", "experience", exp, "pos", w.pos, "error", err)
 			}
 		}
+	}
+	for _, w := range plan.slots {
+		inv, slot := slotHolder(actor.(*player.Player), w.slot)
+		if err := inv.SetItem(slot, w.stack); err != nil {
+			h.log.Error("validated slot write failed", "experience", exp, "slot", w.slot, "error", err)
+		}
+	}
+	for _, drop := range plan.drops {
+		tx.AddEntity(entity.NewItem(world.EntitySpawnOpts{Position: drop.pos.Vec3Centre()}, drop.stack))
 	}
 	var sends []*SendClientOp
 	for _, op := range ops {
@@ -156,6 +171,45 @@ type simCell struct {
 	written bool
 }
 
+// slotWrite is a validated set_slot op: the actor's slot and the stack it gets, empty to clear
+// it.
+type slotWrite struct {
+	slot  int
+	stack item.Stack
+}
+
+// itemDrop is a validated drop_item op: the stack and where it drops.
+type itemDrop struct {
+	pos   cube.Pos
+	stack item.Stack
+}
+
+// commitPlan is what validate found the ops to write, in their order.
+type commitPlan struct {
+	writes []dataWrite
+	slots  []slotWrite
+	drops  []itemDrop
+}
+
+// slotsCurrent checks that every slot the result writes still holds the stack its snapshot did.
+func slotsCurrent(actor world.Entity, snap snapshot, slots []slotWrite) error {
+	if len(slots) == 0 {
+		return nil
+	}
+	p, ok := actor.(*player.Player)
+	if !ok {
+		return fmt.Errorf("%w: the actor has no inventory", errStale)
+	}
+	for _, w := range slots {
+		inv, slot := slotHolder(p, w.slot)
+		now, _ := inv.Item(slot)
+		if was := snap.slots[w.slot]; !now.Equal(was) {
+			return fmt.Errorf("%w: slot %d changed from %v to %v", errStale, w.slot, was, now)
+		}
+	}
+	return nil
+}
+
 // dataWrite is a validated data op: the data it writes at pos, absent unless present, and how
 // many bytes it adds to the Experience's total, negative when it frees some.
 type dataWrite struct {
@@ -165,17 +219,17 @@ type dataWrite struct {
 	delta   int64
 }
 
-// validate checks every op against the snapshot as the ops before it change it, by the rules
-// the runtime enforced: writes stay on loaded snapshot cells in the anchor's chunk column, or for
-// data and states reach the members of its network, set
-// air or an own block over air or an own block, write data and states only to an own block,
-// within the size limit and among its states, and tell and send client messages only to the
-// actor, within the tell and client message limits. A position has at most one data op, after its last block op. Like the runtime, it holds
-// the quota to the result's net data, not to each write. It returns the data writes in their
-// order.
-func (h *Host) validate(exp string, ev event, snap snapshot, ops []Op) ([]dataWrite, error) {
+// validate checks every op against the snapshot as the ops before it change it, by the rules the
+// runtime enforced: writes stay on loaded snapshot cells in the anchor's chunk column, or for data
+// and states reach the members of its network, set air or an own block over air or an own block,
+// write data and states only to an own block, within the size limit and among its states, set the
+// actor's slots and drop items only with stacks the Experience may make, and tell and send client
+// messages only to the actor, within the tell and client message limits. A position has at most one
+// data op, after its last block op. Like the runtime, it holds the quota to the result's net data,
+// not to each write. It returns the data writes, slots and drops in their order.
+func (h *Host) validate(exp string, ev event, snap snapshot, ops []Op) (commitPlan, error) {
 	if len(ops) > maxStagedOps {
-		return nil, fmt.Errorf("%w: %d ops, at most %d", errInvalid, len(ops), maxStagedOps)
+		return commitPlan{}, fmt.Errorf("%w: %d ops, at most %d", errInvalid, len(ops), maxStagedOps)
 	}
 	column := func(pos cube.Pos) [2]int { return [2]int{pos[0] >> 4, pos[2] >> 4} }
 	cells := make(map[cube.Pos]*simCell, len(snap.cells))
@@ -205,103 +259,121 @@ func (h *Host) validate(exp string, ev event, snap snapshot, ops []Op) ([]dataWr
 	}
 	// The snapshot cells are current, so the store's total counts their data.
 	used := int64(dataQuota - h.store.Budget(exp))
-	var writes []dataWrite
+	var plan commitPlan
 	tells, sends := 0, 0
 	for i, op := range ops {
 		switch {
 		case op.SetBlock != nil:
 			c, err := writable(i, op.SetBlock.Pos, false)
 			if err != nil {
-				return nil, err
+				return commitPlan{}, err
 			}
 			if c.id != airID && !c.owned {
-				return nil, fmt.Errorf("%w: op %d sets a block over %s, which is not its own",
+				return commitPlan{}, fmt.Errorf("%w: op %d sets a block over %s, which is not its own",
 					errInvalid, i, c.id)
 			}
 			if c.written {
-				return nil, fmt.Errorf("%w: op %d sets a block whose data an earlier op wrote", errInvalid, i)
+				return commitPlan{}, fmt.Errorf("%w: op %d sets a block whose data an earlier op wrote", errInvalid, i)
 			}
 			id := op.SetBlock.ID
 			if b, ok := h.reg.Lookup(id); id != airID && (!ok || b.t.exp != exp) {
-				return nil, fmt.Errorf("%w: op %d sets %q, which is not its own block", errInvalid, i, id)
+				return commitPlan{}, fmt.Errorf("%w: op %d sets %q, which is not its own block", errInvalid, i, id)
 			}
 			used -= int64(c.dataLen)
 			*c = simCell{id: id, owned: id != airID}
 		case op.SetBlockData != nil:
 			c, err := writable(i, op.SetBlockData.Pos, true)
 			if err != nil {
-				return nil, err
+				return commitPlan{}, err
 			}
 			if !c.owned {
-				return nil, fmt.Errorf("%w: op %d writes data to %s, which is not its own block",
+				return commitPlan{}, fmt.Errorf("%w: op %d writes data to %s, which is not its own block",
 					errInvalid, i, c.id)
 			}
 			if c.written {
-				return nil, fmt.Errorf("%w: op %d writes data that an earlier op wrote", errInvalid, i)
+				return commitPlan{}, fmt.Errorf("%w: op %d writes data that an earlier op wrote", errInvalid, i)
 			}
 			w := dataWrite{pos: op.SetBlockData.Pos.cube(), present: op.SetBlockData.Data != nil}
 			if w.present {
 				if w.data, err = hex.DecodeString(*op.SetBlockData.Data); err != nil {
-					return nil, fmt.Errorf("%w: op %d data: %v", errInvalid, i, err)
+					return commitPlan{}, fmt.Errorf("%w: op %d data: %v", errInvalid, i, err)
 				}
 			}
 			n := uint64(len(w.data))
 			if n > maxBlockDataBytes {
-				return nil, fmt.Errorf("%w: op %d writes %d bytes of data, at most %d",
+				return commitPlan{}, fmt.Errorf("%w: op %d writes %d bytes of data, at most %d",
 					errInvalid, i, n, maxBlockDataBytes)
 			}
 			w.delta = int64(n) - int64(c.dataLen)
 			used += w.delta
 			c.dataLen, c.written = n, true
-			writes = append(writes, w)
+			plan.writes = append(plan.writes, w)
 		case op.Tell != nil:
 			text := op.Tell.Text
 			tells++
 			switch {
 			case ev.actor == nil || op.Tell.Player != actorID:
-				return nil, fmt.Errorf("%w: op %d tells %s, who is not the actor", errInvalid, i, op.Tell.Player)
+				return commitPlan{}, fmt.Errorf("%w: op %d tells %s, who is not the actor", errInvalid, i, op.Tell.Player)
 			case tells > maxTells:
-				return nil, fmt.Errorf("%w: more than %d tells", errInvalid, maxTells)
+				return commitPlan{}, fmt.Errorf("%w: more than %d tells", errInvalid, maxTells)
 			case len(text) > maxTellBytes:
-				return nil, fmt.Errorf("%w: op %d tells %d bytes, at most %d", errInvalid, i, len(text), maxTellBytes)
+				return commitPlan{}, fmt.Errorf("%w: op %d tells %d bytes, at most %d", errInvalid, i, len(text), maxTellBytes)
 			case strings.ContainsFunc(text, func(r rune) bool { return unicode.IsControl(r) || r == formattingPrefix }):
-				return nil, fmt.Errorf("%w: op %d tells a control or formatting character", errInvalid, i)
+				return commitPlan{}, fmt.Errorf("%w: op %d tells a control or formatting character", errInvalid, i)
 			}
 		case op.SendClient != nil:
 			sends++
 			switch {
 			case ev.actor == nil || op.SendClient.Player != actorID:
-				return nil, fmt.Errorf("%w: op %d sends a client message to %s, who is not the actor",
+				return commitPlan{}, fmt.Errorf("%w: op %d sends a client message to %s, who is not the actor",
 					errInvalid, i, op.SendClient.Player)
 			case sends > maxClientSends:
-				return nil, fmt.Errorf("%w: more than %d client messages", errInvalid, maxClientSends)
+				return commitPlan{}, fmt.Errorf("%w: more than %d client messages", errInvalid, maxClientSends)
 			}
 		case op.SetBlockState != nil:
 			c, err := writable(i, op.SetBlockState.Pos, true)
 			if err != nil {
-				return nil, err
+				return commitPlan{}, err
 			}
 			b, ok := h.reg.Lookup(c.id)
 			if !c.owned || !ok || b.t.exp != exp {
-				return nil, fmt.Errorf("%w: op %d sets states of %s, which is not its own block",
+				return commitPlan{}, fmt.Errorf("%w: op %d sets states of %s, which is not its own block",
 					errInvalid, i, c.id)
 			}
 			if len(op.SetBlockState.States) == 0 {
-				return nil, fmt.Errorf("%w: op %d sets no states", errInvalid, i)
+				return commitPlan{}, fmt.Errorf("%w: op %d sets no states", errInvalid, i)
 			}
 			if _, err := b.withStates(op.SetBlockState.States); err != nil {
-				return nil, fmt.Errorf("%w: op %d: %v", errInvalid, i, err)
+				return commitPlan{}, fmt.Errorf("%w: op %d: %v", errInvalid, i, err)
 			}
-		case op.SetSlot != nil || op.DropItem != nil:
-			// Server WIT 0.5's item ops are in the protocol before the adapter applies them (SP5
-			// task G); the runtime does not stage them yet, so one here is a broken helper.
-			return nil, fmt.Errorf("%w: op %d is not supported yet", errInvalid, i)
+		case op.SetSlot != nil:
+			slot := int(op.SetSlot.Slot)
+			if snap.slots == nil || slot >= inventorySlots {
+				return commitPlan{}, fmt.Errorf("%w: op %d sets slot %d of no inventory", errInvalid, i, slot)
+			}
+			w := slotWrite{slot: slot}
+			if op.SetSlot.Stack != nil {
+				var err error
+				if w.stack, err = h.reg.makeStack(exp, *op.SetSlot.Stack); err != nil {
+					return commitPlan{}, fmt.Errorf("%w: op %d: %v", errInvalid, i, err)
+				}
+			}
+			plan.slots = append(plan.slots, w)
+		case op.DropItem != nil:
+			if _, err := writable(i, op.DropItem.Pos, false); err != nil {
+				return commitPlan{}, err
+			}
+			stack, err := h.reg.makeStack(exp, op.DropItem.Stack)
+			if err != nil {
+				return commitPlan{}, fmt.Errorf("%w: op %d: %v", errInvalid, i, err)
+			}
+			plan.drops = append(plan.drops, itemDrop{pos: op.DropItem.Pos.cube(), stack: stack})
 		default:
-			return nil, fmt.Errorf("%w: op %d is empty", errInvalid, i)
+			return commitPlan{}, fmt.Errorf("%w: op %d is empty", errInvalid, i)
 		}
 	}
 	if used > dataQuota {
-		return nil, fmt.Errorf("%w: its data exceeds the quota by %d bytes", errInvalid, used-dataQuota)
+		return commitPlan{}, fmt.Errorf("%w: its data exceeds the quota by %d bytes", errInvalid, used-dataQuota)
 	}
-	return writes, nil
+	return plan, nil
 }

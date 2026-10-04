@@ -28,6 +28,21 @@ pub struct NewStack {
     pub data: Option<String>,
 }
 
+/// Slots of an inventory: 0 to 8 the hotbar, 9 to 35 the rest of the main inventory, 36 the
+/// offhand.
+pub const INVENTORY_SLOTS: usize = 37;
+/// Slots of the hotbar, from which the selected slot is.
+pub const HOTBAR_SLOTS: u8 = 9;
+
+/// An item the server knows, as the adapter lists it at load: its id and the most one stack of it
+/// holds.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ServerItem {
+    pub id: String,
+    pub max_count: u8,
+}
+
 /// The actor's inventory: slots 0 to 8 the hotbar, 9 to 35 the rest of the main inventory, 36
 /// the offhand.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

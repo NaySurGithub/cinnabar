@@ -160,9 +160,11 @@ type Request struct {
 	Shutdown *ShutdownRequest
 }
 
-// LoadRequest loads the artifact in Dir. It is the first request of a session.
+// LoadRequest loads the artifact in Dir. It is the first request of a session. Items are the
+// server's items, which the guest may make stacks of besides its own.
 type LoadRequest struct {
-	Dir string `json:"dir"`
+	Dir   string       `json:"dir"`
+	Items []ServerItem `json:"items"`
 }
 
 // CallbackRequest runs Call on a snapshot. Its result echoes Seq.

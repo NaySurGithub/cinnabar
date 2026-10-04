@@ -14,7 +14,7 @@ use experience_runtime::manifest::{
     ASSETS_DIR, CLIENT_TABLE, MANIFEST_FILE, SERVER_WASM, read_manifest,
 };
 use experience_runtime::protocol::{
-    BlockDef, Mining, Outcome, PlacementState, Scalar, StateDef, StateValues, Texture,
+    BlockDef, ItemDef, Mining, Outcome, PlacementState, Scalar, StateDef, StateValues, Texture,
 };
 use tempfile::TempDir;
 
@@ -94,6 +94,24 @@ fn probe_registers_counter_block() {
             visual: None,
             permutations: Vec::new(),
             network: false,
+        }]
+    );
+}
+
+/// The probe declares its cell, one to a stack, with the counter's texture for an icon.
+#[test]
+fn probe_registers_its_item() {
+    let dir = probe_dir();
+    let (engine, _ticker) = engine().unwrap();
+    let loaded = load(&engine, dir.path()).unwrap();
+    let icon = dir.path().join(ASSETS_DIR).join("counter.png");
+    assert_eq!(
+        loaded.items,
+        vec![ItemDef {
+            id: "probe:cell".to_owned(),
+            display_name: "Probe Cell".to_owned(),
+            icon: icon.to_str().unwrap().to_owned(),
+            max_stack: 1,
         }]
     );
 }

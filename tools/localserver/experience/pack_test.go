@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/df-mc/dragonfly/server"
@@ -263,5 +264,25 @@ func TestVisualBlockComponents(t *testing.T) {
 	}
 	if base := cprops["components"].(map[string]any)["minecraft:geometry"].(map[string]any); base["identifier"] != "geometry.visual.controller_offline" {
 		t.Errorf("base geometry = %v", base)
+	}
+}
+
+// Each Experience's item icon reaches the pack under its whole id, so the probe's cell and
+// other's copy keep one each, and the item atlas points at them.
+func TestItemIconsReachThePack(t *testing.T) {
+	files := packFiles(t)
+	var atlas struct {
+		TextureData map[string]struct {
+			Textures string `json:"textures"`
+		} `json:"texture_data"`
+	}
+	if err := json.Unmarshal(files["textures/item_texture.json"], &atlas); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{probeCell, "other:cell"} {
+		path := atlas.TextureData[id].Textures
+		if _, ok := files[path]; !ok || !strings.Contains(path, strings.Replace(id, ":", "/", 1)) {
+			t.Errorf("%s's icon is %q, which the pack has: %v", id, path, ok)
+		}
 	}
 }
