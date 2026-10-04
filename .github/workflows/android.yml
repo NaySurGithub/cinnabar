@@ -55,6 +55,11 @@ on:
         required: false
         default: ''
         type: string
+      server_play:
+        description: 'Optional observed saved-server Play tap x,y@WIDTHxHEIGHT for emulator smoke'
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
@@ -157,3 +162,4 @@ jobs:
       apk_run: ${{ inputs.apk_run }}
       server: ${{ inputs.server }}
       home_play: ${{ inputs.home_play }}
+      server_play: ${{ inputs.server_play }}

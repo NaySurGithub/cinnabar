@@ -21,7 +21,7 @@ SERVER_NAME = 'Smoke target'
 SERVER_CONFIG = 'files/config/servers.json'
 
 
-def observed_home_play(value):
+def observed_play(value):
     if not value:
         return None
     match = re.fullmatch(r'(\d+),(\d+)@(\d+)x(\d+)', value)
@@ -29,7 +29,7 @@ def observed_home_play(value):
         x, y, width, height = map(int, match.groups())
         if 0 <= x < width and 0 <= y < height:
             return x, y, width, height
-    raise argparse.ArgumentTypeError('observed home Play must be x,y@WIDTHxHEIGHT within that frame')
+    raise argparse.ArgumentTypeError('observed Play must be x,y@WIDTHxHEIGHT within that frame')
 
 
 def text_target(tsv, label, placement='unique', width=None):
@@ -294,15 +294,16 @@ class Smoke:
             time.sleep(3)
         raise RuntimeError(f'Could not locate observed UI label {label!r} ({placement}); join not attempted')
 
-    def click_observed_home(self):
-        x, y, width, height = self.args.home_play
-        frame = self.frame('join-0').read_bytes()
+    def click_observed_play(self, tap, index, source):
+        x, y, width, height = tap
+        frame = self.frame(f'join-{index}').read_bytes()
         actual = (int.from_bytes(frame[16:20], 'big'), int.from_bytes(frame[20:24], 'big'))
         if actual != (width, height):
-            raise RuntimeError(f'Observed home Play frame size {(width, height)} differs from {actual}')
+            raise RuntimeError(f'Observed {source} Play frame size {(width, height)} differs from {actual}')
         self.result.setdefault('taps', []).append({'label': 'Play', 'x': x, 'y': y,
-                                                 'source': 'observed_input', 'frame_size': [width, height]})
-        print(f'Click supplied observed home Play at {(x, y)} in {actual}', flush=True)
+                                                 'source': 'observed_input', 'input': source,
+                                                 'frame_size': [width, height]})
+        print(f'Click supplied observed {source} Play at {(x, y)} in {actual}', flush=True)
         self.adb('shell', 'input', 'tap', str(x), str(y))
         time.sleep(3)
 
@@ -317,12 +318,16 @@ class Smoke:
             return
         # The active start screen opens OreUI. A saved row selects details; hero Play joins.
         if self.args.home_play is not None:
-            self.click_observed_home()
+            self.click_observed_play(self.args.home_play, 0, 'home')
         else:
             self.click_text('Play', 0)
         for index, (label, placement) in enumerate((('Servers', 'unique'),
-                                                   (SERVER_NAME, 'left'), ('Play', 'right')), start=1):
+                                                   (SERVER_NAME, 'left')), start=1):
             self.click_text(label, index, placement)
+        if self.args.server_play is not None:
+            self.click_observed_play(self.args.server_play, 3, 'server')
+        else:
+            self.click_text('Play', 3, 'right')
         self.result['join_attempted'] = True
         end = min(self.deadline - 20, time.monotonic() + 90)
         while time.monotonic() < end:
@@ -400,8 +405,10 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--avd', required=True)
     parser.add_argument('--server', default='')
-    parser.add_argument('--home-play', type=observed_home_play, default='',
+    parser.add_argument('--home-play', type=observed_play, default='',
                         help='optional observed home Play tap x,y@WIDTHxHEIGHT; size checked before tapping')
+    parser.add_argument('--server-play', type=observed_play, default='',
+                        help='optional observed saved-server Play tap x,y@WIDTHxHEIGHT; size checked before tapping')
     parser.add_argument('--seconds', type=int, default=1200)
     args = parser.parse_args()
     if not 120 <= args.seconds <= 1200:
