@@ -56,7 +56,7 @@ pub mod viewmodel_bob;
 
 use crate::menu::{MenuAction, MenuView};
 pub use debug_overlay::DebugLines;
-pub use forms::{BedHit, ChatHit, ExperienceModal, LoadingStage};
+pub use forms::{BedHit, ChatHit, ExperienceModal, LoadingStage, ModScreensInput, ModalEdits};
 pub use hud_layout::HudFrame;
 use hud_layout::{HudGeometry, HudLayout, gui_scale};
 use primitives::{bounded_visible_text, rect, resolve_chat_line};
@@ -591,6 +591,7 @@ impl UiPresentationRuntime {
                         now_millis,
                         true,
                     )?;
+                    let container_start = nodes.len();
                     self.append_container_scene(
                         player_runtime,
                         runtime,
@@ -600,6 +601,15 @@ impl UiPresentationRuntime {
                         content_width,
                         content_height,
                     )?;
+                    self.append_mod_screens(
+                        player_runtime,
+                        runtime,
+                        nodes,
+                        next,
+                        metrics,
+                        content,
+                        container_start,
+                    );
                 }
                 Scene::Chat => {
                     self.append_chat_screen(runtime, nodes, next, metrics, content, now_millis)?;

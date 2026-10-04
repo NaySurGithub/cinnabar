@@ -207,21 +207,26 @@ impl Instance {
         state.pending_screens = None;
         self.store.set_fuel(fuel)?;
         if let Err(error) = call(&self.exports, &mut self.store) {
-            self.active = false;
-            let state = self.store.data_mut();
-            state.pending = None;
-            state.label = None;
-            state.pending_time = None;
-            state.time_override = None;
-            state.snapshot = None;
-            state.pending_camera = None;
-            state.camera_delta = None;
-            state.pending_screens = None;
-            state.screens = ModScreens::default();
+            self.quarantine();
             bail!("mod quarantined after a guest trap: {error:#}");
         }
         commit(&mut self.store);
         Ok(())
+    }
+
+    /// Disables callbacks and drops everything the guest presented or staged.
+    pub(super) fn quarantine(&mut self) {
+        self.active = false;
+        let state = self.store.data_mut();
+        state.pending = None;
+        state.label = None;
+        state.pending_time = None;
+        state.time_override = None;
+        state.snapshot = None;
+        state.pending_camera = None;
+        state.camera_delta = None;
+        state.pending_screens = None;
+        state.screens = ModScreens::default();
     }
 
     pub(super) fn take_camera_delta(&mut self) -> Option<CameraDelta> {

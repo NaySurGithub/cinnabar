@@ -65,7 +65,11 @@ fn bundle_textures_draw_and_nothing_outside_textures_resolves() {
     };
     let engine = presentation.form_presentation.engine.as_deref().unwrap();
     let files = vec![("textures/demo/panel.png".to_owned(), PIXEL.to_vec())];
-    let set = engine.textures.confined(&files, 7);
+    let set = engine.textures.confined(
+        &files,
+        7,
+        super::super::super::dynamic_textures::MODAL_UI_PAGES,
+    );
     let atlas = set.lock();
     let view = super::super::textures::Textures {
         assets: engine.assets(),

@@ -139,6 +139,27 @@ pub fn session_data(
     })
 }
 
+/// A wire stack as the session names it, as a player mod's key reports the hovered slot; `None`
+/// for an empty stack or one the registry cannot name.
+pub fn session_stack(
+    registry: Option<&Arc<BTreeMap<i32, ItemRegistryEntry>>>,
+    stack: &protocol::NetworkItemStack,
+) -> Option<Stack> {
+    if stack.is_empty() {
+        return None;
+    }
+    let entry = registry?.get(&stack.network_id)?;
+    let aux = u16::try_from(stack.metadata).ok()?;
+    Some(Stack {
+        key: ItemKey {
+            identifier: entry.identifier.to_string(),
+            aux,
+        },
+        icon: SessionData::icon_key(entry.network_id, aux),
+        count: u8::try_from(stack.count).unwrap_or(u8::MAX),
+    })
+}
+
 /// The creative content in its order, then every other registry item by network id. Returns
 /// the items and how many entries were skipped (an unknown network id or an aux beyond u16).
 fn build_items(

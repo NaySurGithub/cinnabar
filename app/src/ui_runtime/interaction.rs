@@ -205,13 +205,15 @@ pub(crate) fn drive_inventory_ui_actions(
     let physical_size = [window.physical_width(), window.physical_height()];
     let gui = presentation.inventory_gui_point(point, physical_size, window.scale_factor());
     runtime.set_inventory_pointer_gui(gui);
+    // A player mod's view, or a control of its overlay, owns the pointer (`modding`).
+    let mod_owned = presentation.mod_screens_own([point.x(), point.y()]);
     let book_open = runtime.screen_state().book_open;
     let reader_mode = runtime
         .screen_state()
         .book
         .as_ref()
         .map(|book| (book.editable, book.signing));
-    let hit = gui.and_then(|gui| {
+    let hit = gui.filter(|_| !mod_owned).and_then(|gui| {
         if let Some((editable, signing)) = reader_mode {
             return presentation.inventory_reader_hit(
                 gui,
@@ -228,7 +230,8 @@ pub(crate) fn drive_inventory_ui_actions(
             })
     });
     runtime.screen_state_mut().hover = hit;
-    if let (Some(gui), Some(frame)) = (gui, presentation.engine_container_frame()) {
+    if let (Some(gui), Some(frame), false) = (gui, presentation.engine_container_frame(), mod_owned)
+    {
         scroll_container(&mut runtime, frame, gui, &notches);
     }
     for key in presses {
@@ -251,7 +254,7 @@ pub(crate) fn drive_inventory_ui_actions(
     for action in actions {
         runtime.perform_pointer_action(&mut player_runtime, action);
     }
-    if hit.is_none() {
+    if hit.is_none() && !mod_owned {
         // A held stack released outside the panel is dropped: all of it on a
         // primary click, one item on a secondary click.
         let outside = gui.is_some_and(|gui| {
@@ -269,6 +272,38 @@ pub(crate) fn drive_inventory_ui_actions(
                 .begin_drop(DropSource::Cursor, amount);
         }
     }
+}
+
+/// Whether an open container screen gives `key` a vanilla meaning (closing, dropping, hotbar
+/// swaps, scrolling), so a player mod's declared key never takes it.
+#[cfg_attr(
+    not(feature = "local-mods"),
+    allow(dead_code, reason = "only player mods declare keys")
+)]
+pub(crate) fn inventory_consumes_key(
+    menu: Option<&crate::menu::MenuRuntime>,
+    key: KeyCode,
+) -> bool {
+    binding_key(menu, "key.inventory", key)
+        || binding_key(menu, "key.drop", key)
+        || matches!(
+            key,
+            KeyCode::Escape
+                | KeyCode::KeyQ
+                | KeyCode::Digit1
+                | KeyCode::Digit2
+                | KeyCode::Digit3
+                | KeyCode::Digit4
+                | KeyCode::Digit5
+                | KeyCode::Digit6
+                | KeyCode::Digit7
+                | KeyCode::Digit8
+                | KeyCode::Digit9
+                | KeyCode::ArrowUp
+                | KeyCode::ArrowDown
+                | KeyCode::PageUp
+                | KeyCode::PageDown
+        )
 }
 
 /// Wheel notches over an engine-drawn screen scroll the view under the pointer.
@@ -420,7 +455,13 @@ pub(crate) fn drive_chat_keyboard_input(
     let inventory_owned_pointer = runtime.inventory_open();
     let mut inventory_ownership_changed = false;
     let mut consumed_gameplay = runtime.ui_focused(&player_runtime);
-    if !runtime.chat_focused() && !runtime.screen_state().text_focused() {
+    let mod_text = presentation
+        .as_deref()
+        .is_some_and(UiPresentationRuntime::mod_text_focused);
+    let mod_view = presentation
+        .as_deref()
+        .is_some_and(UiPresentationRuntime::mod_view_shown);
+    if !runtime.chat_focused() && !runtime.screen_state().text_focused() && !mod_text {
         if binding_mouse(menu.as_deref(), "key.inventory", &mouse_buttons)
             || binding_gamepad(menu.as_deref(), "key.inventory", &gamepads)
         {
@@ -459,6 +500,10 @@ pub(crate) fn drive_chat_keyboard_input(
         }
         if runtime.inventory_open() {
             consumed_gameplay = true;
+            if mod_text {
+                // A player mod's edit box takes typing and Escape (`modding`).
+                continue;
+            }
             if runtime.screen_state().text_focused() {
                 // A text field owns typed text, including `e`.
                 match input.key_code {
@@ -484,6 +529,8 @@ pub(crate) fn drive_chat_keyboard_input(
                     runtime.toggle_inventory(&mut player_runtime);
                     inventory_ownership_changed = true;
                 }
+                // Escape returns from a player mod's view to the container (`modding`).
+                KeyCode::Escape if mod_view => {}
                 KeyCode::Escape => {
                     runtime.close_inventory(&mut player_runtime);
                     inventory_ownership_changed = true;

@@ -14,6 +14,9 @@ use {
 };
 
 const COMPONENT_ENV: &str = "CINNABAR_MOD_COMPONENT";
+/// A mod package directory (`mod.toml`, `mod.wasm`, templates, textures); it takes precedence
+/// over a bare component.
+const PACKAGE_ENV: &str = "CINNABAR_MOD_PACKAGE";
 #[cfg(feature = "local-mods")]
 const PLAYERS_ENV: &str = "CINNABAR_MOD_PLAYERS";
 #[cfg(feature = "local-mods")]
@@ -29,17 +32,40 @@ struct ModRuntime {
     host: ModHost,
     last_reload: Instant,
     grants: ModGrants,
+    screens: screens::ScreenState,
 }
 
 /// Installs the developer extension only when its component path is explicit.
 pub(crate) fn configure_from_environment(app: &mut App) {
+    let package = std::env::var_os(PACKAGE_ENV);
     let path = std::env::var_os(COMPONENT_ENV);
     #[cfg(feature = "local-mods")]
-    configure(app, path.as_deref().map(Path::new));
+    match package {
+        Some(package) => configure_package(app, Path::new(&package)),
+        None => configure(app, path.as_deref().map(Path::new)),
+    }
     #[cfg(not(feature = "local-mods"))]
-    if path.is_some() {
+    if package.is_some() || path.is_some() {
         let _ = app;
-        eprintln!("{COMPONENT_ENV} ignored: build bedrock-client with --features local-mods");
+        eprintln!(
+            "{PACKAGE_ENV} and {COMPONENT_ENV} ignored: build bedrock-client with --features local-mods"
+        );
+    }
+}
+
+/// Loads a mod package with the developer profile: the permissions its manifest asks for,
+/// plus the same explicit gameplay opt-ins a bare component gets.
+#[cfg(feature = "local-mods")]
+fn configure_package(app: &mut App, dir: &Path) {
+    let grants = ModGrants {
+        environment: true,
+        players: std::env::var(PLAYERS_ENV).is_ok_and(|value| value == "1"),
+        camera: std::env::var(CAMERA_ENV).is_ok_and(|value| value == "1"),
+        ..ModGrants::default()
+    };
+    match ModHost::load_package(dir, grants) {
+        Ok(host) => install(app, host, grants),
+        Err(error) => eprintln!("Cinnabar mod package {} disabled: {error:#}", dir.display()),
     }
 }
 
@@ -50,6 +76,7 @@ fn configure(app: &mut App, path: Option<&Path>) {
         environment: true,
         players: std::env::var(PLAYERS_ENV).is_ok_and(|value| value == "1"),
         camera: std::env::var(CAMERA_ENV).is_ok_and(|value| value == "1"),
+        ..ModGrants::default()
     };
     configure_with_grants(app, path, grants);
 }
@@ -59,24 +86,28 @@ fn configure(app: &mut App, path: Option<&Path>) {
 fn configure_with_grants(app: &mut App, path: Option<&Path>, grants: ModGrants) {
     let Some(path) = path else { return };
     match ModHost::load_with_grants(path, grants) {
-        Ok(host) => {
-            app.insert_resource(VisualTimeOverride(host.time_override()))
-                .insert_resource(ModRuntime {
-                    host,
-                    last_reload: Instant::now(),
-                    grants,
-                })
-                .add_systems(
-                    Update,
-                    drive_mod
-                        .in_set(crate::camera::ModCameraInputSet)
-                        .after(ClientFrameSet::SemanticFinalize)
-                        .before(ClientFrameSet::UiPublication)
-                        .before(crate::environment::update_atmosphere_frame),
-                );
-        }
+        Ok(host) => install(app, host, grants),
         Err(error) => eprintln!("Cinnabar extension {} disabled: {error:#}", path.display()),
     }
+}
+
+#[cfg(feature = "local-mods")]
+fn install(app: &mut App, host: ModHost, grants: ModGrants) {
+    app.insert_resource(VisualTimeOverride(host.time_override()))
+        .insert_resource(ModRuntime {
+            host,
+            last_reload: Instant::now(),
+            grants,
+            screens: screens::ScreenState::default(),
+        })
+        .add_systems(
+            Update,
+            drive_mod
+                .in_set(crate::camera::ModCameraInputSet)
+                .after(ClientFrameSet::SemanticFinalize)
+                .before(ClientFrameSet::UiPublication)
+                .before(crate::environment::update_atmosphere_frame),
+        );
 }
 
 /// Runs the bounded guest and publishes only its validated presentation output.
@@ -95,6 +126,7 @@ fn drive_mod(
     mut presentation: ResMut<UiPresentationRuntime>,
     mut time_override: ResMut<VisualTimeOverride>,
     mut gameplay: gameplay::GameplayContext,
+    mut screen_input: screens::ScreenInput,
 ) {
     if extension.last_reload.elapsed() >= RELOAD_INTERVAL {
         extension.last_reload = Instant::now();
@@ -126,6 +158,24 @@ fn drive_mod(
     if let Err(error) = presentation.set_mod_label(extension.host.label()) {
         eprintln!("Cinnabar extension HUD rejected: {error}");
     }
+    let cursor = windows
+        .single()
+        .ok()
+        .and_then(|(window, _)| window.cursor_position())
+        .map(|point| point.to_array());
+    let menu_open = menu.as_deref().is_some_and(MenuRuntime::is_visible);
+    let ModRuntime { host, screens, .. } = &mut *extension;
+    screens::drive(
+        host,
+        screens,
+        &player_runtime,
+        &ui,
+        &mut presentation,
+        menu.as_deref(),
+        cursor,
+        focused && !menu_open,
+        &mut screen_input,
+    );
 }
 
 /// A mod keybind is unavailable while another UI or an unfocused window owns input.
@@ -224,3 +274,5 @@ mod time_changer_tests;
 
 #[cfg(feature = "local-mods")]
 mod gameplay;
+#[cfg(feature = "local-mods")]
+mod screens;

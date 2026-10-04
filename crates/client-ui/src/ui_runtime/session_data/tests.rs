@@ -375,3 +375,26 @@ fn a_recipe_tag_the_registry_lacks_reads_the_vanilla_table() {
     let planks = data.lookup(&key("minecraft:oak_planks", 0)).unwrap();
     assert_eq!(planks.tags, ["minecraft:planks"]);
 }
+
+#[test]
+fn a_hovered_stack_reads_as_its_session_stack() {
+    let registry = registry();
+    let wool = ::protocol::NetworkItemStack {
+        count: 12,
+        ..stack(4, 14)
+    };
+    assert_eq!(
+        session_stack(Some(&registry), &wool),
+        Some(Stack {
+            key: key("minecraft:wool", 14),
+            icon: SessionData::icon_key(4, 14),
+            count: 12,
+        })
+    );
+    assert_eq!(session_stack(Some(&registry), &stack(99, 0)), None);
+    assert_eq!(session_stack(None, &wool), None);
+    assert_eq!(
+        session_stack(Some(&registry), &::protocol::NetworkItemStack::empty()),
+        None
+    );
+}

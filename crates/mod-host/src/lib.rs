@@ -9,6 +9,8 @@ mod runtime;
 pub mod server;
 
 #[cfg(feature = "execution")]
+pub use experience_sdk::mod_manifest::{KEY_NAMES, KeyDecl, Modifier};
+#[cfg(feature = "execution")]
 pub use mod_api::{MAX_CAMERA_DELTA_RADIANS, MAX_GAMEPLAY_PLAYERS};
 #[cfg(feature = "execution")]
 pub use runtime::cinnabar::extension::gameplay::{
@@ -25,7 +27,7 @@ pub struct CameraDelta {
 #[cfg(feature = "execution")]
 use {
     anyhow::{Context, Result},
-    experience_sdk::mod_manifest::{KeyDecl, ModManifest, ModPermission},
+    experience_sdk::mod_manifest::{ModManifest, ModPermission},
     package::{Package, read_bounded},
     runtime::{Declared, Instance},
     server_experience::{
@@ -252,6 +254,12 @@ impl ModHost {
             return self.dispatch(vec![ModEvent::DataChanged]);
         }
         Ok(())
+    }
+
+    /// Stops the guest as a trap would, removing everything it presented: the host refused
+    /// what it asked to draw.
+    pub fn quarantine(&mut self) {
+        self.instance.quarantine();
     }
 
     /// Closes the view without entering the guest, as Escape does over it.

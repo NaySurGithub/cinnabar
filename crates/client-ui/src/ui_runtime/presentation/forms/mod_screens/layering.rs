@@ -1,0 +1,216 @@
+//! Where a player mod's overlay may draw beside a container screen, and the node reordering
+//! that keeps vanilla's held stack and tooltips above it.
+
+use std::{collections::BTreeMap, ops::Range};
+
+use server_experience::screen::{Rect, ScreenLayout};
+use ui::{UiNode, UiNodeId, UiVisual};
+
+use crate::ui_runtime::forms::EngineFrame;
+
+/// A control covering at least this share of the root on both axes is a full-screen one (a
+/// dismiss area), not part of the vanilla panels.
+const FULL_SCREEN_SHARE: f64 = 0.9;
+
+/// The GUI rect: the union of the vanilla screen's `root_panel` and every control it laid out
+/// (an open recipe book's included), but full-screen ones. `None` when nothing is laid out.
+pub(super) fn gui_rect(
+    panel: Option<[f64; 4]>,
+    controls: impl Iterator<Item = [f64; 4]>,
+    root: [f64; 2],
+) -> Option<Rect> {
+    let full_screen = |[_, _, w, h]: &[f64; 4]| {
+        *w >= root[0] * FULL_SCREEN_SHARE && *h >= root[1] * FULL_SCREEN_SHARE
+    };
+    let [left, top, right, bottom] = panel
+        .into_iter()
+        .chain(controls.filter(|rect| !full_screen(rect)))
+        .filter(|[_, _, w, h]| *w > 0.0 && *h > 0.0)
+        .map(|[x, y, w, h]| [x, y, x + w, y + h])
+        .reduce(|a, b| {
+            [
+                a[0].min(b[0]),
+                a[1].min(b[1]),
+                a[2].max(b[2]),
+                a[3].max(b[3]),
+            ]
+        })?;
+    Some(Rect {
+        x: left,
+        y: top,
+        width: right - left,
+        height: bottom - top,
+    })
+}
+
+/// The GUI rect and exclusions in content-logical pixels, `[left, top, right, bottom]`, at
+/// `scale` logical pixels per GUI unit.
+pub(super) fn forbidden_logical(layout: &ScreenLayout, scale: f32) -> Vec<[f32; 4]> {
+    std::iter::once(&layout.gui)
+        .chain(&layout.exclusions)
+        .map(|rect| {
+            [
+                (rect.x as f32) * scale,
+                (rect.y as f32) * scale,
+                ((rect.x + rect.width) as f32) * scale,
+                ((rect.y + rect.height) as f32) * scale,
+            ]
+        })
+        .collect()
+}
+
+/// Drops every visible node from `start` on whose rect meets a `forbidden` one, so the overlay
+/// never draws over vanilla's panels; empty clip groups stay as they draw nothing.
+pub(super) fn clip_overlay(nodes: &mut Vec<UiNode>, start: usize, forbidden: &[[f32; 4]]) {
+    let origins: BTreeMap<UiNodeId, [f32; 2]> = nodes
+        .iter()
+        .map(|node| {
+            let min = node.bounds().min();
+            (node.id(), [min.x(), min.y()])
+        })
+        .collect();
+    let mut index = 0;
+    nodes.retain(|node| {
+        index += 1;
+        if index <= start || matches!(node.visual(), UiVisual::None) {
+            return true;
+        }
+        let origin = node
+            .parent()
+            .and_then(|parent| origins.get(&parent))
+            .copied()
+            .unwrap_or_default();
+        let bounds = node.bounds();
+        let rect = [
+            origin[0] + bounds.min().x(),
+            origin[1] + bounds.min().y(),
+            origin[0] + bounds.max().x(),
+            origin[1] + bounds.max().y(),
+        ];
+        !forbidden.iter().any(|area| {
+            rect[0] < area[2] && area[0] < rect[2] && rect[1] < area[3] && area[1] < rect[3]
+        })
+    });
+}
+
+/// Nodes taken out of the frame to be drawn again on top, with the clip groups they sat in.
+pub(super) struct Lifted {
+    nodes: Vec<UiNode>,
+    /// Each parent of a lifted node that stayed behind, to copy under the lifted node.
+    groups: BTreeMap<UiNodeId, UiNode>,
+}
+
+/// Takes the nodes in `ranges` out of `nodes`, in order. A clip group among them that other
+/// nodes still use stays and is copied instead.
+pub(super) fn take_lifted(nodes: &mut Vec<UiNode>, ranges: &[Range<usize>]) -> Lifted {
+    let lifted = |index: usize| ranges.iter().any(|range| range.contains(&index));
+    let taken_ids: std::collections::BTreeSet<UiNodeId> = nodes
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| lifted(*index))
+        .map(|(_, node)| node.id())
+        .collect();
+    // A taken node that parents a node left behind must stay.
+    let kept_parents: std::collections::BTreeSet<UiNodeId> = nodes
+        .iter()
+        .filter(|node| !taken_ids.contains(&node.id()))
+        .filter_map(UiNode::parent)
+        .collect();
+    let mut out = Lifted {
+        nodes: Vec::new(),
+        groups: BTreeMap::new(),
+    };
+    let mut index = 0;
+    let all = std::mem::take(nodes);
+    let by_id: BTreeMap<UiNodeId, UiNode> =
+        all.iter().map(|node| (node.id(), node.clone())).collect();
+    for node in all {
+        let take = lifted(index) && !kept_parents.contains(&node.id());
+        index += 1;
+        if !take {
+            if lifted(index - 1) {
+                out.groups.insert(node.id(), node.clone());
+            }
+            nodes.push(node);
+            continue;
+        }
+        if let Some(parent) = node.parent()
+            && !taken_ids.contains(&parent)
+            && let Some(group) = by_id.get(&parent)
+        {
+            out.groups.insert(parent, group.clone());
+        }
+        out.nodes.push(node);
+    }
+    // A kept group is copied, not moved: its lifted children follow the copy.
+    for node in &out.nodes {
+        if let Some(parent) = node.parent()
+            && kept_parents.contains(&parent)
+            && let Some(group) = by_id.get(&parent)
+        {
+            out.groups.insert(parent, group.clone());
+        }
+    }
+    out
+}
+
+/// Appends the lifted nodes with fresh ids from `next`, so they draw after everything before
+/// them; a lifted node whose group stayed behind gets a copy of that group first.
+pub(super) fn restore_lifted(nodes: &mut Vec<UiNode>, lifted: Lifted, next: &mut u32) {
+    let mut ids = BTreeMap::new();
+    let mut fresh = || {
+        let id = UiNodeId::new(*next);
+        *next = next.saturating_add(1);
+        id
+    };
+    for node in lifted.nodes {
+        let parent = match node.parent() {
+            None => None,
+            Some(parent) if ids.contains_key(&parent) => ids.get(&parent).copied(),
+            Some(parent) => match lifted.groups.get(&parent) {
+                Some(group) => {
+                    let copy = fresh();
+                    nodes.push(group.clone().renumbered(copy, None));
+                    ids.insert(parent, copy);
+                    Some(copy)
+                }
+                None => Some(parent),
+            },
+        };
+        let id = fresh();
+        ids.insert(node.id(), id);
+        nodes.push(node.renumbered(id, parent));
+    }
+}
+
+/// Whether an overlay control at GUI `rect` (`[x, y, w, h]`) lies wholly outside the GUI rect
+/// and every exclusion, so it can never intercept a vanilla control.
+pub(super) fn overlay_hit_allowed(layout: &ScreenLayout, [x, y, w, h]: [f64; 4]) -> bool {
+    std::iter::once(&layout.gui)
+        .chain(&layout.exclusions)
+        .all(|area| {
+            x + w <= area.x
+                || area.x + area.width <= x
+                || y + h <= area.y
+                || area.y + area.height <= y
+        })
+}
+
+/// Drops the overlay's hit regions that meet the GUI rect or an exclusion.
+pub(super) fn keep_allowed_hits(frame: &mut EngineFrame, layout: &ScreenLayout) {
+    let hits: Vec<_> = frame
+        .hits
+        .iter()
+        .filter(|hit| overlay_hit_allowed(layout, [hit.rect.x, hit.rect.y, hit.rect.w, hit.rect.h]))
+        .cloned()
+        .collect();
+    frame.hits = hits.into();
+}
+
+/// Window-logical `point` in the frame's GUI units.
+pub(super) fn to_gui(frame: &EngineFrame, point: [f32; 2]) -> [f64; 2] {
+    super::super::template_screen::virtual_point(frame, point)
+}
+
+#[cfg(test)]
+mod tests;
