@@ -16,10 +16,14 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 mod outline;
+mod pages;
+mod sheets;
 
 pub use outline::{
     GlyphAdvances, OutlineFontConfig, compile_outline_font, compile_outline_font_with_fallback,
 };
+pub use pages::compact_font_pages;
+pub use sheets::overlay_font_glyph_sheets;
 
 const DESCRIPTOR_PATH: &str = "font/catalog.json";
 

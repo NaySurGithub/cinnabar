@@ -49,7 +49,7 @@ func TestVerifiedAssetsCacheCompressionAndReplacement(t *testing.T) {
 		response := httptest.NewRecorder()
 		h.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
 		var served AssetManifest
-		if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &served) != nil || len(served.Files) != count {
+		if response.Code != http.StatusOK || response.Header().Get("Cache-Control") != "private, no-store" || json.Unmarshal(response.Body.Bytes(), &served) != nil || len(served.Files) != count {
 			t.Fatalf("renderer manifest %s: status=%d files=%d; want %d", path, response.Code, len(served.Files), count)
 		}
 	}
@@ -59,7 +59,7 @@ func TestVerifiedAssetsCacheCompressionAndReplacement(t *testing.T) {
 	request.Header.Set("Accept-Encoding", "gzip")
 	response := httptest.NewRecorder()
 	h.ServeHTTP(response, request)
-	if response.Code != 200 || response.Header().Get("Content-Encoding") != "gzip" {
+	if response.Code != 200 || response.Header().Get("Content-Encoding") != "gzip" || response.Header().Get("Cache-Control") != privateImmutableCache {
 		t.Fatalf("gzip asset unavailable: %d %v", response.Code, response.Header())
 	}
 	reader, err := gzip.NewReader(response.Body)
@@ -76,8 +76,20 @@ func TestVerifiedAssetsCacheCompressionAndReplacement(t *testing.T) {
 	conditional.Header.Set("If-None-Match", response.Header().Get("ETag"))
 	cached := httptest.NewRecorder()
 	h.ServeHTTP(cached, conditional)
-	if cached.Code != 304 || cached.Body.Len() != 0 {
+	if cached.Code != 304 || cached.Body.Len() != 0 || cached.Header().Get("Cache-Control") != privateImmutableCache {
 		t.Fatal("immutable conditional request failed")
+	}
+	missing := httptest.NewRecorder()
+	h.ServeHTTP(missing, httptest.NewRequest(http.MethodGet, "/api/spectator/assets/missing/file.bin", nil))
+	if missing.Code != http.StatusNotFound || missing.Header().Get("Cache-Control") != "no-store" {
+		t.Fatal("missing asset was cached")
+	}
+	invalidRange := httptest.NewRequest(http.MethodGet, route, nil)
+	invalidRange.Header.Set("Range", "bytes=999999999-")
+	rangeError := httptest.NewRecorder()
+	h.ServeHTTP(rangeError, invalidRange)
+	if rangeError.Code != http.StatusRequestedRangeNotSatisfiable || rangeError.Header().Get("Cache-Control") != "private, no-store" {
+		t.Fatal("invalid range inherited immutable cache policy")
 	}
 	// Atomic deployment replacement must not change the verified open inode.
 	replacement := filepath.Join(dir, "replacement")
@@ -99,7 +111,7 @@ func TestVerifiedAssetsCacheCompressionAndReplacement(t *testing.T) {
 	h.downloads <- struct{}{}
 	busy := httptest.NewRecorder()
 	h.ServeHTTP(busy, httptest.NewRequest(http.MethodGet, route, nil))
-	if busy.Code != 429 {
+	if busy.Code != 429 || busy.Header().Get("Cache-Control") != "no-store" {
 		t.Fatal("saturated download did not return429")
 	}
 	<-h.downloads

@@ -442,7 +442,8 @@ pub(crate) fn ui_alpha_blend_state() -> BlendState {
 }
 
 /// The classic crosshair invert: color = src*(1-dst) + dst*(1-src), so the
-/// white cross reads against any background; alpha passes the source through.
+/// white cross reads against any background. The crosshair changes colour only:
+/// transparent texels must not punch a transparent rectangle into the scene.
 pub(crate) fn ui_invert_blend_state() -> BlendState {
     BlendState {
         color: BlendComponent {
@@ -451,8 +452,8 @@ pub(crate) fn ui_invert_blend_state() -> BlendState {
             operation: BlendOperation::Add,
         },
         alpha: BlendComponent {
-            src_factor: BlendFactor::One,
-            dst_factor: BlendFactor::Zero,
+            src_factor: BlendFactor::Zero,
+            dst_factor: BlendFactor::One,
             operation: BlendOperation::Add,
         },
     }

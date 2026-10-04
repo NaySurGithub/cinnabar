@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -24,9 +23,10 @@ type Audio struct {
 	files    map[string]audioFile
 }
 type audioFile struct {
-	file *os.File
-	size int64
-	mime string
+	file   *os.File
+	size   int64
+	mime   string
+	sha256 string
 }
 
 // LoadAudio pins independently decoded canonical audio assets. Replay files
@@ -83,7 +83,7 @@ func LoadAudio(directory string) (*Audio, error) {
 		if strings.HasSuffix(record.File, ".ogg") {
 			mime = "audio/ogg"
 		}
-		a.files[route] = audioFile{file: file, size: record.Size, mime: mime}
+		a.files[route] = audioFile{file: file, size: record.Size, mime: mime, sha256: record.SHA256}
 		total += record.Size
 		if total > 640<<20 {
 			return nil, errors.New("audio bundle exceeds limit")
@@ -107,6 +107,7 @@ func (h *Handler) audioRoute(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(15 * time.Second))
 	if r.URL.Path == "/api/spectator/audio/manifest" {
+		w.Header().Set("Cache-Control", "private, no-store")
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method != http.MethodHead {
 			_, _ = w.Write(h.audio.manifest)
@@ -127,9 +128,5 @@ func (h *Handler) audioRoute(w http.ResponseWriter, r *http.Request) {
 		failure(w, 429, "Audio downloads are busy.")
 		return
 	}
-	w.Header().Set("Content-Type", file.mime)
-	w.Header().Set("Content-Length", fmt.Sprint(file.size))
-	if r.Method != http.MethodHead {
-		_, _ = io.Copy(w, io.NewSectionReader(file.file, 0, file.size))
-	}
+	serveVerifiedFile(w, r, route, file.mime, `"`+file.sha256+`"`, io.NewSectionReader(file.file, 0, file.size))
 }

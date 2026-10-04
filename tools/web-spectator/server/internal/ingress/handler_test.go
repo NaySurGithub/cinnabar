@@ -146,8 +146,68 @@ func TestNativeHTTPStreamClosesOnConsentAndStaleness(t *testing.T) {
 				store.Sweep(time.Now().Add(spectator.Freshness + time.Second))
 			}
 			closed := readEvent(t, reader)
-			if !strings.HasPrefix(closed, "event: closed\n") || strings.Contains(closed, "One") {
+			if !strings.HasPrefix(closed, "event: closed\n") || strings.Contains(closed, "One") || strings.Contains(closed, `"finalFrame"`) || strings.Contains(closed, `"reason":"finished"`) {
 				t.Fatalf("unexpected closure event: %s", closed)
+			}
+			if _, err := reader.ReadByte(); err != io.EOF {
+				t.Fatalf("closed stream retained data: %v", err)
+			}
+		})
+	}
+}
+
+func TestNativeHTTPStreamSendsFinalFrameOnlyForFinishedMatch(t *testing.T) {
+	for _, tc := range []struct {
+		reason    string
+		withFinal bool
+	}{{"finished", true}, {"revoked", false}} {
+		t.Run(tc.reason, func(t *testing.T) {
+			h, store := testHandler(t)
+			server := httptest.NewServer(h)
+			defer server.Close()
+			client := &http.Client{Timeout: 3 * time.Second}
+			response, err := client.Get(server.URL + apiPrefix + "/match/events")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer response.Body.Close()
+			reader := bufio.NewReader(response.Body)
+			if initial := readEvent(t, reader); !strings.HasPrefix(initial, "event: frame\n") {
+				t.Fatalf("initial frame missing: %s", initial)
+			}
+			now := time.Now()
+			terminal := spectator.Closed{Version: spectator.Version, ID: "match", UpdatedAt: now, Reason: tc.reason}
+			if tc.withFinal {
+				final := spectator.Frame{Version: spectator.Version, ID: "match", ArenaID: "arena", Mode: "boxing", UpdatedAt: now, Players: []spectator.Player{{ID: "one", Name: "One", MaxHealth: 20, Health: 0, Dead: true}, {ID: "two", Name: "Two", Team: 1, MaxHealth: 20, Health: 20}}, TeamWins: []int{0, 1}}
+				terminal.FinalFrame = &final
+			}
+			encoded, err := json.Marshal(terminal)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := store.Accept(spectator.ClosedSubject, encoded, now); err != nil {
+				t.Fatal(err)
+			}
+			closed := readEvent(t, reader)
+			if !strings.HasPrefix(closed, "event: closed\n") {
+				t.Fatalf("missing terminal close event: %s", closed)
+			}
+			var payload struct {
+				ID         string           `json:"id"`
+				Reason     string           `json:"reason"`
+				FinalFrame *spectator.Frame `json:"finalFrame"`
+			}
+			if err := json.Unmarshal([]byte(strings.TrimSuffix(strings.TrimPrefix(closed, "event: closed\ndata: "), "\n\n")), &payload); err != nil {
+				t.Fatal(err)
+			}
+			if payload.ID != "match" || payload.Reason != tc.reason || (payload.FinalFrame != nil) != tc.withFinal {
+				t.Fatalf("unexpected terminal event: %+v", payload)
+			}
+			if tc.withFinal && payload.FinalFrame.Players[0].Health != 0 {
+				t.Fatalf("terminal close lost final frame: %+v", payload.FinalFrame)
+			}
+			if !tc.withFinal && strings.Contains(closed, "One") {
+				t.Fatalf("revocation leaked fighter data: %s", closed)
 			}
 			if _, err := reader.ReadByte(); err != io.EOF {
 				t.Fatalf("closed stream retained data: %v", err)

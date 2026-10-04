@@ -57,7 +57,8 @@ pub use entity::{
 pub use fadpcm::{DecodedFadpcm, FadpcmDecodeError, decode_fsb5_fadpcm};
 pub use font::{
     CompiledFontCarrier, FontCompileError, FontCompileReport, GlyphAdvances, OutlineFontConfig,
-    compile_fonts, compile_outline_font, compile_outline_font_with_fallback,
+    compact_font_pages, compile_fonts, compile_outline_font, compile_outline_font_with_fallback,
+    overlay_font_glyph_sheets,
 };
 pub use hud::{CompiledHudCarrier, HudCompileError, HudCompileReport, compile_hud_assets};
 pub use hud_extras::compile_hud_extras_to_file;

@@ -7,12 +7,20 @@ import (
 
 // Each match has its own lock. Slow viewers cannot stall unrelated exports.
 type Live struct {
-	mu       sync.Mutex
-	id       string
-	arena    *Arena
-	frame    Frame
-	active   bool
-	watchers map[*Subscription]struct{}
+	mu        sync.Mutex
+	id        string
+	arena     *Arena
+	frame     Frame
+	active    bool
+	closeInfo CloseInfo
+	watchers  map[*Subscription]struct{}
+}
+
+// CloseInfo is retained only on an existing live handle for its subscribers.
+// A terminal frame is available only after a validated finished export.
+type CloseInfo struct {
+	Reason     string `json:"reason"`
+	FinalFrame *Frame `json:"finalFrame,omitempty"`
 }
 
 type Subscription struct {
@@ -25,6 +33,12 @@ func (live *Live) Snapshot(now time.Time) (Frame, bool) {
 	live.mu.Lock()
 	defer live.mu.Unlock()
 	return live.frame, live.active && fresh(live.frame.UpdatedAt, now)
+}
+
+func (live *Live) ClosedInfo() CloseInfo {
+	live.mu.Lock()
+	defer live.mu.Unlock()
+	return live.closeInfo
 }
 
 // WithCurrent keeps consent/freshness and each bounded HTTP write atomic with closure.
@@ -70,16 +84,17 @@ func (live *Live) update(frame Frame) {
 	}
 }
 
-func (live *Live) close() {
+func (live *Live) close(info CloseInfo) {
 	live.mu.Lock()
 	defer live.mu.Unlock()
-	live.deactivate()
+	live.deactivate(info)
 }
 
-func (live *Live) deactivate() {
+func (live *Live) deactivate(info CloseInfo) {
 	if !live.active {
 		return
 	}
+	live.closeInfo = info
 	live.active = false
 	for sub := range live.watchers {
 		close(sub.Closed)

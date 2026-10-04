@@ -44,16 +44,16 @@ func (h *Handler) events(w http.ResponseWriter, r *http.Request, id string, live
 		case <-r.Context().Done():
 			return
 		case <-sub.Closed:
-			sendClosed(controller, w, id)
+			sendClosed(controller, w, id, live.ClosedInfo())
 			return
 		case <-sub.Updates:
 			if !sendFrame(controller, w, live) {
-				sendClosed(controller, w, id)
+				sendClosed(controller, w, id, live.ClosedInfo())
 				return
 			}
 		case <-ticker.C:
 			if _, ok := live.Snapshot(time.Now()); !ok {
-				sendClosed(controller, w, id)
+				sendClosed(controller, w, id, live.ClosedInfo())
 				return
 			}
 		}
@@ -77,11 +77,20 @@ func sendFrame(controller *http.ResponseController, w http.ResponseWriter, live 
 	return valid && err == nil
 }
 
-func sendClosed(controller *http.ResponseController, w http.ResponseWriter, id string) {
+func sendClosed(controller *http.ResponseController, w http.ResponseWriter, id string, info spectator.CloseInfo) {
 	if controller.SetWriteDeadline(time.Now().Add(writeTimeout)) != nil {
 		return
 	}
-	encoded, _ := json.Marshal(map[string]string{"id": id})
+	if info.Reason != "finished" {
+		info.FinalFrame = nil
+	}
+	if info.Reason == "" {
+		info.Reason = "unknown"
+	}
+	encoded, _ := json.Marshal(struct {
+		ID string `json:"id"`
+		spectator.CloseInfo
+	}{ID: id, CloseInfo: info})
 	if _, err := fmt.Fprintf(w, "event: closed\ndata: %s\n\n", encoded); err == nil {
 		_ = controller.Flush()
 	}

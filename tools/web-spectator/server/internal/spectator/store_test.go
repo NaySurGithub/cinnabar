@@ -146,6 +146,71 @@ func TestClosedStaleAndReorderedFramesStayUnavailable(t *testing.T) {
 	}
 }
 
+func TestFinishedCloseRetainsOnlyValidatedTerminalFrame(t *testing.T) {
+	now := time.Now()
+	s := liveStore(t, now)
+	live := s.Lookup("match")
+	sub := live.Subscribe(now)
+	if sub == nil {
+		t.Fatal("subscription refused")
+	}
+	defer sub.Cancel()
+	final := frameAt("match", "arena", now)
+	final.RoundActive = false
+	final.Players[0].Health = 0
+	if err := accept(t, s, ClosedSubject, Closed{Version: Version, ID: "match", UpdatedAt: now, Reason: "finished", FinalFrame: &final}, now); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-sub.Closed:
+	default:
+		t.Fatal("finished close did not notify viewer")
+	}
+	info := live.ClosedInfo()
+	if info.Reason != "finished" || info.FinalFrame == nil || info.FinalFrame.Players[0].Health != 0 {
+		t.Fatalf("finished close lost its terminal state: %+v", info)
+	}
+	if _, ok := live.Snapshot(now); ok || s.Lookup("match") != nil {
+		t.Fatal("finished match remained public")
+	}
+
+	s = liveStore(t, now)
+	live = s.Lookup("match")
+	if err := accept(t, s, ClosedSubject, Closed{Version: Version, ID: "match", UpdatedAt: now, Reason: "revoked", FinalFrame: &final}, now); err == nil {
+		t.Fatal("revoked close admitted a terminal frame")
+	}
+	if _, ok := live.Snapshot(now); !ok {
+		t.Fatal("rejected close deactivated the match")
+	}
+	if err := accept(t, s, ClosedSubject, Closed{Version: Version, ID: "match", UpdatedAt: now, Reason: "revoked"}, now); err != nil {
+		t.Fatal(err)
+	}
+	if info := live.ClosedInfo(); info.Reason != "revoked" || info.FinalFrame != nil {
+		t.Fatalf("revocation exposed terminal state: %+v", info)
+	}
+}
+
+func TestLocalAndExpiryClosesCannotLookFinished(t *testing.T) {
+	now := time.Now()
+	for _, closeMatch := range []struct {
+		name string
+		call func(*Store)
+	}{
+		{"local", func(s *Store) { s.Close("match", now) }},
+		{"transport", func(s *Store) { s.CloseAll(now) }},
+		{"stale", func(s *Store) { s.Sweep(now.Add(Freshness + time.Second)) }},
+	} {
+		t.Run(closeMatch.name, func(t *testing.T) {
+			s := liveStore(t, now)
+			live := s.Lookup("match")
+			closeMatch.call(s)
+			if info := live.ClosedInfo(); info.Reason == "finished" || info.FinalFrame != nil {
+				t.Fatalf("local close looked finished: %+v", info)
+			}
+		})
+	}
+}
+
 func TestCacheBoundsAndActiveArenaRetention(t *testing.T) {
 	now := time.Now()
 	s := liveStore(t, now)

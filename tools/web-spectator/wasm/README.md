@@ -138,3 +138,17 @@ hash on demand, after the viewer enables sound.
 
 Remaining parity work is tracked in plan.md; a compiled viewer is not a visual
 parity result.
+## Server font sheets and compact carriers
+
+The native HUD uses the authenticated font carrier for both ordinary text and
+server glyphs. Build its pinned outline sources with
+`assetc outline-font-assets --glyph-pack <server-resource-pack> --compact-pages`
+alongside the existing font, fallback-font, source-manifest, out and report
+arguments. `--glyph-pack` reuses Cinnabar's session sheet extraction and packing
+for `font/glyph_XX.png`; it preserves each glyph's native bearing, advance,
+drawn size and colour. Source PNGs and generated carriers remain local assets.
+
+`--compact-pages` keeps every code point and UV rectangle, removing only unused
+power-of-two atlas padding. It reduces decoded bytes, verification work and GPU
+uploads without removing CJK fallback glyphs. The generated carrier remains
+MCBEFONT1 with the pinned font source identity and a new verified payload hash.

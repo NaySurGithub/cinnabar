@@ -1,19 +1,31 @@
 use super::*;
 use asset_compiler::{
-    GlyphAdvances, OutlineFontConfig, compile_outline_font, compile_outline_font_with_fallback,
+    GlyphAdvances, OutlineFontConfig, compact_font_pages, compile_outline_font,
+    compile_outline_font_with_fallback, overlay_font_glyph_sheets,
 };
 
 const MAX_MANIFEST: usize = 64 * 1024;
 const MAX_LICENSE: usize = 16 * 1024;
 
+pub(super) struct Options<'a> {
+    pub primary_only: bool,
+    pub glyph_pack: Option<&'a Path>,
+    pub compact_pages: bool,
+}
+
 pub(super) fn compile(
     font: &Path,
     fallback: Option<&Path>,
-    primary_only: bool,
+    options: Options<'_>,
     manifest_path: &Path,
     out: &Path,
     report: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let Options {
+        primary_only,
+        glyph_pack,
+        compact_pages,
+    } = options;
     let manifest = read_bounded_with_limit(manifest_path, MAX_MANIFEST, "font manifest")?;
     let manifest_hash = assets::canonical_source_manifest_sha256(&manifest);
     let source: serde_json::Value = serde_json::from_slice(&manifest)?;
@@ -108,12 +120,18 @@ pub(super) fn compile(
             }
         }
     }
-    let compiled = match (&secondary, fallback) {
+    let mut compiled = match (&secondary, fallback) {
         (Some((bytes, _)), Some(path)) => {
             compile_outline_font_with_fallback(font, &primary, path, bytes, manifest_hash, config)?
         }
         _ => compile_outline_font(font, &primary, manifest_hash, config)?,
     };
+    if let Some(pack) = glyph_pack {
+        compiled = overlay_font_glyph_sheets(compiled, pack)?;
+    }
+    if compact_pages {
+        compiled = compact_font_pages(compiled)?;
+    }
     // Notices are required before publishing a carrier that redistributes the glyphs.
     write_blob_atomic(&notices_path, &notices)?;
     write_compiled_font_assets(source, manifest_hash, compiled, out, report)

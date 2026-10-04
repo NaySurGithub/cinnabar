@@ -3,6 +3,18 @@ use super::*;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::platform::time::Instant;
 
+#[test]
+fn inverted_crosshair_preserves_scene_alpha_for_transparent_texels() {
+    let blend = ui_invert_blend_state();
+    assert_eq!(blend.alpha.src_factor, BlendFactor::Zero);
+    assert_eq!(blend.alpha.dst_factor, BlendFactor::One);
+    assert_eq!(blend.alpha.operation, BlendOperation::Add);
+    // The native invert equation still changes colour; it must leave the
+    // opaque canvas alpha intact even where the crosshair texture has no ink.
+    assert_eq!(blend.color.src_factor, BlendFactor::OneMinusDst);
+    assert_eq!(blend.color.dst_factor, BlendFactor::OneMinusSrc);
+}
+
 /// Builds a large immutable HUD in the no-op renderer.
 fn retained_world() -> World {
     let mut world = ordered_command_tests::binding_world();

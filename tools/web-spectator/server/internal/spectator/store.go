@@ -59,7 +59,7 @@ func (s *Store) Accept(subject string, data []byte, now time.Time) error {
 		if final := closed.FinalFrame; final != nil && (closed.Reason != "finished" || final.ID != closed.ID || !validFrame(*final, now)) {
 			return errors.New("invalid replay terminal frame")
 		}
-		s.Close(closed.ID, now)
+		s.closeWithInfo(closed.ID, now, CloseInfo{Reason: closed.Reason, FinalFrame: closed.FinalFrame})
 		return nil
 	default:
 		return errors.New("unknown spectator subject")
@@ -141,6 +141,10 @@ func (s *Store) WithList(now time.Time, write func([]Frame) error) error {
 }
 
 func (s *Store) Close(id string, now time.Time) {
+	s.closeWithInfo(id, now, CloseInfo{Reason: "unknown"})
+}
+
+func (s *Store) closeWithInfo(id string, now time.Time, info CloseInfo) {
 	s.mu.Lock()
 	live := s.matches[id]
 	delete(s.matches, id)
@@ -158,7 +162,7 @@ func (s *Store) Close(id string, now time.Time) {
 	}
 	s.mu.Unlock()
 	if live != nil {
-		live.close()
+		live.close(info)
 	}
 }
 
@@ -201,7 +205,7 @@ func (s *Store) expire(id string, match *Live, now time.Time) {
 	if match.active && fresh(match.frame.UpdatedAt, now) {
 		return
 	}
-	match.deactivate()
+	match.deactivate(CloseInfo{Reason: "stale"})
 	delete(s.matches, id)
 	s.discardSkins(id)
 	// Expiry is temporary unavailability, not revoked consent: a new fresh frame

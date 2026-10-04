@@ -160,7 +160,7 @@ func (h *Handler) assetsRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.URL.Path == "/api/spectator/assets" || r.URL.Path == "/api/spectator/assets/manifest-v10" {
-		w.Header().Set("Cache-Control", "public, max-age=300")
+		w.Header().Set("Cache-Control", "private, no-store")
 		manifest := h.assets.manifest
 		if r.URL.Path == "/api/spectator/assets" {
 			// Preserve the shipped renderer's strict eight-carrier contract while
@@ -195,17 +195,13 @@ func (h *Handler) assetsRoute(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(60 * time.Second))
-	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-	w.Header().Set("ETag", `"`+asset.record.SHA256+`"`)
 	w.Header().Set("Vary", "Accept-Encoding")
 	if asset.compressed != nil && r.Header.Get("Range") == "" && acceptsGzip(r.Header.Get("Accept-Encoding")) {
 		w.Header().Set("Content-Encoding", "gzip")
-		w.Header().Set("ETag", `"`+asset.record.SHA256+`-gzip"`)
-		http.ServeContent(w, r, asset.record.File, time.Time{}, io.NewSectionReader(asset.compressed, 0, asset.compressedSize))
+		serveVerifiedFile(w, r, asset.record.File, "application/octet-stream", `"`+asset.record.SHA256+`-gzip"`, io.NewSectionReader(asset.compressed, 0, asset.compressedSize))
 		return
 	}
-	http.ServeContent(w, r, asset.record.File, time.Time{}, io.NewSectionReader(asset.file, 0, asset.record.Size))
+	serveVerifiedFile(w, r, asset.record.File, "application/octet-stream", `"`+asset.record.SHA256+`"`, io.NewSectionReader(asset.file, 0, asset.record.Size))
 }
 
 func acceptsGzip(value string) bool {
