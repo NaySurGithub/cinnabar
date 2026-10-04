@@ -23,6 +23,10 @@ const PACK_ENV: &str = "CINNABAR_FORM_PACK_DIR";
 #[path = "pack_harness/declared_paths_tests.rs"]
 mod declared_paths_tests;
 
+#[cfg(test)]
+#[path = "pack_harness/selector_layout_tests.rs"]
+mod selector_layout_tests;
+
 /// Resolves the installed placeholder text used by the input harness.
 pub fn menu_translation(runtime: &UiRuntime, key: &str) -> Option<Arc<str>> {
     runtime.translation(key)
@@ -273,7 +277,7 @@ pub fn engine_presentation() -> Option<UiPresentationRuntime> {
 
 /// Retained nodes from the last published menu frame, including clipping and text.
 pub fn menu_nodes(presentation: &UiPresentationRuntime) -> &[UiNode] {
-    &presentation.last_menu.as_ref().expect("menu frame").nodes
+    &presentation.last_frame.as_ref().expect("menu frame").nodes
 }
 
 /// Every text node with its bounds and its clip parent's bounds, for diagnosis.
