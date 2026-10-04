@@ -103,8 +103,12 @@ pub const MAX_NETWORK_BLOCKS: usize = 1024;
 /// Bytes of block data one callback's network holds, summed over its members; the adapter's
 /// flood stops before a member that would pass it and marks the network truncated.
 pub const MAX_NETWORK_DATA_BYTES: usize = 524_288;
-/// Encoded JSON bytes per IPC frame, excluding the 4-byte length prefix. A callback request
-/// carries a network, so it is room for the network's data as hex and its cells.
+/// Encoded JSON bytes per IPC frame, excluding the 4-byte length prefix. The frame crosses a
+/// local pipe between the adapter and the runtime, and a callback request carries a network and
+/// an inventory: at the network bounds a request measured 2.37 MB, and an inventory whose every
+/// slot holds MAX_ITEM_DATA_BYTES adds about 0.6 MB, 2.98 MB in all, which the Go adapter's
+/// TestNetworkAtItsBoundsFitsAFrame pins. Truncating real AE2 networks at a smaller frame would
+/// be worse.
 pub const MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
 
 // Hex doubles staged data, which may fill at most half of a result frame; the other half is
