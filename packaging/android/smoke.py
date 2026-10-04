@@ -20,8 +20,8 @@ PORT = 5554
 SERVER_NAME = 'Smoke target'
 
 
-def text_target(tsv, label):
-    """Return the centre of an observed OCR label only when its location is unique."""
+def text_target(tsv, label, placement='unique', width=None):
+    """Locate observed text; OreUI's saved row is left and its hero Play is right."""
     lines = {}
     for word in csv.DictReader(io.StringIO(tsv), delimiter='\t'):
         if not word.get('text', '').strip() or float(word['conf']) < 50:
@@ -40,6 +40,13 @@ def text_target(tsv, label):
             right = max(int(word['left']) + int(word['width']) for word in selected)
             bottom = max(int(word['top']) + int(word['height']) for word in selected)
             matches.append(((left + right) // 2, (top + bottom) // 2))
+    if placement != 'unique':
+        matches = [point for point in matches
+                   if (point[0] < width / 2) == (placement == 'left')]
+        if matches:
+            edge = min if placement == 'left' else max
+            wanted_x = edge(point[0] for point in matches)
+            matches = [point for point in matches if point[0] == wanted_x]
     return matches[0] if len(matches) == 1 else None
 
 
@@ -186,7 +193,7 @@ class Smoke:
     def prepare(self):
         accepted = False
         previous = None
-        reserve = 240 if self.args.server else 90
+        reserve = 390 if self.args.server else 90
         while time.monotonic() < self.deadline - reserve:
             self.faults()
             try:
@@ -231,16 +238,24 @@ class Smoke:
             time.sleep(3)
         raise RuntimeError('NativeActivity was not reached within the preparation deadline')
 
-    def click_text(self, label, index):
-        end = min(self.deadline - 30, time.monotonic() + 30)
+    def click_text(self, label, index, placement='unique'):
+        end = min(self.deadline - 30, time.monotonic() + 60)
+        ocr_env = dict(os.environ, OMP_THREAD_LIMIT='1')
         while time.monotonic() < end:
             self.faults()
             frame = self.frame(f'join-{index}')
-            observed = subprocess.run(['tesseract', str(frame), 'stdout', '--psm', '11', 'tsv'],
-                                      timeout=12, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            try:
+                observed = subprocess.run(['tesseract', str(frame), 'stdout', '--psm', '11', 'tsv'],
+                                          timeout=min(30, max(1, end - time.monotonic())),
+                                          env=ocr_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            except subprocess.TimeoutExpired:
+                print(f'OCR timed out for {label!r}; retrying within its bounded deadline', flush=True)
+                continue
+            (self.output / f'join-{index}-ocr.txt').write_bytes(observed.stderr)
             tsv = observed.stdout.decode(errors='replace')
             (self.output / f'join-{index}.tsv').write_text(tsv)
-            point = text_target(tsv, label)
+            width = int.from_bytes(frame.read_bytes()[16:20], 'big')
+            point = text_target(tsv, label, placement, width)
             if point:
                 print(f'Click observed label {label!r} at {point}', flush=True)
                 self.result.setdefault('taps', []).append({'label': label, 'x': point[0], 'y': point[1]})
@@ -248,7 +263,7 @@ class Smoke:
                 time.sleep(3)
                 return
             time.sleep(3)
-        raise RuntimeError(f'Could not locate unique observed UI label {label!r}; join not attempted')
+        raise RuntimeError(f'Could not locate observed UI label {label!r} ({placement}); join not attempted')
 
     def observe(self):
         end = min(self.deadline - 30, time.monotonic() + 20)
@@ -259,8 +274,10 @@ class Smoke:
         if not self.args.server:
             self.result['outcome'] = 'native_startup_observed'
             return
-        for index, label in enumerate(('Browse servers', 'Favorites', SERVER_NAME)):
-            self.click_text(label, index)
+        # The active start screen opens OreUI. A saved row selects details; hero Play joins.
+        for index, (label, placement) in enumerate((('Play', 'unique'), ('Servers', 'unique'),
+                                                   (SERVER_NAME, 'left'), ('Play', 'right'))):
+            self.click_text(label, index, placement)
         self.result['join_attempted'] = True
         end = min(self.deadline - 20, time.monotonic() + 90)
         while time.monotonic() < end:
