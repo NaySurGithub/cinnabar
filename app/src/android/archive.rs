@@ -21,12 +21,6 @@ pub(crate) struct Limits {
     archive_bytes: u64,
 }
 
-impl Limits {
-    pub(crate) fn file_bytes(&self) -> u64 {
-        self.file_bytes
-    }
-}
-
 pub(crate) fn extract(archive: &Path, destination: &Path, cancel: &AtomicBool) -> Result<()> {
     let limits = &super::runtime().archive_limits;
     if fs::metadata(archive)?.len() > limits.archive_bytes {
