@@ -1,53 +1,88 @@
-package cinnabar:extension@0.1.0;
+// Player mods' contract. 0.2 keeps 0.1's interfaces (`0.1/extension.wit`, frozen) and adds
+// screens beside the vanilla container screens, the session's items and recipes, declared keys
+// and event callbacks. The host still runs a component built against 0.1.
+package cinnabar:extension@0.2.0;
 
-/// A retained, plain-text label drawn by the host's JSON-UI engine.
-interface hud {
-    /// Replaces this mod's label. Empty text removes it; invalid text is rejected.
-    set-label: func(text: string) -> result<_, string>;
-}
+/// The mod's JSON-UI templates beside the vanilla container screens. Templates are the
+/// `ui/<name>.json` files `mod.toml` indexes, in the mod's own namespace; they resolve only
+/// against the vanilla catalog, as a client part's modal templates do. Every function but
+/// `layout` errs when the `screen` permission is denied.
+interface screen {
+    use cinnabar:server-experience/ui@1.2.0.{value, gui-size};
 
-/// A single local demo action, delivered only while gameplay owns input.
-interface input {
-    /// True only for the current frame's host-assigned action edge.
-    demo-pressed: func() -> bool;
-}
-
-/// Local presentation only; no world mutation or outbound packets.
-interface environment {
-    /// Fixes visual time to 0–23999 ticks; none restores the tracked server clock.
-    set-time-override: func(ticks: option<u32>) -> result<_, string>;
-}
-
-/// Explicit local gameplay capabilities; no world mutation or packet access.
-interface gameplay {
-    record vector3 { x: f32, y: f32, z: f32 }
-    /// Remote player feet in world coordinates, without names or network access.
-    record player { runtime-id: u64, position: vector3 }
-    /// Current input-owned frame only. Angles are actor YXZ radians: yaw left, pitch up.
-    record snapshot {
-        session: u64,
-        dimension: s32,
-        eye: vector3,
-        yaw: f32,
-        pitch: f32,
-        attack-held: bool,
-        frame-seconds: f32,
-        players: list<player>,
+    /// A rectangle in GUI units, from the top left of the screen root.
+    record rect {
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
     }
-    /// Requires the explicit players grant; none means gameplay does not own input.
-    read-frame: func() -> result<option<snapshot>, string>;
-    /// Requires the camera grant and a current frame; commits only after frame returns.
-    rotate: func(yaw-delta: f32, pitch-delta: f32) -> result<_, string>;
+
+    /// The open container screen as laid out for this frame.
+    record screen-layout {
+        /// The vanilla JSON-UI screen drawn, such as `crafting.inventory_screen`.
+        screen: string,
+        /// The root's size in GUI units and the GUI scale, as `ui.modal-size` reports them.
+        size: gui-size,
+        /// The union of the vanilla screen's laid-out panels, an open recipe book included.
+        gui: rect,
+        /// Other vanilla areas outside `gui` that the overlay may not draw on: the recipe book's
+        /// tabs, the status effects and toasts.
+        exclusions: list<rect>,
+    }
+
+    /// The open container screen's layout; none while no container screen is up.
+    layout: func() -> option<screen-layout>;
+    /// Draws `template` beside every container screen, laid out over the whole root but drawn
+    /// and hit only outside `gui` and the exclusions; none removes it.
+    set-overlay: func(template: option<string>) -> result<_, string>;
+    /// Draws `template` over the open container screen, which stays open and is hidden while
+    /// the view is up; none, Escape or closing the container returns. Errs while no container
+    /// screen is up.
+    open-view: func(template: option<string>) -> result<_, string>;
+    /// Replaces a collection's rows, as client WIT 1.2's `ui.set-collection`.
+    set-collection: func(name: string, rows-json: list<u8>) -> result<_, string>;
+    /// Binds one `#binding` name for the overlay and the view, as `ui.set-value`.
+    set-value: func(name: string, value: value) -> result<_, string>;
+    /// Sets the text of edit boxes named `control`, as `ui.set-text`.
+    set-text: func(control: string, text: string) -> result<_, string>;
+    /// Selects the drawn edit box named `control`, as a press on it would.
+    focus-text: func(control: string) -> result<_, string>;
 }
 
 /// Experimental developer contract; no WASI or ambient operating-system access.
-world extension {
-    import hud;
-    import input;
-    import environment;
-    import gameplay;
+world player-mod {
+    import cinnabar:extension/hud@0.1.0;
+    import cinnabar:extension/input@0.1.0;
+    import cinnabar:extension/environment@0.1.0;
+    import cinnabar:extension/gameplay@0.1.0;
+    import screen;
+    import cinnabar:session/items@0.1.0;
+    import cinnabar:session/recipes@0.1.0;
+
+    use screen.{screen-layout};
+    use cinnabar:session/items@0.1.0.{stack};
+
     /// Creates the initial retained UI state.
     export init: func();
-    /// Bounded frame callback used to measure the spike's crossing cost.
+    /// Every frame, with a small fuel budget; a mod that needs nothing per frame returns.
     export frame: func();
+    /// A container screen opened, closed (`none`) or was laid out anew.
+    export screen-changed: func(layout: option<screen-layout>);
+    /// A primary press on an overlay or view control mapped to a declared action; the index is
+    /// the control's row in its nearest collection.
+    export action: func(id: string, collection-index: option<u32>);
+    /// A secondary press (a right click) on a control that maps `button.menu_secondary_select`
+    /// to a declared action.
+    export secondary-action: func(id: string, collection-index: option<u32>);
+    /// Wheel `delta` notches (positive scrolls down) with the pointer at `x`, `y` in GUI units,
+    /// over the overlay's drawn area or the view.
+    export scrolled: func(delta: f64, x: f64, y: f64);
+    /// The text of the edit box named `control`, a declared action, changed.
+    export text-changed: func(control: string, text: string);
+    /// A declared key was pressed while a container screen or the view was up and no edit box
+    /// had focus; `hovered` is the vanilla slot's stack under the pointer.
+    export key: func(id: string, hovered: option<stack>);
+    /// The session's items or recipes changed revision.
+    export data-changed: func();
 }
