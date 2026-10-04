@@ -129,8 +129,9 @@ fn interact(ctx: &Callback, player: &str, p: BlockPos) -> Result<(), GuestError>
                 std::hint::black_box(&mut hoard);
             }
         }
+        // More calls than any host call cap.
         4 => {
-            for _ in 0..300 {
+            for _ in 0..=u16::MAX {
                 let _ = ctx.get_block(p);
             }
         }

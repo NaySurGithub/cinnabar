@@ -59,8 +59,10 @@ pub const MAX_CONDITION_TESTS: usize = 64;
 pub const MAX_FLIPBOOK_FRAMES: usize = 256;
 /// Size of one geometry file.
 pub const MAX_GEOMETRY_BYTES: usize = 1024 * 1024;
-/// Host calls per callback; logs are counted separately.
-pub const MAX_HOST_CALLS: usize = 256;
+/// Host calls per callback; logs are counted separately. A callback on a network reads every
+/// member, its id and then its states or data, and writes some of them, so the cap leaves room
+/// for that at the network bounds.
+pub const MAX_HOST_CALLS: usize = 4096;
 /// Staged ops per callback. Rewriting a block's data replaces its staged op instead of adding
 /// one.
 pub const MAX_STAGED_OPS: usize = 64;
@@ -124,3 +126,5 @@ const _: () = assert!(
     2 * (MAX_STAGED_DATA_BYTES + MAX_STAGED_OPS * MAX_ITEM_DATA_BYTES) <= MAX_FRAME_BYTES / 2
 );
 const _: () = assert!(2 * INVENTORY_SLOTS * MAX_ITEM_DATA_BYTES <= MAX_FRAME_BYTES / 4);
+// A network-wide read: each member's id and its states or data, then the staged writes.
+const _: () = assert!(2 * MAX_NETWORK_BLOCKS + MAX_STAGED_OPS <= MAX_HOST_CALLS);
