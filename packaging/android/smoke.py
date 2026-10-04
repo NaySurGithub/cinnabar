@@ -20,6 +20,17 @@ PORT = 5554
 SERVER_NAME = 'Smoke target'
 
 
+def observed_home_play(value):
+    if not value:
+        return None
+    match = re.fullmatch(r'(\d+),(\d+)@(\d+)x(\d+)', value)
+    if match:
+        x, y, width, height = map(int, match.groups())
+        if 0 <= x < width and 0 <= y < height:
+            return x, y, width, height
+    raise argparse.ArgumentTypeError('observed home Play must be x,y@WIDTHxHEIGHT within that frame')
+
+
 def text_target(tsv, label, placement='unique', width=None):
     """Locate observed text; OreUI's saved row is left and its hero Play is right."""
     lines = {}
@@ -244,6 +255,8 @@ class Smoke:
         while time.monotonic() < end:
             self.faults()
             frame = self.frame(f'join-{index}')
+            # Give OCR the capped CPUs while the captured guest frame stays unchanged.
+            self.adb('emu', 'avd', 'stop')
             try:
                 observed = subprocess.run(['tesseract', str(frame), 'stdout', '--psm', '11', 'tsv'],
                                           timeout=min(30, max(1, end - time.monotonic())),
@@ -251,6 +264,8 @@ class Smoke:
             except subprocess.TimeoutExpired:
                 print(f'OCR timed out for {label!r}; retrying within its bounded deadline', flush=True)
                 continue
+            finally:
+                self.adb('emu', 'avd', 'start')
             (self.output / f'join-{index}-ocr.txt').write_bytes(observed.stderr)
             tsv = observed.stdout.decode(errors='replace')
             (self.output / f'join-{index}.tsv').write_text(tsv)
@@ -265,6 +280,18 @@ class Smoke:
             time.sleep(3)
         raise RuntimeError(f'Could not locate observed UI label {label!r} ({placement}); join not attempted')
 
+    def click_observed_home(self):
+        x, y, width, height = self.args.home_play
+        frame = self.frame('join-0').read_bytes()
+        actual = (int.from_bytes(frame[16:20], 'big'), int.from_bytes(frame[20:24], 'big'))
+        if actual != (width, height):
+            raise RuntimeError(f'Observed home Play frame size {(width, height)} differs from {actual}')
+        self.result.setdefault('taps', []).append({'label': 'Play', 'x': x, 'y': y,
+                                                 'source': 'observed_input', 'frame_size': [width, height]})
+        print(f'Click supplied observed home Play at {(x, y)} in {actual}', flush=True)
+        self.adb('shell', 'input', 'tap', str(x), str(y))
+        time.sleep(3)
+
     def observe(self):
         end = min(self.deadline - 30, time.monotonic() + 20)
         while time.monotonic() < end:
@@ -275,8 +302,12 @@ class Smoke:
             self.result['outcome'] = 'native_startup_observed'
             return
         # The active start screen opens OreUI. A saved row selects details; hero Play joins.
-        for index, (label, placement) in enumerate((('Play', 'unique'), ('Servers', 'unique'),
-                                                   (SERVER_NAME, 'left'), ('Play', 'right'))):
+        if self.args.home_play is not None:
+            self.click_observed_home()
+        else:
+            self.click_text('Play', 0)
+        for index, (label, placement) in enumerate((('Servers', 'unique'),
+                                                   (SERVER_NAME, 'left'), ('Play', 'right')), start=1):
             self.click_text(label, index, placement)
         self.result['join_attempted'] = True
         end = min(self.deadline - 20, time.monotonic() + 90)
@@ -350,6 +381,8 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--avd', required=True)
     parser.add_argument('--server', default='')
+    parser.add_argument('--home-play', type=observed_home_play, default='',
+                        help='optional observed home Play tap x,y@WIDTHxHEIGHT; size checked before tapping')
     parser.add_argument('--seconds', type=int, default=1200)
     args = parser.parse_args()
     if not 120 <= args.seconds <= 1200:

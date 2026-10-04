@@ -9,6 +9,9 @@ on:
       server:
         default: ''
         type: string
+      home_play:
+        default: ''
+        type: string
 
 permissions:
   actions: read
@@ -65,6 +68,7 @@ jobs:
       - name: Run the existing APK and capture runtime evidence
         env:
           SMOKE_SERVER: ${{ inputs.server }}
+          SMOKE_HOME_PLAY: ${{ inputs.home_play }}
         run: |
           sudo systemd-run --wait --collect --pipe \
             --property=MemoryMax=7G --property=MemorySwapMax=0 --property=CPUQuota=200% \
@@ -74,7 +78,7 @@ jobs:
             --setenv=ANDROID_AVD_HOME="$ANDROID_AVD_HOME" \
             python3 packaging/android/smoke.py --avd cinnabar-smoke \
               --apk-dir "$RUNNER_TEMP/cinnabar-smoke-apk" --output "$SMOKE_OUTPUT" \
-              --server "$SMOKE_SERVER" --seconds 1200
+              --server "$SMOKE_SERVER" --home-play "$SMOKE_HOME_PLAY" --seconds 1200
       - name: Upload frames, logs and crash reports
         if: always()
         uses: actions/upload-artifact@v4
