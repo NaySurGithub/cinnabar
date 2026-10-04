@@ -2,6 +2,8 @@
 
 pub mod helper;
 #[cfg(feature = "execution")]
+pub mod package;
+#[cfg(feature = "execution")]
 mod runtime;
 #[cfg(feature = "execution")]
 pub mod server;
@@ -22,13 +24,18 @@ pub struct CameraDelta {
 }
 #[cfg(feature = "execution")]
 use {
-    anyhow::{Context, Result, ensure},
-    runtime::Instance,
+    anyhow::{Context, Result},
+    experience_sdk::mod_manifest::{KeyDecl, ModManifest, ModPermission},
+    package::{Package, read_bounded},
+    runtime::{Declared, Instance},
+    server_experience::{
+        screen::{self, ScreenLayout},
+        session_data::{SessionData, Stack},
+    },
     sha2::{Digest, Sha256},
     std::{
-        fs::File,
-        io::Read,
         path::{Path, PathBuf},
+        sync::Arc,
     },
     wasmtime::{Config, Engine},
 };
@@ -52,6 +59,102 @@ pub struct ModGrants {
     pub players: bool,
     /// Allows bounded, transactional local camera rotation.
     pub camera: bool,
+    /// Allows the overlay and view beside the container screens.
+    pub screen: bool,
+    /// Allows reading the session's items.
+    pub items: bool,
+    /// Allows reading the session's recipes.
+    pub recipes: bool,
+    /// Allows delivering the package's declared keys.
+    pub keys: bool,
+}
+
+#[cfg(feature = "execution")]
+impl ModGrants {
+    /// The developer profile: what a package's manifest asks for, except `inventory`, which no
+    /// import carries yet.
+    pub fn from_manifest(manifest: &ModManifest) -> Self {
+        let asks = |permission| manifest.permissions.contains(&permission);
+        Self {
+            screen: asks(ModPermission::Screen),
+            items: asks(ModPermission::Items),
+            recipes: asks(ModPermission::Recipes),
+            keys: asks(ModPermission::Keys),
+            ..Self::default()
+        }
+    }
+}
+
+/// One host event for a 0.2 mod's callbacks.
+#[cfg(feature = "execution")]
+#[derive(Clone, Debug, PartialEq)]
+pub enum ModEvent {
+    ScreenChanged(Option<ScreenLayout>),
+    Action { id: String, index: Option<u32> },
+    SecondaryAction { id: String, index: Option<u32> },
+    Scrolled { delta: f64, x: f64, y: f64 },
+    TextChanged { control: String, text: String },
+    Key { id: String, hovered: Option<Stack> },
+    DataChanged,
+}
+
+#[cfg(feature = "execution")]
+impl ModEvent {
+    /// One frame's events as delivered: the latest layout first, one data change, then the rest
+    /// in order, with one text change per edit box (its latest, where it last occurred).
+    pub fn coalesce(events: Vec<Self>) -> Vec<Self> {
+        let mut out = Vec::with_capacity(events.len());
+        if let Some(layout) = events
+            .iter()
+            .rev()
+            .find(|event| matches!(event, Self::ScreenChanged(_)))
+        {
+            out.push(layout.clone());
+        }
+        if events.contains(&Self::DataChanged) {
+            out.push(Self::DataChanged);
+        }
+        for (index, event) in events.iter().enumerate() {
+            let later_text = |control: &str| {
+                events[index + 1..].iter().any(|later| {
+                    matches!(later, Self::TextChanged { control: other, .. } if other == control)
+                })
+            };
+            match event {
+                Self::ScreenChanged(_) | Self::DataChanged => {}
+                Self::TextChanged { control, .. } if later_text(control) => {}
+                event => out.push(event.clone()),
+            }
+        }
+        out
+    }
+}
+
+/// What a mod draws beside the container screens: its overlay and view templates and the data
+/// bound into both.
+#[cfg(feature = "execution")]
+#[derive(Clone, Debug, Default)]
+pub struct ModScreens {
+    pub overlay: Option<String>,
+    pub view: Option<String>,
+    /// The last `focus-text` request, with the data revision it was made at.
+    pub focus: Option<(u64, String)>,
+    pub data: screen::Modal,
+}
+
+/// Where a mod came from, which reload reads again.
+#[cfg(feature = "execution")]
+enum Source {
+    Component(PathBuf),
+    Package(PathBuf),
+}
+
+/// A loaded package's declarations and screen files.
+#[cfg(feature = "execution")]
+pub struct LoadedPackage {
+    pub id: String,
+    pub keys: Vec<KeyDecl>,
+    pub files: Arc<screen::Files>,
 }
 
 /// A developer-selected component with transactional reload and trap quarantine.
@@ -59,9 +162,12 @@ pub struct ModGrants {
 pub struct ModHost {
     engine: Engine,
     instance: Instance,
-    path: PathBuf,
+    source: Source,
     attempted: [u8; 32],
     grants: ModGrants,
+    package: Option<LoadedPackage>,
+    layout: Option<ScreenLayout>,
+    session: Arc<SessionData>,
 }
 
 #[cfg(feature = "execution")]
@@ -74,17 +180,36 @@ impl ModHost {
     /// Loads a component with the developer's explicit per-mod capability grants.
     pub fn load_with_grants(path: &Path, grants: ModGrants) -> Result<Self> {
         let bytes = read_component(path)?;
-        let mut config = Config::new();
-        config.wasm_component_model(true).consume_fuel(true);
-        config.max_wasm_stack(256 * 1024);
-        let engine = Engine::new(&config)?;
-        let instance = Instance::new(&engine, &bytes, grants)?;
+        let engine = engine()?;
+        let instance = Instance::new(&engine, &bytes, grants, Declared::default())?;
         Ok(Self {
             engine,
             instance,
-            path: path.to_owned(),
+            source: Source::Component(path.to_owned()),
             attempted: Sha256::digest(&bytes).into(),
             grants,
+            package: None,
+            layout: None,
+            session: Arc::default(),
+        })
+    }
+
+    /// Loads the package at `dir` with `grants` added to what its manifest asks for, as the
+    /// developer profile allows.
+    pub fn load_package(dir: &Path, extra: ModGrants) -> Result<Self> {
+        let package = Package::read(dir)?;
+        let grants = grant(&package.manifest, extra);
+        let engine = engine()?;
+        let instance = Instance::new(&engine, &package.component, grants, declared(&package))?;
+        Ok(Self {
+            engine,
+            instance,
+            source: Source::Package(dir.to_owned()),
+            attempted: package.digest,
+            grants,
+            package: Some(loaded(package)),
+            layout: None,
+            session: Arc::default(),
         })
     }
 
@@ -102,6 +227,38 @@ impl ModHost {
         self.instance.frame(pressed, snapshot)
     }
 
+    /// Delivers one frame's events, coalesced, each with its own `CALLBACK_FUEL`. A layout
+    /// event also sets what `screen.layout` returns. Stops at the first failure: an undeclared
+    /// event is refused, and a trap quarantines the guest.
+    pub fn dispatch(&mut self, events: Vec<ModEvent>) -> Result<()> {
+        for event in ModEvent::coalesce(events) {
+            if let ModEvent::ScreenChanged(layout) = &event {
+                self.layout.clone_from(layout);
+                self.instance.set_layout(layout.clone());
+            }
+            self.instance.dispatch(&event)?;
+        }
+        Ok(())
+    }
+
+    /// The session's items and recipes the guest reads from now on; a changed revision
+    /// delivers `data-changed`.
+    pub fn set_session(&mut self, session: Arc<SessionData>) -> Result<()> {
+        let changed = session.item_revision != self.session.item_revision
+            || session.recipe_revision != self.session.recipe_revision;
+        self.session = Arc::clone(&session);
+        self.instance.set_session(session);
+        if changed {
+            return self.dispatch(vec![ModEvent::DataChanged]);
+        }
+        Ok(())
+    }
+
+    /// Closes the view without entering the guest, as Escape does over it.
+    pub fn close_view(&mut self) {
+        self.instance.close_view();
+    }
+
     /// Consumes the last successful frame's rotation once, without entering the guest.
     pub fn take_camera_delta(&mut self) -> Option<CameraDelta> {
         self.instance.take_camera_delta()
@@ -117,39 +274,109 @@ impl ModHost {
         self.instance.time_override()
     }
 
+    /// The committed overlay, view and bound data; empty after a trap.
+    pub fn screens(&self) -> &ModScreens {
+        self.instance.screens()
+    }
+
+    /// The loaded package, when the mod came from one.
+    pub fn package(&self) -> Option<&LoadedPackage> {
+        self.package.as_ref()
+    }
+
+    /// Whether the component exports 0.2's event callbacks.
+    pub fn has_events(&self) -> bool {
+        self.instance.has_events()
+    }
+
     /// Whether this guest can still receive callbacks.
     pub fn is_active(&self) -> bool {
         self.instance.active
     }
 
-    /// Replaces an instance only after changed bytes compile and initialize.
+    /// Replaces an instance only after changed bytes compile and initialize. The new instance
+    /// gets the current layout and session, and `screen-changed` and `data-changed` when it has
+    /// events.
     pub fn reload_if_changed(&mut self) -> Result<bool> {
-        let bytes = read_component(&self.path)?;
-        let digest = Sha256::digest(&bytes).into();
+        let (bytes, digest, package) = match &self.source {
+            Source::Component(path) => {
+                let bytes = read_component(path)?;
+                let digest = Sha256::digest(&bytes).into();
+                (bytes, digest, None)
+            }
+            Source::Package(dir) => {
+                let package = Package::read(dir)?;
+                (Vec::new(), package.digest, Some(package))
+            }
+        };
         if self.attempted == digest {
             return Ok(false);
         }
         self.attempted = digest;
-        let candidate = Instance::new(&self.engine, &bytes, self.grants)
+        let (bytes, declared) = match &package {
+            Some(package) => (&package.component, declared(package)),
+            None => (&bytes, Declared::default()),
+        };
+        let mut candidate = Instance::new(&self.engine, bytes, self.grants, declared)
             .context("reload rejected; previous mod retained")?;
+        candidate.set_session(Arc::clone(&self.session));
         self.instance = candidate;
+        if let Some(package) = package {
+            self.package = Some(loaded(package));
+        }
+        if self.instance.has_events() {
+            let layout = ModEvent::ScreenChanged(self.layout.clone());
+            self.dispatch(vec![layout, ModEvent::DataChanged])?;
+        }
         Ok(true)
+    }
+}
+
+#[cfg(feature = "execution")]
+fn engine() -> Result<Engine> {
+    let mut config = Config::new();
+    config.wasm_component_model(true).consume_fuel(true);
+    config.max_wasm_stack(256 * 1024);
+    Engine::new(&config)
+}
+
+#[cfg(feature = "execution")]
+fn grant(manifest: &ModManifest, extra: ModGrants) -> ModGrants {
+    let asked = ModGrants::from_manifest(manifest);
+    ModGrants {
+        screen: asked.screen,
+        items: asked.items,
+        recipes: asked.recipes,
+        keys: asked.keys,
+        ..extra
+    }
+}
+
+#[cfg(feature = "execution")]
+fn declared(package: &Package) -> Declared {
+    let manifest = &package.manifest;
+    Declared {
+        templates: manifest.templates.iter().cloned().collect(),
+        actions: manifest.actions.iter().cloned().collect(),
+        keys: manifest.keys.iter().map(|key| key.id.clone()).collect(),
+    }
+}
+
+#[cfg(feature = "execution")]
+fn loaded(package: Package) -> LoadedPackage {
+    LoadedPackage {
+        id: package.manifest.id.clone(),
+        keys: package.manifest.keys,
+        files: package.files,
     }
 }
 
 /// Bounds file reads even if a writer grows the file between metadata and read.
 #[cfg(feature = "execution")]
 fn read_component(path: &Path) -> Result<Vec<u8>> {
-    let mut bytes = Vec::new();
-    File::open(path)
-        .with_context(|| format!("open mod {}", path.display()))?
-        .take((MAX_COMPONENT_BYTES + 1) as u64)
-        .read_to_end(&mut bytes)?;
-    ensure!(
-        bytes.len() <= MAX_COMPONENT_BYTES,
-        "component exceeds byte limit"
-    );
-    Ok(bytes)
+    read_bounded(path, MAX_COMPONENT_BYTES)
+        .with_context(|| format!("open mod {}", path.display()))
+        .context("component exceeds byte limit or cannot be read")
 }
 
 #[cfg(all(test, feature = "execution"))]

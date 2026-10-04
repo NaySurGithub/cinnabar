@@ -1,17 +1,32 @@
-use crate::{CameraDelta, FRAME_FUEL, GameplaySnapshot, MAX_LABEL_BYTES, MEMORY_BYTES, ModGrants};
+use crate::{
+    CameraDelta, FRAME_FUEL, GameplaySnapshot, MAX_LABEL_BYTES, MEMORY_BYTES, ModEvent, ModGrants,
+    ModScreens,
+};
 use anyhow::{Result, bail};
+use server_experience::{runtime::CALLBACK_FUEL, screen::ScreenLayout, session_data::SessionData};
+use std::{collections::BTreeSet, sync::Arc};
 use wasmtime::{
     Engine, Store, StoreLimits, StoreLimitsBuilder,
     component::{Component, HasSelf, Linker},
 };
 
 wasmtime::component::bindgen!({
-    path: "../mod-api/wit", world: "extension", imports: { default: trappable },
+    path: "../mod-api/wit/0.1", world: "extension", imports: { default: trappable },
 });
 
 const MAX_IMPORT_WRITES: u32 = 8;
+mod exports;
 #[path = "gameplay.rs"]
 mod gameplay;
+mod v0_2;
+
+/// What a package declares that the host checks guest output and events against.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Declared {
+    pub(crate) templates: BTreeSet<String>,
+    pub(crate) actions: BTreeSet<String>,
+    pub(crate) keys: BTreeSet<String>,
+}
 
 struct State {
     limits: StoreLimits,
@@ -28,6 +43,15 @@ struct State {
     camera_writes: u32,
     pending_camera: Option<CameraDelta>,
     camera_delta: Option<CameraDelta>,
+    declared: Declared,
+    layout: Option<ScreenLayout>,
+    session: Arc<SessionData>,
+    screens: ModScreens,
+    /// This callback's screen output, applied to a copy of `screens`; committed on return.
+    pending_screens: Option<ModScreens>,
+    /// Host calls and screen output bytes of the running callback.
+    calls: usize,
+    output: usize,
 }
 
 impl cinnabar::extension::hud::Host for State {
@@ -72,16 +96,23 @@ impl cinnabar::extension::input::Host for State {
 
 pub(super) struct Instance {
     store: Store<State>,
-    guest: Extension,
+    exports: exports::Exports,
     pub(super) active: bool,
 }
 
 impl Instance {
-    /// Initializes a candidate store without changing the published instance.
-    pub(super) fn new(engine: &Engine, bytes: &[u8], grants: ModGrants) -> Result<Self> {
+    /// Initializes a candidate store without changing the published instance. Both 0.1 and 0.2
+    /// components link: 0.2's imports include 0.1's unchanged.
+    pub(super) fn new(
+        engine: &Engine,
+        bytes: &[u8],
+        grants: ModGrants,
+        declared: Declared,
+    ) -> Result<Self> {
         let component = Component::new(engine, bytes)?;
         let mut linker = Linker::new(engine);
         Extension::add_to_linker::<_, HasSelf<_>>(&mut linker, |state: &mut State| state)?;
+        v0_2::add_to_linker(&mut linker)?;
         let state = State {
             limits: StoreLimitsBuilder::new()
                 .memory_size(MEMORY_BYTES)
@@ -104,16 +135,25 @@ impl Instance {
             camera_writes: 0,
             pending_camera: None,
             camera_delta: None,
+            declared,
+            layout: None,
+            session: Arc::default(),
+            screens: ModScreens::default(),
+            pending_screens: None,
+            calls: 0,
+            output: 0,
         };
         let mut store = Store::new(engine, state);
         store.limiter(|state| &mut state.limits);
-        store.set_fuel(FRAME_FUEL)?;
-        let guest = Extension::instantiate(&mut store, &component, &linker)?;
-        guest.call_init(&mut store)?;
+        store.set_fuel(CALLBACK_FUEL)?;
+        let instance = linker.instantiate(&mut store, &component)?;
+        let (init, exports) = exports::Exports::find(&mut store, &instance)?;
+        init.call(&mut store, ())?;
+        init.post_return(&mut store)?;
         commit(&mut store);
         Ok(Self {
             store,
-            guest,
+            exports,
             active: true,
         })
     }
@@ -134,25 +174,53 @@ impl Instance {
         gameplay::validate_snapshot(snapshot.as_ref())?;
         let state = self.store.data_mut();
         state.pressed = pressed;
+        state.snapshot = snapshot;
+        let result = self.run(FRAME_FUEL, |exports, store| exports.frame(store));
+        self.store.data_mut().snapshot = None;
+        result
+    }
+
+    /// Delivers one event callback with `CALLBACK_FUEL`. A 0.1 component has no event exports,
+    /// so it receives nothing.
+    pub(super) fn dispatch(&mut self, event: &ModEvent) -> Result<()> {
+        if !self.active || !self.exports.has_events() {
+            return Ok(());
+        }
+        self.store.data().check_event(event)?;
+        self.run(CALLBACK_FUEL, |exports, store| exports.event(store, event))
+    }
+
+    /// Runs one callback with `fuel`; a trap discards its output and quarantines the guest,
+    /// removing everything it presented.
+    fn run(
+        &mut self,
+        fuel: u64,
+        call: impl FnOnce(&exports::Exports, &mut Store<State>) -> Result<()>,
+    ) -> Result<()> {
+        let state = self.store.data_mut();
         state.writes = 0;
         state.environment_writes = 0;
         state.gameplay_reads = 0;
         state.camera_writes = 0;
-        state.snapshot = snapshot;
-        self.store.set_fuel(FRAME_FUEL)?;
-        if let Err(error) = self.guest.call_frame(&mut self.store) {
+        state.calls = 0;
+        state.output = 0;
+        state.pending_screens = None;
+        self.store.set_fuel(fuel)?;
+        if let Err(error) = call(&self.exports, &mut self.store) {
             self.active = false;
-            self.store.data_mut().pending = None;
-            self.store.data_mut().label = None;
-            self.store.data_mut().pending_time = None;
-            self.store.data_mut().time_override = None;
-            self.store.data_mut().snapshot = None;
-            self.store.data_mut().pending_camera = None;
-            self.store.data_mut().camera_delta = None;
+            let state = self.store.data_mut();
+            state.pending = None;
+            state.label = None;
+            state.pending_time = None;
+            state.time_override = None;
+            state.snapshot = None;
+            state.pending_camera = None;
+            state.camera_delta = None;
+            state.pending_screens = None;
+            state.screens = ModScreens::default();
             bail!("mod quarantined after a guest trap: {error:#}");
         }
         commit(&mut self.store);
-        self.store.data_mut().snapshot = None;
         Ok(())
     }
 
@@ -169,6 +237,38 @@ impl Instance {
     pub(super) fn label(&self) -> Option<&str> {
         self.store.data().label.as_deref()
     }
+
+    pub(super) fn screens(&self) -> &ModScreens {
+        &self.store.data().screens
+    }
+
+    /// Whether the component exports 0.2's event callbacks.
+    pub(super) fn has_events(&self) -> bool {
+        self.exports.has_events()
+    }
+
+    /// The open container screen's layout that `screen.layout` returns; none also closes the
+    /// view, as closing the container returns from it.
+    pub(super) fn set_layout(&mut self, layout: Option<ScreenLayout>) {
+        let state = self.store.data_mut();
+        if layout.is_none() && state.screens.view.is_some() {
+            state.screens.view = None;
+            state.screens.data.revision += 1;
+        }
+        state.layout = layout;
+    }
+
+    /// Closes the view without the guest, as Escape does.
+    pub(super) fn close_view(&mut self) {
+        let screens = &mut self.store.data_mut().screens;
+        if screens.view.take().is_some() {
+            screens.data.revision += 1;
+        }
+    }
+
+    pub(super) fn set_session(&mut self, session: Arc<SessionData>) {
+        self.store.data_mut().session = session;
+    }
 }
 
 /// Publishes retained presentation changes after the entire callback succeeds.
@@ -180,5 +280,8 @@ fn commit(store: &mut Store<State>) {
     }
     if let Some(text) = state.pending.take() {
         state.label = (!text.is_empty()).then_some(text);
+    }
+    if let Some(screens) = state.pending_screens.take() {
+        state.screens = screens;
     }
 }

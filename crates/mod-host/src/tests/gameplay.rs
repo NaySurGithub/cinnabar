@@ -1,7 +1,7 @@
 use super::*;
 
 fn source(init: &str, frame: &str) -> String {
-    let package = include_str!("../../../mod-api/wit/extension.wit")
+    let package = include_str!("../../../mod-api/wit/0.1/extension.wit")
         .lines()
         .next()
         .unwrap()

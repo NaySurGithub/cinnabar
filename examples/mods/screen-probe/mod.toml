@@ -1,0 +1,20 @@
+# The host tests' player mod: every extension 0.2 callback, reporting what it saw through bound
+# values. The tests fill [files], because the hashes depend on the build.
+id = "probe"
+version = "0.1.0"
+api = "0.2"
+permissions = ["screen", "items", "recipes", "keys"]
+templates = ["ui/overlay.json", "ui/view.json"]
+actions = ["probe.view", "probe.close", "probe.flood", "probe.search"]
+
+[[keys]]
+id = "probe.show"
+key = "r"
+label = "key.probe.show"
+
+[[keys]]
+id = "probe.trap"
+key = "t"
+label = "key.probe.trap"
+
+[files]

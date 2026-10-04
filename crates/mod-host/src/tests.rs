@@ -1,9 +1,11 @@
 use super::*;
+use std::fs::File;
 mod gameplay;
+mod screens;
 
 /// Builds a tiny component with the same canonical imports as the guest SDK.
 fn fixture(frame: &str, text: &str) -> String {
-    let source = include_str!("../../mod-api/wit/extension.wit");
+    let source = include_str!("../../mod-api/wit/0.1/extension.wit");
     let package = source
         .lines()
         .next()
