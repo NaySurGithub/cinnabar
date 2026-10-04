@@ -230,15 +230,15 @@ func TestBedrockTargetManifestOwnsEveryProductionCarrier(t *testing.T) {
 		}
 	}
 	consumers := map[string][]string{
-		"Makefile":                                    {"assets/bedrock-target.json", target.Artifacts["block_registry"], target.Artifacts["light_registry"], target.Artifacts["biome_registry"], "block-physics-v2193", "vanilla-v2193.mcbea"},
-		"crates/assets/src/pinned_content.rs":         {"block-registry-v2193.bin", "block-light-registry-v2193.bin", "biome-registry-v2193.bin", "bedrock-target.json"},
-		"app/src/install_layout.rs":                   {"launcher::install_layout"},
-		"crates/launcher/src/install_layout.rs":       {"block-physics-v2193.bin", "vanilla-v2193.mcbea"},
-		"tools/dist/src/layout.rs":                    {"block-physics-v2193.bin", "vanilla-v2193.mcbea"},
-		"crates/pack-compiler/src/entity/item.rs":     {"block-registry-v2193.bin", "block-item-routes-v2193.json"},
-		"crates/asset-compiler/src/bin/assetc/cli.rs": {"vanilla-v2193.mcbea"},
-		"crates/protocol/Cargo.toml":                  {target.CodecFeature},
-		"app/src/local_worlds/launch.rs":              {"bedrock-target.json", "server_version", "bds_container_image"},
+		"Makefile":                                 {"assets/bedrock-target.json", target.Artifacts["block_registry"], target.Artifacts["light_registry"], target.Artifacts["biome_registry"], "block-physics-v2193", "vanilla-v2193.mcbea"},
+		"crates/assets/src/pinned_content.rs":      {"block-registry-v2193.bin", "block-light-registry-v2193.bin", "biome-registry-v2193.bin", "bedrock-target.json"},
+		"app/src/install_layout.rs":                {"launcher::install_layout"},
+		"crates/launcher/src/install_layout.rs":    {"assets/bedrock-target.json", `target["artifacts"]["physics_registry"]`, "physics_registry_relative()", filepath.Base(target.Artifacts["world_assets"])},
+		"tools/dist/src/layout.rs":                 {"block-physics-v2193.bin", "vanilla-v2193.mcbea"},
+		"crates/pack-compiler/src/entity/item.rs":  {"block-registry-v2193.bin", "block-item-routes-v2193.json"},
+		"crates/asset-compiler/src/command/cli.rs": {filepath.Base(target.Artifacts["world_assets"])},
+		"crates/protocol/Cargo.toml":               {target.CodecFeature},
+		"app/src/local_worlds/launch.rs":           {"bedrock-target.json", "server_version", "bds_container_image"},
 	}
 	for path, required := range consumers {
 		contents, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(path)))
