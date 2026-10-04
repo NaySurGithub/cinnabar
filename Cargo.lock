@@ -1808,6 +1808,7 @@ dependencies = [
  "chunk-pipeline",
  "client-ui",
  "client-world",
+ "cpal",
  "crossbeam-queue",
  "image",
  "inventory 0.1.3",

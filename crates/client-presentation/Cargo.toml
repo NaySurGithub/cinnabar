@@ -36,6 +36,10 @@ serde_json = "1"
 sha2.workspace = true
 thiserror.workspace = true
 
+[target.'cfg(target_os = "android")'.dependencies]
+# Rodio's Oboe backend must use the shared runtime packaged with the Android client.
+cpal = { workspace = true, features = ["oboe-shared-stdcxx"] }
+
 [dev-dependencies]
 pack-compiler = { path = "../pack-compiler" }
 chunk-pipeline = { path = "../chunk-pipeline", features = ["publication-test-support"] }

@@ -57,6 +57,17 @@ def verify_elf(path: Path, readelf: Path, machine: str) -> None:
         raise ValueError(f"{path} is missing Android 16 KB LOAD alignment")
 
 
+def verify_client_library(client: Path, readelf: Path, cxx_runtime: str) -> None:
+    dynamic = subprocess.check_output([str(readelf), "--dynamic", "--wide", str(client)], text=True)
+    needed = re.findall(r"\(NEEDED\).*Shared library: \[([^]]+)\]", dynamic)
+    if cxx_runtime not in needed:
+        raise ValueError(f"Rust Android library does not link its packaged C++ runtime {cxx_runtime}")
+    symbols = subprocess.check_output([str(readelf), "--dyn-symbols", "--wide", str(client)], text=True)
+    for symbol in ("ANativeActivity_onCreate", "JNI_OnLoad"):
+        if not re.search(rf"\b{symbol}\b", symbols):
+            raise ValueError(f"Rust Android library lacks required entry point {symbol}")
+
+
 def build_native(args: argparse.Namespace, ndk: Path, output: Path, triple: str, clang_triple: str, goarch: str) -> dict[str, Path]:
     toolchain = ndk / "toolchains/llvm/prebuilt/linux-x86_64"
     compiler = toolchain / "bin" / f"{clang_triple}{RUNTIME['min_sdk']}-clang"
@@ -85,10 +96,7 @@ def build_native(args: argparse.Namespace, ndk: Path, output: Path, triple: str,
     readelf = toolchain / "bin/llvm-readelf"
     for file in natives.values():
         verify_elf(file, readelf, ABIS[args.abi][3])
-    symbols = subprocess.check_output([str(readelf), "--dyn-symbols", "--wide", str(client)], text=True)
-    for symbol in ("ANativeActivity_onCreate", "JNI_OnLoad"):
-        if not re.search(rf"\b{symbol}\b", symbols):
-            raise ValueError(f"Rust Android library lacks required entry point {symbol}")
+    verify_client_library(client, readelf, libcxx.name)
     return natives
 
 
