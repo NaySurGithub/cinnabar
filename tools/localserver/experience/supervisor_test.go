@@ -188,8 +188,8 @@ func TestProbeCallbackRoundTrip(t *testing.T) {
 	if loaded.Protocol != protocolVersion {
 		t.Fatalf("loaded protocol %d, want %d", loaded.Protocol, protocolVersion)
 	}
-	if len(loaded.Blocks) != 1 || loaded.Blocks[0].ID != probeCounter {
-		t.Fatalf("loaded blocks %s, want only %s", jsonOf(loaded.Blocks), probeCounter)
+	if len(loaded.Blocks) != 2 || loaded.Blocks[0].ID != probeCounter || loaded.Blocks[1].ID != probeLamp {
+		t.Fatalf("loaded blocks %s, want %s and %s", jsonOf(loaded.Blocks), probeCounter, probeLamp)
 	}
 	got, err := s.Call(probeInteract(probeCount))
 	if err != nil {

@@ -18,6 +18,17 @@ struct Enums {
     fail_kinds: Vec<FailKind>,
     render_methods: Vec<RenderMethod>,
     placement_states: Vec<PlacementState>,
+    placement_values: Vec<PlacementValues>,
+}
+
+/// A placement trait's state and its values, which must be the ones the protocol's
+/// [`PlacementState::state`] gives.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PlacementValues {
+    placement: PlacementState,
+    state: String,
+    values: Vec<String>,
 }
 
 fn fixture_dir() -> PathBuf {
@@ -53,6 +64,11 @@ fn frame_round_trips_every_fixture() {
         }
         if name == "enums" {
             let enums: Enums = serde_json::from_str(&json).expect("enums fixture decodes");
+            for entry in &enums.placement_values {
+                let (state, values) = entry.placement.state();
+                assert_eq!(entry.state, state);
+                assert_eq!(entry.values, values);
+            }
             let pretty = serde_json::to_string_pretty(&enums).unwrap() + "\n";
             assert_eq!(pretty, json, "enums: round trip changed the fixture");
             saw_enums = true;

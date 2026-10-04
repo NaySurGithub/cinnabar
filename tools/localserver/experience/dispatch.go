@@ -262,10 +262,10 @@ func (h *Host) resumed(ctx context.Context) bool {
 }
 
 // useOnBlock places b like a block item: on the clicked block if b may replace it, else beside
-// it, through the user's PlaceBlock. If b is then there, it starts a new generation in the store
-// and queues on-place.
+// it, through the user's PlaceBlock, with the states of its placement traits set by their vanilla
+// rules. If b is then there, it starts a new generation in the store and queues on-place.
 func (h *Host) useOnBlock(
-	b Block, pos cube.Pos, face cube.Face, _ mgl64.Vec3, tx *world.Tx, user item.User,
+	b Block, pos cube.Pos, face cube.Face, clickPos mgl64.Vec3, tx *world.Tx, user item.User,
 	ctx *item.UseContext,
 ) bool {
 	placer, ok := user.(block.Placer)
@@ -276,6 +276,7 @@ func (h *Host) useOnBlock(
 	if !ok {
 		return false
 	}
+	b = b.placed(user, target, face, clickPos)
 	before := blockID(tx.Block(target))
 	placer.PlaceBlock(target, b, ctx)
 	if tx.Block(target) != world.Block(b) {
@@ -476,8 +477,10 @@ type cellState struct {
 	pos    cube.Pos
 	loaded bool
 	id     string
-	// owned is set for this Experience's own block with a store entry.
+	// owned is set for this Experience's own block with a store entry, which block holds with
+	// its states.
 	owned    bool
+	block    Block
 	token    Token
 	hasToken bool
 	dataLen  uint64
@@ -558,6 +561,7 @@ func (h *Host) read(tx *world.Tx, d *dispatcher, ev event) snapshot {
 		st := h.cellState(tx, d.id, ev.dim, pos)
 		cell := Cell{Pos: blockPos(pos), Loaded: st.loaded, ID: st.id, Owned: st.owned}
 		if st.owned {
+			cell.States = st.block.states()
 			if data, ok := h.store.Data(d.id, ev.dim.storeKey(pos)); ok {
 				s := hex.EncodeToString(data)
 				cell.Data = &s
@@ -583,6 +587,9 @@ func (h *Host) cellState(tx *world.Tx, exp string, dim dimension, pos cube.Pos) 
 	st.id = blockID(b)
 	own, ok := b.(Block)
 	st.owned = ok && own.t.exp == exp && st.hasToken
+	if st.owned {
+		st.block = own
+	}
 	return st
 }
 

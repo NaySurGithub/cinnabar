@@ -69,7 +69,7 @@ interface types {
     /// A geometry bone that draws only while `visible` holds (`bone_visibility`).
     record bone-visibility { bone: string, visible: condition }
     /// What a block looks like. `geometry` is a `.geo.json` under assets/ holding one geometry
-    /// identified `geometry.<experience id>.<block name>`; none is the full cube. `bones` name
+    /// identified `geometry.<experience id>.<name>`; none is the full cube. `bones` name
     /// bones of that geometry. Boxes default to the full cube.
     record visual {
         geometry: option<string>, materials: list<material>, bones: list<bone-visibility>,

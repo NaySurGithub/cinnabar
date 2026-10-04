@@ -10,8 +10,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::hex;
 use crate::limits::{
-    MAX_BLOCK_DATA_BYTES, MAX_CLIENT_SEND_BYTES, MAX_CLIENT_SENDS, MAX_FRAME_BYTES,
-    MAX_REASON_BYTES, MAX_STAGED_OPS, MAX_TELL_BYTES, MAX_TELLS, MAX_VALUE_DEPTH,
+    MAX_BLOCK_DATA_BYTES, MAX_BONES, MAX_CLIENT_SEND_BYTES, MAX_CLIENT_SENDS, MAX_CONDITION_TESTS,
+    MAX_FLIPBOOK_FRAMES, MAX_FRAME_BYTES, MAX_GEOMETRY_BYTES, MAX_MATERIALS, MAX_NAME_BYTES,
+    MAX_PERMUTATIONS, MAX_REASON_BYTES, MAX_STAGED_OPS, MAX_STATE_COMBINATIONS, MAX_STATE_VALUES,
+    MAX_TELL_BYTES, MAX_TELLS, MAX_VALUE_DEPTH,
 };
 
 mod player;
@@ -380,6 +382,23 @@ struct Limits {
     max_client_sends: usize,
     max_client_send_bytes: usize,
     max_value_depth: usize,
+    max_name_bytes: usize,
+    max_state_values: usize,
+    max_state_combinations: usize,
+    max_bones: usize,
+    max_permutations: usize,
+    max_materials: usize,
+    max_condition_tests: usize,
+    max_flipbook_frames: usize,
+    max_geometry_bytes: usize,
+}
+
+/// A placement trait's state and its values, in the client's order.
+#[derive(Serialize)]
+struct PlacementValues {
+    placement: PlacementState,
+    state: &'static str,
+    values: &'static [&'static str],
 }
 
 /// Every protocol enum string, so the Go adapter can check its sets against Rust.
@@ -390,6 +409,7 @@ struct Enums {
     fail_kinds: [FailKind; 4],
     render_methods: [RenderMethod; 4],
     placement_states: [PlacementState; 4],
+    placement_values: Vec<PlacementValues>,
 }
 
 /// Lists every variant of a fieldless enum. The same list feeds an exhaustive `match`, so adding
@@ -836,6 +856,15 @@ pub fn fixtures() -> Vec<(&'static str, String)> {
                 max_client_sends: MAX_CLIENT_SENDS,
                 max_client_send_bytes: MAX_CLIENT_SEND_BYTES,
                 max_value_depth: MAX_VALUE_DEPTH,
+                max_name_bytes: MAX_NAME_BYTES,
+                max_state_values: MAX_STATE_VALUES,
+                max_state_combinations: MAX_STATE_COMBINATIONS,
+                max_bones: MAX_BONES,
+                max_permutations: MAX_PERMUTATIONS,
+                max_materials: MAX_MATERIALS,
+                max_condition_tests: MAX_CONDITION_TESTS,
+                max_flipbook_frames: MAX_FLIPBOOK_FRAMES,
+                max_geometry_bytes: MAX_GEOMETRY_BYTES,
             }),
         ),
         (
@@ -856,6 +885,17 @@ pub fn fixtures() -> Vec<(&'static str, String)> {
                     BlockFace,
                     VerticalHalf
                 ),
+                placement_values: PlacementState::ALL
+                    .into_iter()
+                    .map(|placement| {
+                        let (state, values) = placement.state();
+                        PlacementValues {
+                            placement,
+                            state,
+                            values,
+                        }
+                    })
+                    .collect(),
             }),
         ),
     ]

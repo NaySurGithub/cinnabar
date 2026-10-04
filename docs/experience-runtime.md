@@ -167,17 +167,54 @@ still runs older artifacts against their frozen worlds, by the manifest's `api`:
 WIT cannot express the rules below; the runtime (`crates/experience-runtime`) and the adapter
 (`tools/localserver/experience`) both enforce them.
 
-- **0.5, contract first.** 0.5 declares block states and placement traits, visuals (geometry,
-  material instances with render methods and flipbooks, bone visibility, boxes, rotation,
-  permutations over structured conditions), network membership and items, and the callback
-  calls `block-states`, `set-block-state`, `network`, `inventory`, `set-slot` and `drop-item`;
-  IPC protocol 5 carries all of them. Their implementation lands separately (SP5 tasks E, F and
-  G of the Applied Benergistics plan). Until then a `registration` that uses any of them fails
-  the load, naming the block, each new call counts as a host call and is refused as
-  `unsupported-state`, and the adapter refuses their ops as invalid.
-
-- **Blocks.** Stateless cubes registered at startup only: an opaque texture per material slot
-  (`*` or all six faces), full-cube collision and selection, and mining that is either
+- **0.5, contract first, then implemented in parts.** 0.5 declares block states and placement
+  traits, visuals (geometry, material instances with render methods and flipbooks, bone
+  visibility, boxes, rotation, permutations over structured conditions), network membership and
+  items, and the callback calls `block-states`, `set-block-state`, `network`, `inventory`,
+  `set-slot` and `drop-item`; IPC protocol 5 carries all of them. States, placement traits,
+  visuals and permutations, `block-states` and `set-block-state` are implemented (SP5 task E of
+  the Applied Benergistics plan). Network membership and items (tasks F and G) are not yet: a
+  `registration` that uses either fails the load, naming the block, `network`, `inventory`,
+  `set-slot` and `drop-item` count as host calls and are refused as `unsupported-state`, and the
+  adapter refuses their ops as invalid.
+- **Block types (0.5).** The runtime checks every rule below at load and the adapter again at
+  registration; every bound is a constant in `limits.rs`, mirrored in `limits.go` and checked
+  against the limits fixture.
+  - States are `<experience id>:<name>`, the name `^[a-z0-9_]{1,MAX_NAME_BYTES}$`: a bool, or 1
+    to `MAX_STATE_VALUES` distinct string values of the same form. Placement traits add
+    Bedrock's `minecraft:cardinal_direction`, `minecraft:facing_direction`,
+    `minecraft:block_face` and `minecraft:vertical_half`, with the client's values in its order.
+    A block's axes are its traits' states, then its own, in that order everywhere (snapshots,
+    defaults, the client's permutation index); their combinations number at most
+    `MAX_STATE_COMBINATIONS`, which the client's own bound admits (a test in
+    `crates/protocol` checks it). The adapter registers every combination.
+  - A condition tests only the block's states, against values they take, at most
+    `MAX_CONDITION_TESTS` times; the adapter writes it as `q.block_state` Molang.
+  - A visual replaces the block's textures. Its geometry is an indexed `.geo.json` holding one
+    geometry identified `geometry.<experience id>.<name>`; one identifier is one file across the
+    Experience. Material instances are `*`, a face, or one the geometry draws with, once each,
+    and together cover every instance it draws with (or list `*`); at most `MAX_MATERIALS`. A
+    flipbook's strip is whole square frames, and it shows only frames there are, each for at
+    least a tick. Bone visibilities name bones of the geometry, at most `MAX_BONES`. Boxes are
+    non-empty, within 0 to 16 pixels; rotations 0 to 3 quarter turns per axis.
+  - At most `MAX_PERMUTATIONS` permutations, which need a visual; each holds sometimes and sets
+    something. A later one wins where two hold, so the adapter keeps their order. A permutation
+    geometry brings its own bones; the block's materials, unless it sets its own, must cover it.
+    A zero rotation cannot undo a turned visual's, since the client reads it as none.
+  - The adapter names each geometry file by the whole block id
+    (`models/blocks/<namespace>/<name>.geo.json`, a permutation's under
+    `models/blocks/<namespace>/<name>/`), gives each distinct texture and flipbook of a block its
+    own texture key, and writes `textures/flipbook_textures.json`.
+- **States.** A placed block's placement trait states follow the vanilla client's placement
+  callbacks (`BlockTrait::PlacementDirection` and `BlockTrait::PlacementPosition`); a block set
+  by a guest starts in its default states, the first value of each. Snapshots carry an own
+  block's states. `block-states` reads them like `get-block`; `set-block-state` writes where
+  `set-block-data` writes, only to this Experience's blocks (`not-owned`), each state once,
+  among the block's, at a value it takes (`unsupported-state`), and keeps the block's data and
+  generation. Writes to one block merge into one op; a later `set-block` drops it. Commit
+  discards a result whose snapshot cell changed state.
+- **Blocks.** Registered at startup only. Without a visual, a cube with an opaque texture per
+  material slot (`*` or all six faces) and full-cube collision and selection; mining that is either
   `unbreakable` or `breakable(hardness)`. Every block is harvestable by hand and drops itself.
   Block ids are `<experience id>:<name>`.
 - **Callbacks.**

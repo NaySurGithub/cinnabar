@@ -23,6 +23,16 @@ type fixtureLimits struct {
 	MaxClientSends     int    `json:"max_client_sends"`
 	MaxClientSendBytes int    `json:"max_client_send_bytes"`
 	MaxValueDepth      int    `json:"max_value_depth"`
+	// The bounds on a block type, which the adapter checks again at registration.
+	MaxNameBytes         int `json:"max_name_bytes"`
+	MaxStateValues       int `json:"max_state_values"`
+	MaxStateCombinations int `json:"max_state_combinations"`
+	MaxBones             int `json:"max_bones"`
+	MaxPermutations      int `json:"max_permutations"`
+	MaxMaterials         int `json:"max_materials"`
+	MaxConditionTests    int `json:"max_condition_tests"`
+	MaxFlipbookFrames    int `json:"max_flipbook_frames"`
+	MaxGeometryBytes     int `json:"max_geometry_bytes"`
 }
 
 // rustLimits reads the limits fixture.
@@ -46,6 +56,25 @@ type fixtureEnums struct {
 	FailKinds       []FailKind       `json:"fail_kinds"`
 	RenderMethods   []RenderMethod   `json:"render_methods"`
 	PlacementStates []PlacementState `json:"placement_states"`
+	PlacementValues []struct {
+		Placement PlacementState `json:"placement"`
+		State     string         `json:"state"`
+		Values    []string       `json:"values"`
+	} `json:"placement_values"`
+}
+
+// rustEnums reads the enums fixture.
+func rustEnums(t *testing.T) fixtureEnums {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("testdata", "protocol", "enums.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rust fixtureEnums
+	if err := decodeStrict(data, &rust); err != nil {
+		t.Fatal(err)
+	}
+	return rust
 }
 
 // fixturePaths lists the golden fixtures that the Rust runtime writes.
@@ -313,7 +342,7 @@ func TestFrameLimitMatchesRust(t *testing.T) {
 }
 
 // The commit check enforces the runtime's op, block data, tell and client message limits again,
-// so Go shares them with Rust.
+// and registration its bounds on block types, so Go shares them with Rust.
 func TestCommitLimitsMatchRust(t *testing.T) {
 	rust := rustLimits(t)
 	for _, limit := range []struct {
@@ -325,6 +354,15 @@ func TestCommitLimitsMatchRust(t *testing.T) {
 		{"maxTells", maxTells, rust.MaxTells},
 		{"maxTellBytes", maxTellBytes, rust.MaxTellBytes},
 		{"maxClientSends", maxClientSends, rust.MaxClientSends},
+		{"maxNameBytes", maxNameBytes, rust.MaxNameBytes},
+		{"maxStateValues", maxStateValues, rust.MaxStateValues},
+		{"maxStateCombinations", maxStateCombinations, rust.MaxStateCombinations},
+		{"maxBones", maxBones, rust.MaxBones},
+		{"maxPermutations", maxPermutations, rust.MaxPermutations},
+		{"maxMaterials", maxMaterials, rust.MaxMaterials},
+		{"maxConditionTests", maxConditionTests, rust.MaxConditionTests},
+		{"maxFlipbookFrames", maxFlipbookFrames, rust.MaxFlipbookFrames},
+		{"maxGeometryBytes", maxGeometryBytes, rust.MaxGeometryBytes},
 	} {
 		if limit.goV != limit.rust {
 			t.Errorf("%s = %d, Rust has %d", limit.name, limit.goV, limit.rust)

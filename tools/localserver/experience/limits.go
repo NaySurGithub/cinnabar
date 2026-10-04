@@ -84,3 +84,29 @@ const (
 	// MAX_CLIENT_SENDS.
 	maxClientSends = 8
 )
+
+// Registration checks a block type by the runtime's bounds again. Each must equal its Rust
+// constant, which TestCommitLimitsMatchRust checks against the limits fixture.
+const (
+	// maxNameBytes is the most bytes in a state's name after "<id>:", a string state value, a
+	// material instance and a geometry's name: Rust's MAX_NAME_BYTES.
+	maxNameBytes = 64
+	// maxStateValues is the most values of one string state: Rust's MAX_STATE_VALUES.
+	maxStateValues = 16
+	// maxStateCombinations is the most state combinations of one block: Rust's
+	// MAX_STATE_COMBINATIONS.
+	maxStateCombinations = 65_536
+	// maxBones is the most bones whose visibility one visual or permutation sets: Rust's
+	// MAX_BONES.
+	maxBones = 64
+	// maxPermutations is the most permutations of one block: Rust's MAX_PERMUTATIONS.
+	maxPermutations = 64
+	// maxMaterials is the most materials of one visual or permutation: Rust's MAX_MATERIALS.
+	maxMaterials = 32
+	// maxConditionTests is the most state tests of one condition: Rust's MAX_CONDITION_TESTS.
+	maxConditionTests = 64
+	// maxFlipbookFrames is the most frames one flipbook lists: Rust's MAX_FLIPBOOK_FRAMES.
+	maxFlipbookFrames = 256
+	// maxGeometryBytes is the largest geometry file: Rust's MAX_GEOMETRY_BYTES.
+	maxGeometryBytes = 1 << 20
+)

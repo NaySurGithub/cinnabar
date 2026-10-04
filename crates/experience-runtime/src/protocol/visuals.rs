@@ -101,6 +101,37 @@ pub enum PlacementState {
     VerticalHalf,
 }
 
+impl PlacementState {
+    /// Every placement state, in the order a block's states list them.
+    pub const ALL: [Self; 4] = [
+        Self::CardinalDirection,
+        Self::FacingDirection,
+        Self::BlockFace,
+        Self::VerticalHalf,
+    ];
+
+    /// The block state the trait adds, and its values in the order the client enumerates them:
+    /// the `Direction::Type`, `Facing` and `VerticalHalfEnum` values that the traits' placement
+    /// callbacks set through `BlockType::trySetState` (26.30 reconstruction,
+    /// `BlockTrait::PlacementDirection::UpdateCardinalGetPlacementBlockCallback`, RVA 0x0aeab7a0,
+    /// `UpdateFacingGetPlacementBlockCallback`, RVA 0x0aed3010,
+    /// `BlockTrait::PlacementPosition::UpdateBlockFaceGetPlacementBlockCallback`, RVA 0x0aedbb80,
+    /// and `UpdateVerticalHalfGetPlacementBlockCallback`, RVA 0x0aedbc10, each
+    /// `getPlacementBlock`). The Dragonfly fork's traits list the same values.
+    pub fn state(self) -> (&'static str, &'static [&'static str]) {
+        const FACES: &[&str] = &["down", "up", "north", "south", "west", "east"];
+        match self {
+            Self::CardinalDirection => (
+                "minecraft:cardinal_direction",
+                &["south", "west", "north", "east"],
+            ),
+            Self::FacingDirection => ("minecraft:facing_direction", FACES),
+            Self::BlockFace => ("minecraft:block_face", FACES),
+            Self::VerticalHalf => ("minecraft:vertical_half", &["bottom", "top"]),
+        }
+    }
+}
+
 /// `state == value` when `equal`, else `state != value`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

@@ -9,7 +9,7 @@ use common::{
 };
 use experience_runtime::limits::{MAX_REASON_BYTES, MAX_VALUE_DEPTH};
 use experience_runtime::protocol::{
-    Call, Cause, Cell, Change, Face, FailKind, Op, Outcome, Request, Scalar,
+    BlockState, Call, Cause, Cell, Change, Face, FailKind, Op, Outcome, Request, Scalar, StateValue,
 };
 
 /// `request` with its snapshot cell at `new.pos` replaced by `new`.
@@ -101,17 +101,65 @@ fn read_outside_snapshot_is_denied() {
     assert_eq!(outcome(&interact(6)), committed(vec![tell("denied")]));
 }
 
-/// Server WIT 0.5's new calls are in the contract before their implementation (SP5 tasks E, F
-/// and G): each counts as a host call and is refused as `unsupported-state`, staging nothing.
+fn state(name: &str, value: StateValue) -> BlockState {
+    BlockState {
+        name: name.to_owned(),
+        value,
+    }
+}
+
+/// Server WIT 0.5's block-state calls work: a lamp set above the counter starts with its default
+/// states, and a lit lamp stages one state op after its placement. The calls of SP5 tasks F and
+/// G are still refused: each counts as a host call and is refused as `unsupported-state`,
+/// staging nothing.
 #[test]
-fn wit_0_5_calls_are_refused_until_implemented() {
+fn wit_0_5_block_states_work_and_the_rest_are_refused() {
     let refused = "unsupported-state";
+    let lamp = |lit: bool| format!("minecraft:facing_direction=down,probe:on={lit}");
     assert_eq!(
         outcome(&interact(24)),
-        committed(vec![tell(&format!(
-            "block-states {refused} set-block-state {refused} network {refused} \
-             inventory {refused} set-slot {refused} drop-item {refused}"
-        ))])
+        committed(vec![
+            Op::SetBlock {
+                pos: up(24),
+                id: "probe:lamp".to_owned(),
+            },
+            Op::SetBlockState {
+                pos: up(24),
+                states: vec![state("probe:on", StateValue::Bool(true))],
+            },
+            tell(&format!(
+                "states {} set ok states {} network {refused} inventory {refused} \
+                 set-slot {refused} drop-item {refused}",
+                lamp(false),
+                lamp(true),
+            )),
+        ])
+    );
+}
+
+/// A state change of an existing lamp keeps its data: the op names the state alone. The counter
+/// has no states, so it takes none.
+#[test]
+fn set_block_state_changes_states_alone() {
+    let facing = state(
+        "minecraft:facing_direction",
+        StateValue::Choice("north".to_owned()),
+    );
+    let mut lamp = cell(p(25), "probe:lamp", true, Some("01"));
+    lamp.states = vec![facing, state("probe:on", StateValue::Bool(false))];
+    assert_eq!(
+        outcome(&with_cell(interact(25), lamp)),
+        committed(vec![
+            Op::SetBlockState {
+                pos: p(25),
+                states: vec![state("probe:on", StateValue::Bool(true))],
+            },
+            tell("lamp minecraft:facing_direction=north,probe:on=true"),
+        ])
+    );
+    assert_eq!(
+        outcome(&interact(25)),
+        committed(vec![tell("error unsupported-state")])
     );
 }
 

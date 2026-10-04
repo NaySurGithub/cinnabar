@@ -64,11 +64,12 @@ func (h *Host) commit(ctx context.Context, d *dispatcher, ev event, snap snapsho
 }
 
 // apply checks snap against the world in tx and validates every op before it applies any. Then
-// it applies the block ops in their order, the data writes, and last the tells, and returns the
-// client messages for commit to send. A position's data write follows its last block op, as
-// validate checks, so applying the data writes after every block op changes nothing. Writes that
-// shrink data go before those that grow it, so the Experience's total only falls and then rises
-// to the net that validate checked, and no single write exceeds the quota.
+// it applies the block and state ops in their order, the data writes, and last the tells, and
+// returns the client messages for commit to send. A position's data write follows its last block
+// op, as validate checks, so applying the data writes after every block op changes nothing; a
+// state op keeps the block's data and generation. Writes that shrink data go before those that
+// grow it, so the Experience's total only falls and then rises to the net that validate checked,
+// and no single write exceeds the quota.
 func (h *Host) apply(tx *world.Tx, exp string, ev event, snap snapshot, ops []Op) ([]*SendClientOp, error) {
 	actor, err := h.current(tx, exp, ev, snap)
 	if err != nil {
@@ -79,6 +80,15 @@ func (h *Host) apply(tx *world.Tx, exp string, ev event, snap snapshot, ops []Op
 		return nil, err
 	}
 	for _, op := range ops {
+		if op.SetBlockState != nil {
+			pos := op.SetBlockState.Pos.cube()
+			b := tx.Block(pos).(Block)
+			// validate checked the block and its states.
+			if changed, _ := b.withStates(op.SetBlockState.States); changed != b {
+				tx.SetBlock(pos, changed, nil)
+			}
+			continue
+		}
 		if op.SetBlock == nil {
 			continue
 		}
@@ -115,13 +125,14 @@ func (h *Host) apply(tx *world.Tx, exp string, ev event, snap snapshot, ops []Op
 	return sends, nil
 }
 
-// current checks that every snapshot cell still has its loaded state, block id and store token,
-// and that the event's actor, if any, is a player in the world. It returns the actor's entity.
+// current checks that every snapshot cell still has its loaded state, block id, own block's
+// states and store token, and that the event's actor, if any, is a player in the world. It
+// returns the actor's entity.
 func (h *Host) current(tx *world.Tx, exp string, ev event, snap snapshot) (world.Entity, error) {
 	for _, was := range snap.cells {
 		now := h.cellState(tx, exp, ev.dim, was.pos)
-		if now.loaded != was.loaded || now.id != was.id || now.hasToken != was.hasToken ||
-			now.token != was.token {
+		if now.loaded != was.loaded || now.id != was.id || now.block != was.block ||
+			now.hasToken != was.hasToken || now.token != was.token {
 			return nil, fmt.Errorf("%w: the cell at %v changed", errStale, was.pos)
 		}
 	}
@@ -156,9 +167,9 @@ type dataWrite struct {
 
 // validate checks every op against the snapshot as the ops before it change it, by the rules
 // the runtime enforced: writes stay in the anchor's chunk column on loaded snapshot cells, set
-// air or an own block over air or an own block, write data only to an own block within the size
-// limit, and tell and send client messages only to the actor, within the tell and client message
-// limits. A position has at most one data op, after its last block op. Like the runtime, it holds
+// air or an own block over air or an own block, write data and states only to an own block,
+// within the size limit and among its states, and tell and send client messages only to the
+// actor, within the tell and client message limits. A position has at most one data op, after its last block op. Like the runtime, it holds
 // the quota to the result's net data, not to each write. It returns the data writes in their
 // order.
 func (h *Host) validate(exp string, ev event, snap snapshot, ops []Op) ([]dataWrite, error) {
@@ -255,9 +266,25 @@ func (h *Host) validate(exp string, ev event, snap snapshot, ops []Op) ([]dataWr
 			case sends > maxClientSends:
 				return nil, fmt.Errorf("%w: more than %d client messages", errInvalid, maxClientSends)
 			}
-		case op.SetBlockState != nil || op.SetSlot != nil || op.DropItem != nil:
-			// Server WIT 0.5's ops are in the protocol before the adapter applies them (SP5 tasks
-			// E and G); the runtime does not stage them yet, so one here is a broken helper.
+		case op.SetBlockState != nil:
+			c, err := writable(i, op.SetBlockState.Pos)
+			if err != nil {
+				return nil, err
+			}
+			b, ok := h.reg.Lookup(c.id)
+			if !c.owned || !ok || b.t.exp != exp {
+				return nil, fmt.Errorf("%w: op %d sets states of %s, which is not its own block",
+					errInvalid, i, c.id)
+			}
+			if len(op.SetBlockState.States) == 0 {
+				return nil, fmt.Errorf("%w: op %d sets no states", errInvalid, i)
+			}
+			if _, err := b.withStates(op.SetBlockState.States); err != nil {
+				return nil, fmt.Errorf("%w: op %d: %v", errInvalid, i, err)
+			}
+		case op.SetSlot != nil || op.DropItem != nil:
+			// Server WIT 0.5's item ops are in the protocol before the adapter applies them (SP5
+			// task G); the runtime does not stage them yet, so one here is a broken helper.
 			return nil, fmt.Errorf("%w: op %d is not supported yet", errInvalid, i)
 		default:
 			return nil, fmt.Errorf("%w: op %d is empty", errInvalid, i)

@@ -36,6 +36,27 @@ pub const MAX_BLOCKS: usize = 64;
 pub const MAX_BLOCK_NAME_BYTES: usize = 32;
 /// Bytes in a block's display name; at least one is required.
 pub const MAX_DISPLAY_NAME_BYTES: usize = 64;
+/// Bytes in a state's name after `<experience id>:`, a string state value, a material instance
+/// and a geometry's name after `geometry.<experience id>.`; at least one is required.
+pub const MAX_NAME_BYTES: usize = 64;
+/// Values one string state may take (`Values.json`: 1 to 16).
+pub const MAX_STATE_VALUES: usize = 16;
+/// State combinations one block registers: its states' and placement traits' value counts
+/// multiplied. The client's own bound per block, `MAX_STATES_PER_BLOCK` in
+/// `crates/protocol/src/world/custom_blocks.rs`, must admit it, which a test there checks.
+pub const MAX_STATE_COMBINATIONS: usize = 65_536;
+/// Bones whose visibility one visual or permutation sets (`Detailed Geometry.json`).
+pub const MAX_BONES: usize = 64;
+/// Permutations one block declares.
+pub const MAX_PERMUTATIONS: usize = 64;
+/// Materials one visual or permutation lists.
+pub const MAX_MATERIALS: usize = 32;
+/// State tests in one condition, summed over its clauses.
+pub const MAX_CONDITION_TESTS: usize = 64;
+/// Frames one flipbook lists.
+pub const MAX_FLIPBOOK_FRAMES: usize = 256;
+/// Size of one geometry file.
+pub const MAX_GEOMETRY_BYTES: usize = 1024 * 1024;
 /// Host calls per callback; logs are counted separately.
 pub const MAX_HOST_CALLS: usize = 256;
 /// Staged ops per callback. Rewriting a block's data replaces its staged op instead of adding

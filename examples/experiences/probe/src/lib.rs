@@ -12,8 +12,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use experience_sdk::Value;
 use experience_sdk::server::{
-    BlockChange, BlockDef, BlockPos, Callback, Experience, Face, GuestError, LogLevel, Mining,
-    PlayerId, Registration, TextureBinding, WorldError, cube, log, nodes,
+    BlockChange, BlockPos, Callback, Experience, Face, GuestError, LogLevel, PlayerId,
+    Registration, WorldError, log, nodes,
 };
 
 /// The declarations of `experience.toml`, which `build.rs` writes.
@@ -36,20 +36,9 @@ static MEMORY: AtomicU32 = AtomicU32::new(0);
 struct Probe;
 
 impl Experience for Probe {
-    /// The 0.5 export: the counter as a cube block type, and no items.
+    /// The 0.5 export: the counter and the lamp.
     fn registration() -> Result<Registration, GuestError> {
-        Ok(Registration {
-            blocks: vec![cube(BlockDef {
-                id: COUNTER.to_owned(),
-                display_name: "Probe Counter".to_owned(),
-                textures: vec![TextureBinding {
-                    slot: "*".to_owned(),
-                    path: "counter.png".to_owned(),
-                }],
-                mining: Mining::Breakable(1.0),
-            })],
-            items: Vec::new(),
-        })
+        Ok(contract::registration(COUNTER))
     }
 
     fn on_place(ctx: &Callback, change: BlockChange) -> Result<(), GuestError> {
@@ -225,6 +214,7 @@ fn interact(ctx: &Callback, player: &str, p: BlockPos) -> Result<(), GuestError>
         }
         23 => tell(&format!("focus {}", describe(ctx.focus()))),
         24 => tell(&contract::wit_0_5_calls(ctx, p, up)),
+        25 => tell(&contract::toggle_lamp(ctx, p)),
         x => return Err(GuestError::Rejected(format!("no probe behavior for x={x}"))),
     }
     Ok(())

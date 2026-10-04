@@ -13,7 +13,9 @@ use experience_runtime::load::{engine, load};
 use experience_runtime::manifest::{
     ASSETS_DIR, CLIENT_TABLE, MANIFEST_FILE, SERVER_WASM, read_manifest,
 };
-use experience_runtime::protocol::{BlockDef, Mining, Outcome, Scalar, Texture};
+use experience_runtime::protocol::{
+    BlockDef, Mining, Outcome, PlacementState, Scalar, StateDef, StateValues, Texture,
+};
 use tempfile::TempDir;
 
 /// Loads `dir`, which must fail, and returns the error chain. Every load error names the
@@ -78,8 +80,8 @@ fn probe_registers_counter_block() {
     assert_eq!(loaded.manifest.version, "0.1.0");
     let texture = dir.path().join(ASSETS_DIR).join("counter.png");
     assert_eq!(
-        loaded.blocks,
-        vec![BlockDef {
+        loaded.blocks[..1],
+        [BlockDef {
             id: "probe:counter".to_owned(),
             display_name: "Probe Counter".to_owned(),
             textures: vec![Texture {
@@ -94,6 +96,24 @@ fn probe_registers_counter_block() {
             network: false,
         }]
     );
+}
+
+/// The probe's second block, a cube with the facing trait and one bool state.
+#[test]
+fn probe_registers_lamp_with_states() {
+    let dir = probe_dir();
+    let (engine, _ticker) = engine().unwrap();
+    let loaded = load(&engine, dir.path()).unwrap();
+    let lamp = &loaded.blocks[1];
+    assert_eq!(lamp.id, "probe:lamp");
+    assert_eq!(
+        lamp.states,
+        vec![StateDef {
+            name: "probe:on".to_owned(),
+            values: StateValues::Bool,
+        }]
+    );
+    assert_eq!(lamp.placement, vec![PlacementState::FacingDirection]);
 }
 
 #[test]

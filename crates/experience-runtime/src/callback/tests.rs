@@ -13,10 +13,16 @@ use crate::limits::{
     MAX_BLOCK_DATA_BYTES, MAX_CLIENT_SEND_BYTES, MAX_CLIENT_SENDS, MAX_HOST_CALLS,
     MAX_STAGED_DATA_BYTES, MAX_STAGED_OPS, MAX_TELL_BYTES, MAX_TELLS, MAX_VALUE_DEPTH,
 };
-use crate::protocol::{BlockPos, Call, Cell, Face, FailKind, Info, Op, Outcome, Request, Scalar};
+use crate::load::{OwnBlocks, axes};
+use crate::protocol::{
+    BlockPos, BlockState, Call, Cell, Face, FailKind, Info, Op, Outcome, PlacementState, Request,
+    Scalar, StateDef, StateValue, StateValues,
+};
 
 const ACTOR: &str = "3f2a7c1e-8b4d-4e6a-9c5f-1d2e3f4a5b6c";
 const COUNTER: &str = "probe:counter";
+/// A block with states: the facing trait's, then `probe:on` and `probe:colour`.
+const LAMP: &str = "probe:lamp";
 const AIR: &str = "minecraft:air";
 
 const ANCHOR: BlockPos = BlockPos { x: 0, y: 64, z: 0 };
@@ -59,7 +65,15 @@ impl Fixture {
         self
     }
 
-    /// The callback's host value, for an Experience whose only block is probe:counter.
+    /// Gives the cell at `pos` these states.
+    fn states(mut self, pos: BlockPos, states: Vec<BlockState>) -> Self {
+        let cell = self.cells.iter_mut().find(|cell| cell.pos == pos);
+        cell.expect("a snapshot cell").states = states;
+        self
+    }
+
+    /// The callback's host value, for an Experience whose blocks are probe:counter, which has
+    /// no states, and [`LAMP`].
     fn res(self) -> CallbackRes {
         let request = Request::Callback {
             seq: 1,
@@ -82,7 +96,25 @@ impl Fixture {
                 face: Face::Up,
             },
         };
-        let (res, _) = prepare(&Arc::from([COUNTER.to_owned()]), &request).unwrap();
+        let lamp = [
+            StateDef {
+                name: "probe:on".to_owned(),
+                values: StateValues::Bool,
+            },
+            StateDef {
+                name: "probe:colour".to_owned(),
+                values: StateValues::Choices(vec!["red".to_owned(), "blue".to_owned()]),
+            },
+        ];
+        let own: OwnBlocks = [
+            (COUNTER.to_owned(), Vec::new()),
+            (
+                LAMP.to_owned(),
+                axes(&lamp, &[PlacementState::FacingDirection]),
+            ),
+        ]
+        .into();
+        let (res, _) = prepare(&Arc::new(own), &request).unwrap();
         res
     }
 }
@@ -536,4 +568,176 @@ fn failures_are_classified_by_cause() {
         let error = cause.context("error while executing at wasm backtrace: …");
         assert_eq!(failed(&error), Outcome::Failed { kind, reason });
     }
+}
+
+fn state(name: &str, value: StateValue) -> BlockState {
+    BlockState {
+        name: name.to_owned(),
+        value,
+    }
+}
+
+fn on(value: bool) -> BlockState {
+    state("probe:on", StateValue::Bool(value))
+}
+
+fn colour(value: &str) -> BlockState {
+    state("probe:colour", StateValue::Choice(value.to_owned()))
+}
+
+fn facing(value: &str) -> BlockState {
+    state(
+        "minecraft:facing_direction",
+        StateValue::Choice(value.to_owned()),
+    )
+}
+
+/// A lamp's states as the adapter snapshots them: every axis, the trait's first.
+fn lamp(face: &str, lit: bool, hue: &str) -> Vec<BlockState> {
+    vec![facing(face), on(lit), colour(hue)]
+}
+
+/// [`Fixture::new`] with a lamp at the anchor in place of the counter, with data `01`.
+fn lamp_fixture() -> Fixture {
+    Fixture::new()
+        .cell(ANCHOR, LAMP, true, Some("01"))
+        .states(ANCHOR, lamp("north", false, "red"))
+}
+
+/// States are read like ids: an own block's as snapshotted, nothing for other blocks.
+#[test]
+fn block_states_read_the_snapshot() {
+    let mut res = lamp_fixture().cell(UP, COUNTER, true, None).res();
+    assert_eq!(
+        res.block_states(ANCHOR).unwrap(),
+        Ok(lamp("north", false, "red"))
+    );
+    assert_eq!(res.block_states(UP).unwrap(), Ok(Vec::new()));
+    assert_eq!(res.block_states(EAST).unwrap(), Ok(Vec::new()));
+    assert_eq!(
+        res.block_states(BlockPos { x: 5, ..ANCHOR }).unwrap(),
+        Err(WorldError::Denied)
+    );
+}
+
+/// Writes to one block merge into one op holding each state's last value, and the block keeps
+/// its data.
+#[test]
+fn set_block_state_merges_and_keeps_data() {
+    let mut res = lamp_fixture().res();
+    assert_eq!(res.set_block_state(ANCHOR, vec![on(true)]).unwrap(), Ok(()));
+    assert_eq!(
+        res.set_block_state(ANCHOR, vec![colour("blue"), facing("up")])
+            .unwrap(),
+        Ok(())
+    );
+    assert_eq!(
+        res.set_block_state(ANCHOR, vec![on(false)]).unwrap(),
+        Ok(())
+    );
+    assert_eq!(
+        res.ops,
+        vec![Op::SetBlockState {
+            pos: ANCHOR,
+            states: vec![on(false), colour("blue"), facing("up")],
+        }]
+    );
+    assert_eq!(
+        res.block_states(ANCHOR).unwrap(),
+        Ok(lamp("up", false, "blue"))
+    );
+    assert_eq!(res.block_data(ANCHOR).unwrap(), Ok(Some(vec![1])));
+}
+
+/// A state the block lacks, a value its state does not take, or one state twice is refused
+/// whole, staging nothing; so is any state of a block that has none. An empty write stages
+/// nothing either.
+#[test]
+fn set_block_state_refuses_unknown_states_and_values() {
+    let mut res = lamp_fixture().cell(UP, COUNTER, true, None).res();
+    for states in [
+        vec![state("probe:dim", StateValue::Bool(true))],
+        vec![state("probe:on", StateValue::Choice("yes".to_owned()))],
+        vec![colour("green")],
+        vec![
+            colour("blue"),
+            state("probe:colour", StateValue::Bool(true)),
+        ],
+        vec![on(true), on(false)],
+        vec![facing("sideways")],
+    ] {
+        assert_eq!(
+            res.set_block_state(ANCHOR, states.clone()).unwrap(),
+            Err(WorldError::UnsupportedState),
+            "{states:?}"
+        );
+    }
+    assert_eq!(
+        res.set_block_state(UP, vec![on(true)]).unwrap(),
+        Err(WorldError::UnsupportedState)
+    );
+    assert_eq!(res.set_block_state(UP, Vec::new()).unwrap(), Ok(()));
+    assert_eq!(res.ops, Vec::new());
+    assert_eq!(
+        res.block_states(ANCHOR).unwrap(),
+        Ok(lamp("north", false, "red"))
+    );
+}
+
+/// States are written where data is: own blocks in the anchor's chunk column.
+#[test]
+fn set_block_state_only_reaches_own_blocks_in_scope() {
+    let mut res = lamp_fixture()
+        .cell(WEST, LAMP, true, None)
+        .cell(EAST, LAMP, false, None)
+        .cell(UP, "minecraft:stone", false, None)
+        .res();
+    assert_eq!(
+        res.set_block_state(WEST, vec![on(true)]).unwrap(),
+        Err(WorldError::Denied)
+    );
+    for pos in [EAST, UP, DOWN] {
+        assert_eq!(
+            res.set_block_state(pos, vec![on(true)]).unwrap(),
+            Err(WorldError::NotOwned),
+            "{pos:?}"
+        );
+    }
+    assert_eq!(res.ops, Vec::new());
+}
+
+/// A replacement resets the block's states to its defaults, the first value of each, and drops
+/// the states staged before it; states staged after it stay after it.
+#[test]
+fn replacement_resets_states() {
+    let mut res = lamp_fixture().res();
+    assert_eq!(res.set_block_state(ANCHOR, vec![on(true)]).unwrap(), Ok(()));
+    assert_eq!(res.set_block(ANCHOR, LAMP.to_owned()).unwrap(), Ok(()));
+    assert_eq!(
+        res.block_states(ANCHOR).unwrap(),
+        Ok(lamp("down", false, "red"))
+    );
+    assert_eq!(
+        res.set_block_state(ANCHOR, vec![colour("blue")]).unwrap(),
+        Ok(())
+    );
+    assert_eq!(
+        res.ops,
+        vec![
+            Op::SetBlock {
+                pos: ANCHOR,
+                id: LAMP.to_owned(),
+            },
+            Op::SetBlockState {
+                pos: ANCHOR,
+                states: vec![colour("blue")],
+            },
+        ]
+    );
+    assert_eq!(res.set_block(ANCHOR, AIR.to_owned()).unwrap(), Ok(()));
+    assert_eq!(res.block_states(ANCHOR).unwrap(), Ok(Vec::new()));
+    assert_eq!(
+        res.set_block_state(ANCHOR, vec![on(true)]).unwrap(),
+        Err(WorldError::NotOwned)
+    );
 }

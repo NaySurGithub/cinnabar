@@ -20,9 +20,10 @@ use crate::limits::{
     MAX_CLIENT_SENDS, MAX_HOST_CALLS, MAX_STAGED_DATA_BYTES, MAX_STAGED_OPS, MAX_TELL_BYTES,
     MAX_TELLS, MAX_VALUE_DEPTH,
 };
-use crate::load::Loaded;
+use crate::load::{Loaded, OwnBlocks, holds};
 use crate::protocol::{
-    self, BlockPos, Call, Cell, FailKind, Op, Outcome, Request, Scalar, bounded_reason,
+    self, BlockPos, BlockState, Call, Cell, FailKind, Op, Outcome, Request, Scalar, StateDef,
+    StateValue, StateValues, bounded_reason,
 };
 use crate::value::{self, Refusal};
 
@@ -41,7 +42,7 @@ pub fn run(engine: &Engine, loaded: &Loaded, request: &Request) -> Outcome {
 
 /// [`run`], which also returns the fuel that the callback consumed.
 pub fn run_metered(engine: &Engine, loaded: &Loaded, request: &Request) -> (Outcome, u64) {
-    let (res, export) = match prepare(&loaded.block_ids, request) {
+    let (res, export) = match prepare(&loaded.own, request) {
         Ok(prepared) => prepared,
         Err(reason) => {
             let reason = format!("malformed callback request: {reason}");
@@ -246,8 +247,8 @@ pub struct CallbackRes {
     /// The actor's focus, which a client message or an epoch may have; its snapshot is the one
     /// its anchor would have.
     focus: Option<BlockPos>,
-    /// The ids of this Experience's blocks.
-    own: Arc<[String]>,
+    /// The ids and state axes of this Experience's blocks.
+    own: Arc<OwnBlocks>,
     snapshot: Snapshot,
     /// In the order they commit. A position has at most one `SetBlockData`, and it comes after
     /// any `SetBlock` there.
@@ -276,12 +277,14 @@ struct Snapshot {
     column: Option<(i32, i32)>,
 }
 
-/// One snapshot cell. `owned` means it holds this Experience's block, which alone has data.
+/// One snapshot cell. `owned` means it holds this Experience's block, which alone has data and
+/// states.
 struct Slot {
     loaded: bool,
     id: String,
     owned: bool,
     data: Option<Vec<u8>>,
+    states: Vec<BlockState>,
 }
 
 /// The export a callback calls, with its arguments.
@@ -309,13 +312,13 @@ enum Export<'a> {
     },
 }
 
-/// The callback's host value and export for `request`, an Experience whose block ids are `own`.
+/// The callback's host value and export for `request`, an Experience whose blocks are `own`.
 /// The anchor, whose chunk column bounds writes, is the call's position; a client message and an
 /// epoch have their player's focus, if any, and without one no snapshot. Hex is decoded and player ids are checked here, so a request
 /// that is not a callback, holds bad hex or a player id that is not canonical fails before
 /// anything runs.
 fn prepare<'a>(
-    own: &Arc<[String]>,
+    own: &Arc<OwnBlocks>,
     request: &'a Request,
 ) -> Result<(CallbackRes, Export<'a>), String> {
     let Request::Callback {
@@ -395,6 +398,7 @@ fn prepare<'a>(
                 id: cell.id.clone(),
                 owned: cell.owned,
                 data,
+                states: cell.states.clone(),
             };
             Ok((cell.pos, slot))
         })
@@ -522,8 +526,8 @@ impl CallbackRes {
         Ok(self.info.clone())
     }
 
-    /// A 0.5 call whose implementation has not landed (SP5 tasks E, F and G): it counts as a
-    /// host call and is refused as `unsupported-state`, staging nothing.
+    /// A 0.5 call whose implementation has not landed (SP5 tasks F and G): it counts as a host
+    /// call and is refused as `unsupported-state`, staging nothing.
     pub(crate) fn not_yet<T>(&mut self) -> Result<Result<T, WorldError>> {
         self.host_call()?;
         Ok(Err(WorldError::UnsupportedState))
@@ -540,9 +544,9 @@ impl CallbackRes {
         Ok(self.snapshot.read(pos).map(|slot| slot.id.clone()))
     }
 
-    /// Replaces air or an own block with air or an own block. The position loses its data, so
-    /// data staged for it is dropped, and it is owned exactly when the new block is this
-    /// Experience's.
+    /// Replaces air or an own block with air or an own block. The position loses its data and
+    /// states, so data and states staged for it are dropped; it is owned exactly when the new
+    /// block is this Experience's, which starts with its default states.
     pub(crate) fn set_block(
         &mut self,
         pos: BlockPos,
@@ -556,12 +560,17 @@ impl CallbackRes {
         if slot.id != AIR && !slot.owned {
             return Ok(Err(WorldError::NotOwned));
         }
+        let axes = match self.own.get(&id) {
+            Some(axes) => axes.as_slice(),
+            None if id == AIR => &[],
+            None => return Ok(Err(WorldError::UnknownBlock)),
+        };
         let owned = id != AIR;
-        if owned && !self.own.contains(&id) {
-            return Ok(Err(WorldError::UnknownBlock));
-        }
         if let Some(index) = data_op(&self.ops, pos) {
             self.staged_data -= staged_len(&self.ops.remove(index));
+        }
+        if let Some(index) = state_op(&self.ops, pos) {
+            self.ops.remove(index);
         }
         stage(
             &mut self.ops,
@@ -571,9 +580,63 @@ impl CallbackRes {
             },
         )?;
         self.added -= len(slot.data.as_deref());
+        slot.states = default_states(axes);
         slot.id = id;
         slot.owned = owned;
         slot.data = None;
+        Ok(Ok(()))
+    }
+
+    /// The states of the block at `pos`, which only this Experience's blocks have.
+    pub(crate) fn block_states(
+        &mut self,
+        pos: BlockPos,
+    ) -> Result<Result<Vec<BlockState>, WorldError>> {
+        self.host_call()?;
+        Ok(self.snapshot.read(pos).map(|slot| slot.states.clone()))
+    }
+
+    /// Sets some states of an own block, keeping its data and generation: each named once,
+    /// among the block's states, with a value it takes, else `unsupported-state`. Every write
+    /// to one position merges into the one op staged for it.
+    pub(crate) fn set_block_state(
+        &mut self,
+        pos: BlockPos,
+        states: Vec<BlockState>,
+    ) -> Result<Result<(), WorldError>> {
+        self.host_call()?;
+        let slot = match self.snapshot.write(pos) {
+            Ok(slot) => slot,
+            Err(error) => return Ok(Err(error)),
+        };
+        let Some(axes) = self.own.get(&slot.id).filter(|_| slot.owned) else {
+            return Ok(Err(WorldError::NotOwned));
+        };
+        for (i, state) in states.iter().enumerate() {
+            let axis = axes.iter().find(|axis| axis.name == state.name);
+            let repeated = states[..i].iter().any(|earlier| earlier.name == state.name);
+            if repeated || !axis.is_some_and(|axis| holds(axis, &state.value)) {
+                return Ok(Err(WorldError::UnsupportedState));
+            }
+        }
+        if states.is_empty() {
+            return Ok(Ok(()));
+        }
+        match state_op(&self.ops, pos) {
+            Some(index) => {
+                if let Op::SetBlockState { states: staged, .. } = &mut self.ops[index] {
+                    merge(staged, &states);
+                }
+            }
+            None => stage(
+                &mut self.ops,
+                Op::SetBlockState {
+                    pos,
+                    states: states.clone(),
+                },
+            )?,
+        }
+        merge(&mut slot.states, &states);
         Ok(Ok(()))
     }
 
@@ -723,6 +786,36 @@ fn stage(ops: &mut Vec<Op>, op: Op) -> Result<()> {
     }
     ops.push(op);
     Ok(())
+}
+
+/// The index of the staged `SetBlockState` at `pos`.
+fn state_op(ops: &[Op], pos: BlockPos) -> Option<usize> {
+    ops.iter()
+        .position(|op| matches!(op, Op::SetBlockState { pos: at, .. } if *at == pos))
+}
+
+/// Gives each state in `into` that `states` names its new value, and adds the others.
+fn merge(into: &mut Vec<BlockState>, states: &[BlockState]) {
+    for state in states {
+        match into.iter_mut().find(|current| current.name == state.name) {
+            Some(current) => current.value = state.value.clone(),
+            None => into.push(state.clone()),
+        }
+    }
+}
+
+/// A block's states when it is set without placement: the first value of each, `false` for a
+/// bool.
+fn default_states(axes: &[StateDef]) -> Vec<BlockState> {
+    axes.iter()
+        .map(|axis| BlockState {
+            name: axis.name.clone(),
+            value: match &axis.values {
+                StateValues::Bool => StateValue::Bool(false),
+                StateValues::Choices(choices) => StateValue::Choice(choices[0].clone()),
+            },
+        })
+        .collect()
 }
 
 /// The index of the staged `SetBlockData` at `pos`.

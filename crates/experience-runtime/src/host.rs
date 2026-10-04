@@ -424,18 +424,22 @@ impl world_access::HostCallback for HostState {
     fn block_states(
         &mut self,
         ctx: Resource<CallbackRes>,
-        _pos: BlockPos,
+        pos: BlockPos,
     ) -> Result<Result<Vec<BlockState>, WorldError>> {
-        self.table.get_mut(&ctx)?.not_yet()
+        let states = self.table.get_mut(&ctx)?.block_states(pos.into())?;
+        Ok(states.map(|states| states.into_iter().map(Into::into).collect()))
     }
 
     fn set_block_state(
         &mut self,
         ctx: Resource<CallbackRes>,
-        _pos: BlockPos,
-        _states: Vec<BlockState>,
+        pos: BlockPos,
+        states: Vec<BlockState>,
     ) -> Result<Result<(), WorldError>> {
-        self.table.get_mut(&ctx)?.not_yet()
+        let states = states.into_iter().map(Into::into).collect();
+        self.table
+            .get_mut(&ctx)?
+            .set_block_state(pos.into(), states)
     }
 
     fn network(
