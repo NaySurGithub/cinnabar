@@ -28,6 +28,11 @@ pub use client_presentation::camera::{
 use client_presentation::camera::{fov, look, overlay_publish};
 mod facts;
 mod presentation;
+
+/// Optional developer camera input, after physical look and before movement.
+#[cfg(feature = "local-mods")]
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct ModCameraInputSet;
 /// Spawns and drives one [`Camera3d`] fly camera.
 pub struct FlyCameraPlugin {
     auto_fly: bool,
@@ -107,6 +112,14 @@ impl Plugin for FlyCameraPlugin {
                     .after(resolve_camera_pose)
                     .in_set(ClientFrameSet::Camera),
             ),
+        );
+        #[cfg(feature = "local-mods")]
+        app.configure_sets(
+            Update,
+            ModCameraInputSet
+                .in_set(FlyCameraUpdateSet)
+                .after(update_look)
+                .before(update_movement),
         );
     }
 }
@@ -199,9 +212,9 @@ pub(crate) fn update_cursor_capture(
     mouse_buttons: ResMut<ButtonInput<MouseButton>>,
     mouse_motion: ResMut<AccumulatedMouseMotion>,
     auto_fly: ResMut<AutoFly>,
-    ui: Option<Res<crate::ui_runtime::UiRuntime>>,
+    ui: Option<Res<client_ui::ui_runtime::UiRuntime>>,
     menu: Option<Res<crate::menu::MenuRuntime>>,
-    presentation: Option<Res<crate::ui_runtime::presentation::UiPresentationRuntime>>,
+    presentation: Option<Res<client_ui::ui_runtime::presentation::UiPresentationRuntime>>,
     consent: Option<Res<crate::server_experiences::input::ConsentInput>>,
 ) {
     let policy = client_presentation::observations::CursorPolicy {
