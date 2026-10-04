@@ -6,7 +6,12 @@ pub mod package;
 #[cfg(feature = "execution")]
 mod runtime;
 #[cfg(feature = "execution")]
+mod screens;
+#[cfg(feature = "execution")]
 pub mod server;
+
+#[cfg(feature = "execution")]
+pub use screens::{LoadedPackage, ModEvent, ModScreens};
 
 #[cfg(feature = "execution")]
 pub use experience_sdk::mod_manifest::{KEY_NAMES, KeyDecl, Modifier};
@@ -30,10 +35,8 @@ use {
     experience_sdk::mod_manifest::{ModManifest, ModPermission},
     package::{Package, read_bounded},
     runtime::{Declared, Instance},
-    server_experience::{
-        screen::{self, ScreenLayout},
-        session_data::{SessionData, Stack},
-    },
+    screens::{declared, grant, loaded},
+    server_experience::{screen::ScreenLayout, session_data::SessionData},
     sha2::{Digest, Sha256},
     std::{
         path::{Path, PathBuf},
@@ -87,76 +90,11 @@ impl ModGrants {
     }
 }
 
-/// One host event for a 0.2 mod's callbacks.
-#[cfg(feature = "execution")]
-#[derive(Clone, Debug, PartialEq)]
-pub enum ModEvent {
-    ScreenChanged(Option<ScreenLayout>),
-    Action { id: String, index: Option<u32> },
-    SecondaryAction { id: String, index: Option<u32> },
-    Scrolled { delta: f64, x: f64, y: f64 },
-    TextChanged { control: String, text: String },
-    Key { id: String, hovered: Option<Stack> },
-    DataChanged,
-}
-
-#[cfg(feature = "execution")]
-impl ModEvent {
-    /// One frame's events as delivered: the latest layout first, one data change, then the rest
-    /// in order, with one text change per edit box (its latest, where it last occurred).
-    pub fn coalesce(events: Vec<Self>) -> Vec<Self> {
-        let mut out = Vec::with_capacity(events.len());
-        if let Some(layout) = events
-            .iter()
-            .rev()
-            .find(|event| matches!(event, Self::ScreenChanged(_)))
-        {
-            out.push(layout.clone());
-        }
-        if events.contains(&Self::DataChanged) {
-            out.push(Self::DataChanged);
-        }
-        for (index, event) in events.iter().enumerate() {
-            let later_text = |control: &str| {
-                events[index + 1..].iter().any(|later| {
-                    matches!(later, Self::TextChanged { control: other, .. } if other == control)
-                })
-            };
-            match event {
-                Self::ScreenChanged(_) | Self::DataChanged => {}
-                Self::TextChanged { control, .. } if later_text(control) => {}
-                event => out.push(event.clone()),
-            }
-        }
-        out
-    }
-}
-
-/// What a mod draws beside the container screens: its overlay and view templates and the data
-/// bound into both.
-#[cfg(feature = "execution")]
-#[derive(Clone, Debug, Default)]
-pub struct ModScreens {
-    pub overlay: Option<String>,
-    pub view: Option<String>,
-    /// The last `focus-text` request, with the data revision it was made at.
-    pub focus: Option<(u64, String)>,
-    pub data: screen::Modal,
-}
-
 /// Where a mod came from, which reload reads again.
 #[cfg(feature = "execution")]
 enum Source {
     Component(PathBuf),
     Package(PathBuf),
-}
-
-/// A loaded package's declarations and screen files.
-#[cfg(feature = "execution")]
-pub struct LoadedPackage {
-    pub id: String,
-    pub keys: Vec<KeyDecl>,
-    pub files: Arc<screen::Files>,
 }
 
 /// A developer-selected component with transactional reload and trap quarantine.
@@ -346,37 +284,6 @@ fn engine() -> Result<Engine> {
     config.wasm_component_model(true).consume_fuel(true);
     config.max_wasm_stack(256 * 1024);
     Engine::new(&config)
-}
-
-#[cfg(feature = "execution")]
-fn grant(manifest: &ModManifest, extra: ModGrants) -> ModGrants {
-    let asked = ModGrants::from_manifest(manifest);
-    ModGrants {
-        screen: asked.screen,
-        items: asked.items,
-        recipes: asked.recipes,
-        keys: asked.keys,
-        ..extra
-    }
-}
-
-#[cfg(feature = "execution")]
-fn declared(package: &Package) -> Declared {
-    let manifest = &package.manifest;
-    Declared {
-        templates: manifest.templates.iter().cloned().collect(),
-        actions: manifest.actions.iter().cloned().collect(),
-        keys: manifest.keys.iter().map(|key| key.id.clone()).collect(),
-    }
-}
-
-#[cfg(feature = "execution")]
-fn loaded(package: Package) -> LoadedPackage {
-    LoadedPackage {
-        id: package.manifest.id.clone(),
-        keys: package.manifest.keys,
-        files: package.files,
-    }
 }
 
 /// Bounds file reads even if a writer grows the file between metadata and read.

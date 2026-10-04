@@ -232,7 +232,7 @@ forbidden_dependencies = ["bevy", "wgpu", "protocol", "world"]
 [[crates]]
 name = "mod-host"
 path = "crates/mod-host"
-allowed_dependencies = ["mod-api", "server-experience"]
+allowed_dependencies = ["experience-sdk", "mod-api", "server-experience"]
 forbidden_dependencies = ["bevy", "wgpu", "protocol", "world"]
 
 [[crates]]
@@ -245,6 +245,12 @@ forbidden_dependencies = ["bevy", "wgpu", "protocol", "world"]
 name = "time-changer-mod"
 path = "examples/mods/time-changer"
 allowed_dependencies = ["mod-api"]
+forbidden_dependencies = ["bevy", "wgpu", "protocol", "world"]
+
+[[crates]]
+name = "screen-probe-mod"
+path = "examples/mods/screen-probe"
+allowed_dependencies = ["experience-sdk", "mod-api"]
 forbidden_dependencies = ["bevy", "wgpu", "protocol", "world"]
 
 [[crates]]
