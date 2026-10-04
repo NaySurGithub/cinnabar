@@ -14,9 +14,20 @@ use crate::limits::{
     MAX_REASON_BYTES, MAX_STAGED_OPS, MAX_TELL_BYTES, MAX_TELLS, MAX_VALUE_DEPTH,
 };
 
+mod player;
+mod visuals;
+
+pub use player::{Inventory, ItemStack, Network, NewStack};
+pub use visuals::{
+    BlockState, BoneVisibility, Condition, Flipbook, ItemDef, Material, Permutation, Pixel,
+    PixelBox, PlacementState, QuarterTurns, RenderMethod, StateDef, StateTest, StateValue,
+    StateValues, Visual,
+};
+
 /// 2 added the `client_message` call and the `send_client` op; 3 the `epoch` call and list and
-/// record values; 4 the `focus` of those calls and of `loaded`.
-pub const PROTOCOL_VERSION: u32 = 4;
+/// record values; 4 the `focus` of those calls and of `loaded`; 5 server WIT 0.5's block states
+/// and visuals, items, the actor's inventory, the network scope and their ops.
+pub const PROTOCOL_VERSION: u32 = 5;
 
 const _: () = assert!(MAX_FRAME_BYTES <= u32::MAX as usize);
 
@@ -49,6 +60,7 @@ pub struct Info {
 }
 
 /// One snapshot cell. `id` is empty when the cell is not loaded; `data` is lowercase hex.
+/// `states` are an owned block's state values.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Cell {
@@ -57,6 +69,7 @@ pub struct Cell {
     pub id: String,
     pub owned: bool,
     pub data: Option<String>,
+    pub states: Vec<BlockState>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -162,6 +175,10 @@ pub enum Request {
         world_max_y: i32,
         data_budget: u64,
         snapshot: Vec<Cell>,
+        /// The anchor's network, whose members `snapshot` holds, when the anchor is a member.
+        network: Option<Network>,
+        /// The actor's inventory, when the callback has an actor.
+        inventory: Option<Inventory>,
         call: Call,
     },
     /// An empty struct variant, not a unit variant: serde ignores unknown fields on internally
@@ -187,6 +204,8 @@ pub enum Mining {
     },
 }
 
+/// A validated block: its 0.1 definition, then server WIT 0.5's states, placement traits, look
+/// and network membership. A block with a `visual` binds no `textures`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BlockDef {
@@ -194,6 +213,11 @@ pub struct BlockDef {
     pub display_name: String,
     pub textures: Vec<Texture>,
     pub mining: Mining,
+    pub states: Vec<StateDef>,
+    pub placement: Vec<PlacementState>,
+    pub visual: Option<Visual>,
+    pub permutations: Vec<Permutation>,
+    pub network: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -228,6 +252,21 @@ pub enum Op {
         schema: u16,
         payload: Vec<Scalar>,
     },
+    /// New values for some states of an owned block, keeping its data and generation.
+    SetBlockState {
+        pos: BlockPos,
+        states: Vec<BlockState>,
+    },
+    /// New content for one of the actor's inventory slots; `None` empties it.
+    SetSlot {
+        slot: u32,
+        stack: Option<NewStack>,
+    },
+    /// An item entity holding `stack`, spawned at `pos`.
+    DropItem {
+        pos: BlockPos,
+        stack: NewStack,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -258,6 +297,7 @@ pub enum Response {
         id: String,
         version: String,
         blocks: Vec<BlockDef>,
+        items: Vec<ItemDef>,
         focus: bool,
     },
     LoadFailed {
@@ -348,6 +388,8 @@ struct Enums {
     faces: [Face; 6],
     causes: [Cause; 3],
     fail_kinds: [FailKind; 4],
+    render_methods: [RenderMethod; 4],
+    placement_states: [PlacementState; 4],
 }
 
 /// Lists every variant of a fieldless enum. The same list feeds an exhaustive `match`, so adding
@@ -397,6 +439,13 @@ pub fn fixtures() -> Vec<(&'static str, String)> {
                 id: "benergistics:controller".to_owned(),
                 owned: true,
                 data: Some(hex::encode(&[0x01, 0x00, 0xff])),
+                states: vec![
+                    state(
+                        "benergistics:state",
+                        StateValue::Choice("online".to_owned()),
+                    ),
+                    state("benergistics:powered", StateValue::Bool(true)),
+                ],
             },
             Cell {
                 pos: neighbor,
@@ -404,6 +453,7 @@ pub fn fixtures() -> Vec<(&'static str, String)> {
                 id: "minecraft:stone".to_owned(),
                 owned: false,
                 data: None,
+                states: Vec::new(),
             },
             Cell {
                 pos: BlockPos {
@@ -415,11 +465,63 @@ pub fn fixtures() -> Vec<(&'static str, String)> {
                 id: String::new(),
                 owned: false,
                 data: None,
+                states: Vec::new(),
             },
         ],
+        network: None,
+        inventory: None,
         call,
     };
     let result = |seq: u64, outcome: Outcome| Response::Result { seq, outcome };
+    // A terminal right-click in a network: the anchor's network and the actor's inventory, a
+    // stack of plain stone in hand and an Experience's own cell in the offhand.
+    let mut slots = vec![None; 37];
+    slots[0] = Some(ItemStack {
+        id: "minecraft:stone".to_owned(),
+        metadata: 0,
+        count: 64,
+        max_count: 64,
+        data: None,
+        plain: true,
+    });
+    slots[36] = Some(ItemStack {
+        id: "benergistics:item_storage_cell_1k".to_owned(),
+        metadata: 0,
+        count: 1,
+        max_count: 1,
+        data: Some(hex::encode(&[0x01, 0x00, 0x00])),
+        plain: false,
+    });
+    let mut networked = callback(
+        7,
+        Some(player),
+        Call::Interact {
+            player: player.to_owned(),
+            pos: controller,
+            face: Face::Up,
+        },
+    );
+    if let Request::Callback {
+        network, inventory, ..
+    } = &mut networked
+    {
+        *network = Some(Network {
+            blocks: vec![controller, neighbor],
+            truncated: false,
+        });
+        *inventory = Some(Inventory { selected: 0, slots });
+    }
+    let new_stack = |id: &str, count: u8, data: Option<&[u8]>| NewStack {
+        id: id.to_owned(),
+        metadata: 0,
+        count,
+        data: data.map(hex::encode),
+    };
+    let pixel = |x: f32, y: f32, z: f32| Pixel { x, y, z };
+    let north_on = vec![vec![StateTest {
+        state: state("benergistics:north", StateValue::Bool(true)),
+        equal: true,
+    }]];
     // Every scalar type, the integer beyond what a JSON double holds exactly, and a list of
     // records, one of them empty, next to an empty list.
     let record = vec![
@@ -462,6 +564,7 @@ pub fn fixtures() -> Vec<(&'static str, String)> {
             focus: Some(controller),
         },
     );
+    let asset = |file: &str| format!("/srv/experiences/benergistics/assets/{file}");
     let texture = |slot: &str, file: &str| Texture {
         slot: slot.to_owned(),
         path: format!("/srv/experiences/benergistics/assets/{file}"),
@@ -533,6 +636,7 @@ pub fn fixtures() -> Vec<(&'static str, String)> {
         ),
         ("request_callback_client_message", pretty(&client_message)),
         ("request_callback_epoch", pretty(&epoch)),
+        ("request_callback_network", pretty(&networked)),
         ("request_shutdown", pretty(&Request::Shutdown {})),
         (
             "response_loaded",
@@ -549,14 +653,94 @@ pub fn fixtures() -> Vec<(&'static str, String)> {
                             texture("up", "controller_powered.png"),
                         ],
                         mining: Mining::Breakable { hardness: 1.5 },
+                        states: Vec::new(),
+                        placement: Vec::new(),
+                        visual: None,
+                        permutations: Vec::new(),
+                        network: true,
                     },
                     BlockDef {
                         id: "benergistics:creative_energy_cell".to_owned(),
                         display_name: "Creative Energy Cell".to_owned(),
                         textures: vec![texture("*", "creative_energy_cell.png")],
                         mining: Mining::Unbreakable {},
+                        states: Vec::new(),
+                        placement: Vec::new(),
+                        visual: None,
+                        permutations: Vec::new(),
+                        network: true,
+                    },
+                    // A cable: six connection states shown by bone visibility, a flipbook, a
+                    // placement trait and a permutation that turns it.
+                    BlockDef {
+                        id: "benergistics:glass_cable".to_owned(),
+                        display_name: "ME Glass Cable".to_owned(),
+                        textures: Vec::new(),
+                        mining: Mining::Breakable { hardness: 0.5 },
+                        states: vec![
+                            StateDef {
+                                name: "benergistics:north".to_owned(),
+                                values: StateValues::Bool,
+                            },
+                            StateDef {
+                                name: "benergistics:colour".to_owned(),
+                                values: StateValues::Choices(vec![
+                                    "fluix".to_owned(),
+                                    "white".to_owned(),
+                                ]),
+                            },
+                        ],
+                        placement: vec![PlacementState::FacingDirection],
+                        visual: Some(Visual {
+                            geometry: Some(asset("glass_cable.geo.json")),
+                            materials: vec![Material {
+                                instance: "*".to_owned(),
+                                path: asset("glass_cable.png"),
+                                render_method: RenderMethod::AlphaTest,
+                                flipbook: Some(Flipbook {
+                                    ticks_per_frame: 25,
+                                    frames: vec![0, 1, 2, 1],
+                                    blend_frames: true,
+                                }),
+                            }],
+                            bones: vec![BoneVisibility {
+                                bone: "north".to_owned(),
+                                visible: north_on.clone(),
+                            }],
+                            collision: Some(PixelBox {
+                                min: pixel(6.5, 6.5, 6.5),
+                                max: pixel(9.5, 9.5, 9.5),
+                            }),
+                            selection: None,
+                            rotation: None,
+                        }),
+                        permutations: vec![Permutation {
+                            when: vec![
+                                north_on[0].clone(),
+                                vec![StateTest {
+                                    state: state(
+                                        "benergistics:colour",
+                                        StateValue::Choice("white".to_owned()),
+                                    ),
+                                    equal: false,
+                                }],
+                            ],
+                            geometry: None,
+                            materials: None,
+                            bones: None,
+                            collision: None,
+                            selection: None,
+                            rotation: Some(QuarterTurns { x: 0, y: 1, z: 0 }),
+                        }],
+                        network: true,
                     },
                 ],
+                items: vec![ItemDef {
+                    id: "benergistics:item_storage_cell_1k".to_owned(),
+                    display_name: "1k ME Item Storage Cell".to_owned(),
+                    icon: asset("item_storage_cell_1k.png"),
+                    max_stack: 1,
+                }],
                 focus: true,
             }),
         ),
@@ -593,6 +777,29 @@ pub fn fixtures() -> Vec<(&'static str, String)> {
                             channel: "benergistics.controller".to_owned(),
                             schema: 1,
                             payload: record,
+                        },
+                        Op::SetBlockState {
+                            pos: controller,
+                            states: vec![state(
+                                "benergistics:state",
+                                StateValue::Choice("conflicted".to_owned()),
+                            )],
+                        },
+                        Op::SetSlot {
+                            slot: 0,
+                            stack: Some(new_stack("minecraft:stone", 32, None)),
+                        },
+                        Op::SetSlot {
+                            slot: 36,
+                            stack: None,
+                        },
+                        Op::DropItem {
+                            pos: neighbor,
+                            stack: new_stack(
+                                "benergistics:item_storage_cell_1k",
+                                1,
+                                Some(&[0x01, 0x00, 0x00]),
+                            ),
                         },
                     ],
                 },
@@ -637,9 +844,29 @@ pub fn fixtures() -> Vec<(&'static str, String)> {
                 faces: all_variants!(Face: Down, Up, North, South, West, East),
                 causes: all_variants!(Cause: Player, Guest, Environment),
                 fail_kinds: all_variants!(FailKind: Trap, Fuel, Deadline, Limit),
+                render_methods: all_variants!(
+                    RenderMethod: Opaque,
+                    AlphaTest,
+                    Blend,
+                    DoubleSided
+                ),
+                placement_states: all_variants!(
+                    PlacementState: CardinalDirection,
+                    FacingDirection,
+                    BlockFace,
+                    VerticalHalf
+                ),
             }),
         ),
     ]
+}
+
+/// A state named `name` holding `value`.
+fn state(name: &str, value: StateValue) -> BlockState {
+    BlockState {
+        name: name.to_owned(),
+        value,
+    }
 }
 
 #[cfg(test)]

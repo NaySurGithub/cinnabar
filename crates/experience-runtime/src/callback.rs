@@ -179,6 +179,29 @@ fn invoke(
                 Export::Epoch { player } => server.call_epoch(&mut *store, ctx, player),
             }
         }
+        Pre::V0_5(pre) => {
+            let server = pre.instantiate(&mut *store)?;
+            match export {
+                Export::Place(change) => server.call_on_place(&mut *store, ctx, change),
+                Export::Break(change) => server.call_on_break(&mut *store, ctx, change),
+                Export::Interact { player, pos, face } => {
+                    server.call_on_interact(&mut *store, ctx, player, *pos, *face)
+                }
+                Export::Neighbor { pos, neighbor } => {
+                    server.call_on_neighbor_changed(&mut *store, ctx, *pos, *neighbor)
+                }
+                Export::ClientMessage {
+                    player,
+                    channel,
+                    schema,
+                    payload,
+                } => {
+                    let nodes = value::encode(payload);
+                    server.call_client_message(&mut *store, ctx, player, channel, *schema, &nodes)
+                }
+                Export::Epoch { player } => server.call_epoch(&mut *store, ctx, player),
+            }
+        }
     }?;
     let res = store.data_mut().table.delete(owned)?;
     Ok((result, res.ops))
@@ -186,7 +209,7 @@ fn invoke(
 
 /// What the world of `pre` lacks to run `export`, `focused` when it has its player's focus, if
 /// anything: 0.1 has no client-message, 0.2 no list or record values, neither has epoch, and
-/// only 0.4 has a focus.
+/// only 0.4 and later have a focus.
 fn unsupported(pre: &Pre, export: &Export<'_>, focused: bool) -> Option<&'static str> {
     match (pre, export) {
         (Pre::V0_1(_), Export::ClientMessage { .. }) => Some("no client-message"),
@@ -497,6 +520,13 @@ impl CallbackRes {
     pub(crate) fn info(&mut self) -> Result<CallbackInfo> {
         self.host_call()?;
         Ok(self.info.clone())
+    }
+
+    /// A 0.5 call whose implementation has not landed (SP5 tasks E, F and G): it counts as a
+    /// host call and is refused as `unsupported-state`, staging nothing.
+    pub(crate) fn not_yet<T>(&mut self) -> Result<Result<T, WorldError>> {
+        self.host_call()?;
+        Ok(Err(WorldError::UnsupportedState))
     }
 
     /// The actor's focus, which only a client message or an epoch may have.

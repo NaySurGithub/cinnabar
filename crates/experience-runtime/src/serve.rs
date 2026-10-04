@@ -95,6 +95,7 @@ fn answer_loaded(
         id: manifest.id.clone(),
         version: manifest.version.clone(),
         blocks: blocks.to_vec(),
+        items: Vec::new(),
         focus,
     };
     let failed = || Response::LoadFailed {
@@ -189,6 +190,11 @@ mod tests {
             display_name: "x".repeat(MAX_FRAME_BYTES),
             textures: Vec::new(),
             mining: Mining::Unbreakable {},
+            states: Vec::new(),
+            placement: Vec::new(),
+            visual: None,
+            permutations: Vec::new(),
+            network: false,
         };
         let mut output = Vec::new();
         assert!(!answer_loaded(&mut output, &manifest, &[block], false).unwrap());

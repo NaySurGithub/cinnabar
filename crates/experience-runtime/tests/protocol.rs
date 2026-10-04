@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use experience_runtime::hex;
 use experience_runtime::limits::MAX_FRAME_BYTES;
 use experience_runtime::protocol::{
-    Cause, Face, FailKind, Mining, Request, Response, Scalar, Texture, fixtures, read_frame,
-    write_frame,
+    Cause, Face, FailKind, Mining, PlacementState, RenderMethod, Request, Response, Scalar,
+    Texture, fixtures, read_frame, write_frame,
 };
 use serde::{Deserialize, Serialize};
 
@@ -16,6 +16,8 @@ struct Enums {
     faces: Vec<Face>,
     causes: Vec<Cause>,
     fail_kinds: Vec<FailKind>,
+    render_methods: Vec<RenderMethod>,
+    placement_states: Vec<PlacementState>,
 }
 
 fn fixture_dir() -> PathBuf {

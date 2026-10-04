@@ -144,11 +144,15 @@ startup.
 ## WIT and semantics
 
 The contract is `crates/experience-sdk/wit/server/server.wit`, package
-`cinnabar:experience-server@0.4.0`, world `server`. The guest exports `register`, which runs once
-at startup and declares its blocks, the callbacks `on-place`, `on-break`, `on-interact` and
-`on-neighbor-changed`, `client-message` and `epoch`. Every world method goes through the borrowed
-`callback` resource, valid for one callback only. The runtime still runs older artifacts against
-their frozen worlds, by the manifest's `api`:
+`cinnabar:experience-server@0.5.0`, world `server`. The guest exports `register`, which runs once
+at startup and declares its blocks and items as a `registration`, the callbacks `on-place`,
+`on-break`, `on-interact` and `on-neighbor-changed`, `client-message` and `epoch`. Every world
+method goes through the borrowed `callback` resource, valid for one callback only. The runtime
+still runs older artifacts against their frozen worlds, by the manifest's `api`:
+
+- `api = "0.4"`, `crates/experience-runtime/wit/0.4/server.wit`: `register` declares plain
+  `block-def`s, which the runtime reads as cube block types and no items, and the callback has
+  none of 0.5's calls. 0.5 only added types, so the 0.4 world shares them.
 
 - `api = "0.3"`, `crates/experience-runtime/wit/0.3/server.wit`: no `callback.focus`, so client
   messages and epochs never have a snapshot. The adapter gives such an Experience no focus, and
@@ -162,6 +166,15 @@ their frozen worlds, by the manifest's `api`:
 
 WIT cannot express the rules below; the runtime (`crates/experience-runtime`) and the adapter
 (`tools/localserver/experience`) both enforce them.
+
+- **0.5, contract first.** 0.5 declares block states and placement traits, visuals (geometry,
+  material instances with render methods and flipbooks, bone visibility, boxes, rotation,
+  permutations over structured conditions), network membership and items, and the callback
+  calls `block-states`, `set-block-state`, `network`, `inventory`, `set-slot` and `drop-item`;
+  IPC protocol 5 carries all of them. Their implementation lands separately (SP5 tasks E, F and
+  G of the Applied Benergistics plan). Until then a `registration` that uses any of them fails
+  the load, naming the block, each new call counts as a host call and is refused as
+  `unsupported-state`, and the adapter refuses their ops as invalid.
 
 - **Blocks.** Stateless cubes registered at startup only: an opaque texture per material slot
   (`*` or all six faces), full-cube collision and selection, and mining that is either
@@ -357,7 +370,11 @@ does not. A staged client message is a
 `send_client` op. Their `scalar` values have the client wire protocol's form,
 `{"type": "integer", "value": 42}`, a list or record holding its values in an array,
 `{"type": "list", "value": [...]}`; the runtime turns them into and out of the guest's pre-order
-nodes.
+nodes. Protocol 5 adds server WIT 0.5's contract: each cell's `states`, a callback's `network`
+(the anchor's network, whose members the snapshot holds) and `inventory` (the actor's), each
+block's `states`, `placement`, `visual`, `permutations` and `network` and `loaded`'s `items`, with
+asset paths absolute as textures' are, and the ops `set_block_state`, `set_slot` and
+`drop_item`. State values have the scalar form, `{"type": "choice", "value": "online"}`.
 
 ## Private data store
 
@@ -410,8 +427,8 @@ These axes are versioned separately. Before 1.0, a breaking change bumps the min
 
 | Axis | Version | Source |
 |---|---|---|
-| Server WIT | 0.3; 0.2 and 0.1 still accepted | `crates/experience-sdk/wit/server/server.wit`; 0.2 and 0.1 in `crates/experience-runtime/wit/<version>/server.wit` |
-| IPC protocol | 3 | `PROTOCOL_VERSION` in `crates/experience-runtime/src/protocol.rs` |
+| Server WIT | 0.5; 0.4, 0.3, 0.2 and 0.1 still accepted | `crates/experience-sdk/wit/server/server.wit`; older ones in `crates/experience-runtime/wit/<version>/server.wit` |
+| IPC protocol | 5 | `PROTOCOL_VERSION` in `crates/experience-runtime/src/protocol.rs` |
 | Server manifest | `api`, `data-schema`; `[client]` is ignored | `crates/experience-runtime/src/manifest.rs` |
 | Client WIT | `cinnabar:server-experience@1.1.0`; 1.0 components still link | `crates/experience-sdk/wit/client/deps/server-experience/capabilities.wit`, world `server-bundle` in `crates/experience-sdk/wit/client/client.wit` |
 | Client wire protocol | 2, negotiated in Hello and Accept; 1 still accepted | `WIRE_VERSION`, `MAX_WIRE_VERSION` in `crates/server-experience/src/policy.rs` |

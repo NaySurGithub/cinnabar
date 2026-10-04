@@ -171,6 +171,7 @@ fn load_then_callback_round_trip() {
             id: loaded.manifest.id,
             version: loaded.manifest.version,
             blocks: loaded.blocks,
+            items: Vec::new(),
             focus: loaded.focus,
         }
     );

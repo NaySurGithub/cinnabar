@@ -101,6 +101,20 @@ fn read_outside_snapshot_is_denied() {
     assert_eq!(outcome(&interact(6)), committed(vec![tell("denied")]));
 }
 
+/// Server WIT 0.5's new calls are in the contract before their implementation (SP5 tasks E, F
+/// and G): each counts as a host call and is refused as `unsupported-state`, staging nothing.
+#[test]
+fn wit_0_5_calls_are_refused_until_implemented() {
+    let refused = "unsupported-state";
+    assert_eq!(
+        outcome(&interact(24)),
+        committed(vec![tell(&format!(
+            "block-states {refused} set-block-state {refused} network {refused} \
+             inventory {refused} set-slot {refused} drop-item {refused}"
+        ))])
+    );
+}
+
 /// The probe's `set-block(up)` fails too, so nothing but the tell is staged.
 #[test]
 fn unloaded_cell_is_unavailable() {
@@ -110,6 +124,7 @@ fn unloaded_cell_is_unavailable() {
         id: String::new(),
         owned: false,
         data: None,
+        states: Vec::new(),
     };
     assert_eq!(
         outcome(&with_cell(interact(5), unloaded)),

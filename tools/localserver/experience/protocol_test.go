@@ -41,9 +41,11 @@ func rustLimits(t *testing.T) fixtureLimits {
 
 // fixtureEnums mirrors the enums fixture: every protocol enum string, in Rust's order.
 type fixtureEnums struct {
-	Faces     []Face     `json:"faces"`
-	Causes    []Cause    `json:"causes"`
-	FailKinds []FailKind `json:"fail_kinds"`
+	Faces           []Face           `json:"faces"`
+	Causes          []Cause          `json:"causes"`
+	FailKinds       []FailKind       `json:"fail_kinds"`
+	RenderMethods   []RenderMethod   `json:"render_methods"`
+	PlacementStates []PlacementState `json:"placement_states"`
 }
 
 // fixturePaths lists the golden fixtures that the Rust runtime writes.
@@ -132,6 +134,13 @@ func checkEnums(t *testing.T, rust *fixtureEnums) {
 	}
 	if !slices.Equal(failKinds, rust.FailKinds) {
 		t.Errorf("Go fail kinds %q, Rust fail kinds %q", failKinds, rust.FailKinds)
+	}
+	if !slices.Equal(renderMethods, rust.RenderMethods) {
+		t.Errorf("Go render methods %q, Rust render methods %q", renderMethods, rust.RenderMethods)
+	}
+	if !slices.Equal(placementStates, rust.PlacementStates) {
+		t.Errorf("Go placement states %q, Rust placement states %q", placementStates,
+			rust.PlacementStates)
 	}
 	for _, other := range []string{`"sideways"`, `"Up"`, `""`, `null`, `1`} {
 		var face Face

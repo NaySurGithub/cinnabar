@@ -74,6 +74,8 @@ impl Fixture {
             world_max_y: self.max_y,
             data_budget: self.budget,
             snapshot: self.cells,
+            network: None,
+            inventory: None,
             call: Call::Interact {
                 player: ACTOR.to_owned(),
                 pos: ANCHOR,
@@ -92,6 +94,7 @@ fn loaded(pos: BlockPos, id: &str, owned: bool, data: Option<&str>) -> Cell {
         id: id.to_owned(),
         owned,
         data: data.map(str::to_owned),
+        states: Vec::new(),
     }
 }
 

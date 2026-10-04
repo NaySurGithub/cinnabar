@@ -255,6 +255,10 @@ func (h *Host) validate(exp string, ev event, snap snapshot, ops []Op) ([]dataWr
 			case sends > maxClientSends:
 				return nil, fmt.Errorf("%w: more than %d client messages", errInvalid, maxClientSends)
 			}
+		case op.SetBlockState != nil || op.SetSlot != nil || op.DropItem != nil:
+			// Server WIT 0.5's ops are in the protocol before the adapter applies them (SP5 tasks
+			// E and G); the runtime does not stage them yet, so one here is a broken helper.
+			return nil, fmt.Errorf("%w: op %d is not supported yet", errInvalid, i)
 		default:
 			return nil, fmt.Errorf("%w: op %d is empty", errInvalid, i)
 		}

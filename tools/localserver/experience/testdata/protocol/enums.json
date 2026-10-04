@@ -17,5 +17,17 @@
     "fuel",
     "deadline",
     "limit"
+  ],
+  "render_methods": [
+    "opaque",
+    "alpha_test",
+    "blend",
+    "double_sided"
+  ],
+  "placement_states": [
+    "cardinal_direction",
+    "facing_direction",
+    "block_face",
+    "vertical_half"
   ]
 }

@@ -116,7 +116,7 @@ fn load_dir(engine: &Engine, dir: &Path) -> Result<Loaded> {
     let module = read_module(dir, &manifest)?;
     let pre = link(engine, &module, api)
         .with_context(|| format!("{SERVER_WASM} is not a {} server component", api.package()))?;
-    let defs = register(engine, &pre, &manifest.id)?;
+    let defs = plain_blocks(register(engine, &pre, &manifest.id)?)?;
     let blocks = validate_blocks(dir, &manifest, defs)?;
     let block_ids = blocks.iter().map(|block| block.id.clone()).collect();
     Ok(Loaded {
@@ -165,14 +165,49 @@ fn link(engine: &Engine, module: &[u8], api: Api) -> Result<Pre> {
 }
 
 /// Runs `register` once on a fresh instance under the register fuel and deadline.
-fn register(engine: &Engine, pre: &Pre, id: &str) -> Result<Vec<wit::BlockDef>> {
+fn register(engine: &Engine, pre: &Pre, id: &str) -> Result<wit::Registration> {
     let mut store = HostState::store(engine, id, REGISTER_FUEL, REGISTER_DEADLINE)?;
     match pre.register(&mut store)? {
-        Ok(defs) => Ok(defs),
+        Ok(registration) => Ok(registration),
         Err(wit::GuestError::Rejected(reason) | wit::GuestError::Failed(reason)) => {
             bail!("register failed: {reason}")
         }
     }
+}
+
+/// The blocks of `registration` as plain definitions. Server WIT 0.5's block states, placement
+/// traits, visuals, network membership and items are in the contract, but this runtime does not
+/// implement them yet (SP5 tasks E, F and G), so a registration that uses any is refused.
+fn plain_blocks(registration: wit::Registration) -> Result<Vec<wit::BlockDef>> {
+    ensure!(
+        registration.items.is_empty(),
+        "register declared items, which this runtime does not support yet"
+    );
+    registration
+        .blocks
+        .into_iter()
+        .map(|block| {
+            let wit::BlockType {
+                def,
+                states,
+                placement,
+                visual,
+                permutations,
+                network,
+            } = block;
+            ensure!(
+                states.is_empty()
+                    && placement == wit::PlacementStates::empty()
+                    && visual.is_none()
+                    && permutations.is_empty()
+                    && !network,
+                "block \"{}\" declares states, placement traits, a visual, permutations or a \
+                 network, which this runtime does not support yet",
+                def.id
+            );
+            Ok(def)
+        })
+        .collect()
 }
 
 /// Checks every declared block; texture paths become absolute under the artifact directory.
@@ -216,6 +251,11 @@ fn validate_blocks(
             display_name,
             textures,
             mining,
+            states: Vec::new(),
+            placement: Vec::new(),
+            visual: None,
+            permutations: Vec::new(),
+            network: false,
         });
     }
     Ok(blocks)
@@ -293,7 +333,7 @@ mod tests {
     use wasmtime::Trap;
     use wasmtime::component::{Component, Linker};
 
-    use super::{engine, validate_blocks, wit};
+    use super::{engine, plain_blocks, validate_blocks, wit};
     use crate::host::{Api, HostState};
     use crate::limits::{MAX_BLOCK_NAME_BYTES, MAX_BLOCKS, MAX_DISPLAY_NAME_BYTES};
     use crate::manifest::{ASSETS_DIR, DATA_SCHEMA, Manifest, SERVER_WASM};
@@ -521,5 +561,84 @@ mod tests {
             }
         }
         assert!(failures.is_empty(), "\n{}", failures.join("\n"));
+    }
+
+    /// A cube block type of `def`, as every world before 0.5 declares its blocks.
+    fn cube(def: wit::BlockDef) -> wit::BlockType {
+        wit::BlockType {
+            def,
+            states: Vec::new(),
+            placement: wit::PlacementStates::empty(),
+            visual: None,
+            permutations: Vec::new(),
+            network: false,
+        }
+    }
+
+    /// 0.5's block features and items are in the contract, but this runtime refuses them until
+    /// they are implemented; plain cube blocks pass.
+    #[test]
+    fn wit_0_5_registrations_are_refused_until_implemented() {
+        let registration = |block: wit::BlockType| wit::Registration {
+            blocks: vec![block],
+            items: Vec::new(),
+        };
+        let blocks = plain_blocks(registration(cube(block("counter")))).unwrap();
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].id, "probe:counter");
+
+        type Edit = fn(&mut wit::BlockType);
+        let edits: Vec<(&str, Edit)> = vec![
+            ("states", |block| {
+                block.states.push(wit::StateDef {
+                    name: "probe:on".to_owned(),
+                    values: wit::StateValues::Bool,
+                });
+            }),
+            ("placement", |block| {
+                block.placement = wit::PlacementStates::FACING_DIRECTION;
+            }),
+            ("a visual", |block| {
+                block.visual = Some(wit::Visual {
+                    geometry: None,
+                    materials: Vec::new(),
+                    bones: Vec::new(),
+                    collision: None,
+                    selection: None,
+                    rotation: None,
+                });
+            }),
+            ("a permutation", |block| {
+                block.permutations.push(wit::Permutation {
+                    when: Vec::new(),
+                    geometry: None,
+                    materials: None,
+                    bones: None,
+                    collision: None,
+                    selection: None,
+                    rotation: None,
+                });
+            }),
+            ("a network", |block| block.network = true),
+        ];
+        for (what, edit) in edits {
+            let mut block = cube(block("counter"));
+            edit(&mut block);
+            let error = plain_blocks(registration(block)).unwrap_err().to_string();
+            assert!(
+                error.contains("probe:counter") && error.contains("does not support yet"),
+                "{what}: {error}"
+            );
+        }
+
+        let mut with_item = registration(cube(block("counter")));
+        with_item.items.push(wit::ItemDef {
+            id: "probe:cell".to_owned(),
+            display_name: "Probe Cell".to_owned(),
+            icon: "cell.png".to_owned(),
+            max_stack: 1,
+        });
+        let error = plain_blocks(with_item).unwrap_err().to_string();
+        assert!(error.contains("items"), "{error}");
     }
 }
