@@ -972,6 +972,9 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
     shutdown_watchdog.complete();
     eprintln!("{SHUTDOWN_COMPLETED} exit_code={}", app_exit_code(&exit));
     if exit.is_error() {
+        if let Some(panic) = crate::lifecycle::panic_message() {
+            bail!("Client runtime failed.\n\nCaptured panic:\n{panic}");
+        }
         bail!("Bevy app exited after a fatal runtime error");
     }
     Ok(())

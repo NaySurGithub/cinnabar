@@ -21,10 +21,12 @@ python3 packaging/android/build.py --abi arm64-v8a
 
 On the shared Fedora host, the command must run through `/home/danick/.local/bin/agent-check`;
 heavy local release builds are deferred to GitHub Actions. The `Android APK (experimental)`
-workflow uploads a signed installable ARM64 APK. A manual x86_64 build supports emulator checks.
-The default key is a local test key, not a production signing identity; a different CI build may
-require uninstalling the earlier test APK before installing it. Generated keys/artifacts live
-under ignored `.local/` and `target/` directories.
+workflow uploads signed installable ARM64 and x86_64 test APKs. Manual runs select one ABI.
+Repository CI restores its development preview key from the `ANDROID_PREVIEW_KEYSTORE_BASE64`
+Actions secret, so later previews can update in place while preserving app data. Fork PRs without
+the secret and local builds generate their own test key. Changing signing identities requires
+uninstalling the earlier APK, which removes its app data. This preview identity is not a production
+release key. Generated keys/artifacts live under ignored `.local/` and `target/` directories.
 
 For release signing, pass `--keystore` and `--key-alias`, with
 `CINNABAR_ANDROID_STORE_PASSWORD` and `CINNABAR_ANDROID_KEY_PASSWORD` in the environment. APK

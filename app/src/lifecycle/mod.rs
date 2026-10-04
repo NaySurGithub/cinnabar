@@ -9,6 +9,10 @@ use anyhow::{Context, Result};
 
 use crate::{first_run, install_layout::InstallLayout};
 
+pub(crate) fn panic_message() -> Option<String> {
+    crash::panic_message()
+}
+
 /// Argument that turns this process into the first-run setup window.
 pub const FIRST_RUN_SETUP_FLAG: &str = first_run::SETUP_FLAG;
 

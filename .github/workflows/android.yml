@@ -109,6 +109,21 @@ jobs:
         with:
           key: android-${{ matrix.abi }}
           cache-on-failure: true
+      - name: Restore the development preview signing key
+        env:
+          ANDROID_PREVIEW_KEYSTORE_BASE64: ${{ secrets.ANDROID_PREVIEW_KEYSTORE_BASE64 }}
+        run: |
+          python3 - <<'PY'
+          import base64
+          import os
+          from pathlib import Path
+          encoded = os.environ.get('ANDROID_PREVIEW_KEYSTORE_BASE64', '')
+          if encoded:
+              keystore = Path('.local/android/test.keystore')
+              keystore.parent.mkdir(parents=True, exist_ok=True)
+              keystore.write_bytes(base64.b64decode(encoded, validate=True))
+              keystore.chmod(0o600)
+          PY
       - name: Build and verify APK payload and signature
         run: python3 packaging/android/build.py --abi "${{ matrix.abi }}" --profile play
       - name: Upload the installable APK

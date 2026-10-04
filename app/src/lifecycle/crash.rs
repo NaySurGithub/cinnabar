@@ -5,6 +5,7 @@ use std::{
     fs,
     io::{Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
+    sync::Mutex,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -14,6 +15,7 @@ use crate::install_layout::InstallLayout;
 
 const LOG_TAIL_BYTES: u64 = 16 * 1024;
 const MAX_REPORTS: usize = 8;
+static FIRST_PANIC: Mutex<Option<String>> = Mutex::new(None);
 
 #[derive(Debug, Serialize)]
 struct Report<'a> {
@@ -28,13 +30,27 @@ struct Report<'a> {
 
 /// Records a report under the crash directory for every panic.
 pub(crate) fn install_panic_hook(layout: &InstallLayout) {
+    if let Ok(mut first) = FIRST_PANIC.lock() {
+        *first = None;
+    }
     let crash_dir = layout.crash_dir();
     let core_log = layout.log_dir().join("core.log");
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        write_report(&crash_dir, &core_log, &info.to_string());
+        let message = info.to_string();
+        if let Ok(mut first) = FIRST_PANIC.lock()
+            && first.is_none()
+        {
+            *first = Some(message.clone());
+        }
+        write_report(&crash_dir, &core_log, &message);
         previous(info);
     }));
+}
+
+/// Bevy turns a render-thread panic into an exit code; preserve its actual cause.
+pub(super) fn panic_message() -> Option<String> {
+    FIRST_PANIC.lock().ok().and_then(|message| message.clone())
 }
 
 /// Drops the oldest reports beyond the bound so a crash loop cannot fill the disk.
