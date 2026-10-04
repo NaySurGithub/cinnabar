@@ -41,6 +41,10 @@ enum CameraMode {
     Pov,
 }
 
+// A wider spectator POV makes close-range combat readable in an embedded canvas.
+// Orbit and follow retain the native camera default.
+const POV_HORIZONTAL_FOV_RADIANS: f32 = 110_f32.to_radians();
+
 struct CameraControl {
     mode: CameraMode,
     player_id: String,
@@ -897,7 +901,11 @@ fn update_viewer(
         return;
     };
     perspective.fov = render::camera::horizontal_fov_to_vertical(
-        render::camera::DEFAULT_HORIZONTAL_FOV_RADIANS,
+        if matches!(state.camera.mode, CameraMode::Pov) {
+            POV_HORIZONTAL_FOV_RADIANS
+        } else {
+            render::camera::DEFAULT_HORIZONTAL_FOV_RADIANS
+        },
         window.width() / window.height(),
     );
     *hands = runtime

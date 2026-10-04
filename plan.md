@@ -11,8 +11,10 @@ skins and camera choices. The portable compiled animator uses the native fixed
 20 Hz Molang, motion, swing/hurt and item-use owners with streamed observations.
 POV camera/hand motion uses the native walk bob, turn spring and hurt tilt;
 damage direction is unavailable, so actual-age events use directionless tilt.
-Camera and hand projection share the native default horizontal FOV and
-aspect-correct conversion.
+Camera and hand projection share the native aspect-correct conversion. Orbit
+and follow retain the native default horizontal FOV; the website spectator POV
+uses a wider 110-degree horizontal FOV for viewing close-range combat. This
+viewer preference does not change the native client's camera default.
 Public fighter names use the shared native nameplate raster/layout owner and
 billboard GPU pass, preserving default distance and sneaking visibility policy.
 Its glyph raster observes exclusive texel-edge UVs; dirty atlas cells use
