@@ -338,7 +338,10 @@ class Smoke:
 
     def collect(self):
         if self.args.server:
-            (self.output / 'servers-final.json').write_bytes(self.private(SERVER_CONFIG, timeout=5))
+            try:
+                (self.output / 'servers-final.json').write_bytes(self.private(SERVER_CONFIG, timeout=5))
+            except (RuntimeError, subprocess.TimeoutExpired, OSError):
+                pass
         for filename in ('first-run.log', 'first-run-status.json', 'client.log', 'client.log.1', 'core.log'):
             try:
                 (self.output / filename).write_bytes(self.private('files/data/logs/' + filename, timeout=5))
