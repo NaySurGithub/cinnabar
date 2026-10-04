@@ -41,4 +41,5 @@ resource-pack = { path = "../resource-pack" }
 [dev-dependencies]
 mod-host = { path = "../mod-host" }
 pack-compiler = { path = "../pack-compiler" }
+protocol = { path = "../protocol", features = ["wire-test-support"] }
 zip = { version = "7", default-features = false, features = ["deflate-flate2-zlib-rs"] }
