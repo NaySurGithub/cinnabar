@@ -32,7 +32,10 @@ pub(crate) fn drive_server_form_input(
     mut button_cursor: Local<MessageCursor<MouseButtonInput>>,
     mut held: Local<bool>,
     menu: Option<Res<MenuRuntime>>,
-    presentation: Res<UiPresentationRuntime>,
+    (presentation, touch_pointer): (
+        Res<UiPresentationRuntime>,
+        Option<Res<crate::android_pointer::UiTouchPointer>>,
+    ),
     mut runtime: ResMut<UiRuntime>,
     mut owned_last_frame: Local<bool>,
     time: Option<Res<Time<Real>>>,
@@ -58,6 +61,16 @@ pub(crate) fn drive_server_form_input(
                 } else {
                     pointer.released = true;
                 }
+            }
+        }
+    }
+    if let Some(touch) = touch_pointer.as_ref() {
+        for &down in &touch.edges {
+            pointer_edges.push(down);
+            if down {
+                pointer.pressed = true;
+            } else {
+                pointer.released = true;
             }
         }
     }
@@ -110,8 +123,15 @@ pub(crate) fn drive_server_form_input(
     {
         let input = engine_input::EngineInput {
             pointer_edges,
-            cursor: window
-                .cursor_position()
+            pointer_mode: touch_pointer
+                .as_ref()
+                .map_or(json_ui::InputMode::Mouse, |pointer| pointer.mode()),
+            cursor: touch_pointer
+                .as_ref()
+                .map_or_else(
+                    || window.cursor_position(),
+                    |pointer| pointer.cursor(window.cursor_position()),
+                )
                 .and_then(|point| ui::UiPoint::new(point.x, point.y).ok()),
             keys: &keys,
             pointer,

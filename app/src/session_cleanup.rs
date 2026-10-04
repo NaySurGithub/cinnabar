@@ -253,6 +253,13 @@ impl SessionDirectoryGuard {
                 source,
             })?
             .join(&name);
+        // Android has no writable /tmp for the bridge's desktop long-path fallback.
+        // Ask the bridge for its actual endpoint names instead of duplicating limits.
+        #[cfg(target_os = "android")]
+        validate_android_endpoints(&directory).map_err(|source| SessionDirectoryError::Create {
+            directory: directory.clone(),
+            source,
+        })?;
         let mut leases = active_directories()
             .lock()
             .unwrap_or_else(|error| error.into_inner());
@@ -376,6 +383,31 @@ impl SessionDirectoryGuard {
             },
         }
     }
+}
+
+#[cfg(any(target_os = "android", all(test, unix)))]
+fn validate_android_endpoints(directory: &Path) -> std::io::Result<()> {
+    for endpoint in [
+        protocol::bridge_endpoint_path(directory),
+        protocol::control_endpoint_path(directory),
+    ] {
+        if endpoint.parent() != Some(directory) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Android session path is too long for private bridge sockets",
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(all(test, unix))]
+#[test]
+fn android_bridge_paths_cannot_escape_private_storage_into_tmp() {
+    let private = Path::new("/data/user/0/app/files/run/connect-1-1");
+    assert!(validate_android_endpoints(private).is_ok());
+    let oversized = private.join("x".repeat(128));
+    assert!(validate_android_endpoints(&oversized).is_err());
 }
 
 /// Removes owned runtime contents while deliberately deleting the authority

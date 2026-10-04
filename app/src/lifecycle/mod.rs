@@ -29,8 +29,15 @@ pub fn before_run(assets_overridden: bool) -> Result<bool> {
     core_health::capture_client_stderr(&layout);
     crash::install_panic_hook(&layout);
     crash::prune_reports(&layout);
-    if !assets_overridden && first_run::ensure_prepared(&layout)? == first_run::Outcome::Quit {
-        return Ok(false);
+    if !assets_overridden {
+        #[cfg(target_os = "android")]
+        if !crate::android::prepare()? {
+            return Ok(false);
+        }
+        #[cfg(not(target_os = "android"))]
+        if first_run::ensure_prepared(&layout)? == first_run::Outcome::Quit {
+            return Ok(false);
+        }
     }
     update::check_in_background(&layout);
     if let Some(notice) = update::available(&layout) {

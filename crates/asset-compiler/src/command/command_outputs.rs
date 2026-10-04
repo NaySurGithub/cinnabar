@@ -183,7 +183,7 @@ mod tests {
             out,
             report: refs,
         };
-        let error = crate::run(command).unwrap_err().to_string();
+        let error = crate::command::run(command).unwrap_err().to_string();
         assert!(error.contains("distinct files"), "{error}");
         let out = PathBuf::from("/tmp/world.bin");
         let command = Command::Compile {
@@ -194,7 +194,7 @@ mod tests {
             biome_registry: "/tmp/biomes.bin".into(),
             out,
         };
-        let error = crate::run(command).unwrap_err().to_string();
+        let error = crate::command::run(command).unwrap_err().to_string();
         assert!(error.contains("distinct files"), "{error}");
         let command = Command::IconAssets {
             pack: "/tmp/pack".into(),
@@ -203,7 +203,7 @@ mod tests {
             out: "/tmp/world.bin".into(),
             report: "/tmp/report.json".into(),
         };
-        let error = crate::run(command).unwrap_err().to_string();
+        let error = crate::command::run(command).unwrap_err().to_string();
         assert!(error.contains("distinct files"), "{error}");
         let command = Command::ActorAssets {
             pack: "/tmp/pack".into(),
@@ -211,7 +211,7 @@ mod tests {
             out: "/tmp/source.json".into(),
             report: "/tmp/report.json".into(),
         };
-        let error = crate::run(command).unwrap_err().to_string();
+        let error = crate::command::run(command).unwrap_err().to_string();
         assert!(error.contains("distinct files"), "{error}");
     }
 }

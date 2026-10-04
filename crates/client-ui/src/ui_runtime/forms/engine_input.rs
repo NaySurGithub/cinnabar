@@ -42,6 +42,7 @@ pub struct EngineInput<'a> {
     pub keys: &'a ButtonInput<KeyCode>,
     pub pointer: PointerButtons,
     pub pointer_edges: Vec<bool>,
+    pub pointer_mode: InputMode,
     pub wheel: Vec<(f32, MouseScrollUnit)>,
     /// Pressed keys this frame with their produced text.
     /// Key presses with their text and whether the OS auto-repeated them.
@@ -90,7 +91,7 @@ pub fn drive(runtime: &mut UiRuntime, frame: &EngineFrame, mut input: EngineInpu
         let pointer = PointerInput {
             point,
             held: input.pointer.held,
-            mode: InputMode::Mouse,
+            mode: input.pointer_mode,
             now: input.now,
         };
         events.extend(
@@ -131,7 +132,18 @@ pub fn drive(runtime: &mut UiRuntime, frame: &EngineFrame, mut input: EngineInpu
             if let Some(point) = point {
                 let region = hit_test(&frame.hits, point);
                 engine_scroll::press(runtime, frame, region, point);
-                events.extend(button(runtime, frame, SELECT, true, Some(point), input.now).events);
+                events.extend(
+                    button(
+                        runtime,
+                        frame,
+                        SELECT,
+                        true,
+                        Some(point),
+                        input.now,
+                        input.pointer_mode,
+                    )
+                    .events,
+                );
             }
         } else {
             runtime.server_forms_mut().engine_mut().drag = None;
@@ -144,7 +156,16 @@ pub fn drive(runtime: &mut UiRuntime, frame: &EngineFrame, mut input: EngineInpu
                 .pressed
                 .clone()
                 .filter(|_| tapped);
-            let up = button(runtime, frame, SELECT, false, point, input.now).events;
+            let up = button(
+                runtime,
+                frame,
+                SELECT,
+                false,
+                point,
+                input.now,
+                input.pointer_mode,
+            )
+            .events;
             releases.push((events.len()..events.len() + up.len(), pressed));
             events.extend(up);
         }
@@ -236,13 +257,14 @@ fn button(
     down: bool,
     point: Option<[f64; 2]>,
     now: f64,
+    mode: InputMode,
 ) -> Dispatch {
     let engine = runtime.server_forms_mut().engine_mut();
     let input = EngineButton {
         id,
         down,
         point,
-        mode: InputMode::Mouse,
+        mode,
         now,
     };
     engine
@@ -305,10 +327,10 @@ fn keyboard(
         }
         _ => return Vec::new(),
     };
-    let down = button(runtime, frame, id, true, None, now);
+    let down = button(runtime, frame, id, true, None, now, InputMode::Mouse);
     let consumed = down.consumed;
     let mut events = down.events;
-    events.extend(button(runtime, frame, id, false, None, now).events);
+    events.extend(button(runtime, frame, id, false, None, now, InputMode::Mouse).events);
     // Content subtrees omit the screen's global cancel mapping.
     if !consumed && key == KeyCode::Escape
         && let Some(target) = &frame.cancel_target

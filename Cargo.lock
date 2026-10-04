@@ -556,6 +556,7 @@ version = "0.1.3"
 dependencies = [
  "acceptance",
  "anyhow",
+ "asset-compiler",
  "assets",
  "bevy",
  "bytes",
@@ -571,6 +572,7 @@ dependencies = [
  "gameplay",
  "image",
  "inventory 0.1.3",
+ "jni 0.21.1",
  "json-ui",
  "launcher",
  "meshing",
@@ -730,6 +732,24 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "bevy_audio"
+version = "0.18.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9d68da32468ce7f4bb2863b71326acfaaa88e9aef8da8306257cd487d40cede4"
+dependencies = [
+ "bevy_app",
+ "bevy_asset",
+ "bevy_ecs",
+ "bevy_math",
+ "bevy_reflect",
+ "bevy_transform",
+ "coreaudio-sys",
+ "cpal",
+ "rodio",
+ "tracing",
 ]
 
 [[package]]
@@ -953,6 +973,7 @@ dependencies = [
  "bevy_anti_alias",
  "bevy_app",
  "bevy_asset",
+ "bevy_audio",
  "bevy_camera",
  "bevy_color",
  "bevy_core_pipeline",
@@ -1694,6 +1715,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "cinnabar-android"
+version = "0.1.3"
+dependencies = [
+ "bedrock-client",
+ "bevy",
+]
+
+[[package]]
 name = "cinnabar-cxb"
 version = "0.1.3"
 dependencies = [
@@ -1836,6 +1865,7 @@ dependencies = [
  "crossbeam-channel",
  "image",
  "inventory 0.1.3",
+ "jni 0.21.1",
  "json-ui",
  "launcher",
  "mod-host",

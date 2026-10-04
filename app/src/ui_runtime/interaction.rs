@@ -131,6 +131,8 @@ pub(crate) fn drive_inventory_ui_actions(
     mut wheel_cursor: Local<MessageCursor<MouseWheel>>,
     presentation: Res<UiPresentationRuntime>,
     mut runtime: ResMut<UiRuntime>,
+    touch_pointer: Option<Res<crate::android_pointer::UiTouchPointer>>,
+    mut close_capture: Local<Option<String>>,
 ) {
     let notches: Vec<(f32, MouseScrollUnit)> = wheel_messages
         .as_deref()
@@ -164,6 +166,7 @@ pub(crate) fn drive_inventory_ui_actions(
         || !runtime.inventory_open()
         || !window.focused
     {
+        *close_capture = None;
         runtime.set_inventory_pointer_gui(None);
         runtime.screen_state_mut().hover = None;
         runtime.screen_state_mut().pointer.reset();
@@ -177,7 +180,11 @@ pub(crate) fn drive_inventory_ui_actions(
     });
     let primary_pressed = mouse_buttons.just_pressed(MouseButton::Left);
     let secondary_pressed = mouse_buttons.just_pressed(MouseButton::Right);
-    let primary_released = mouse_buttons.just_released(MouseButton::Left) || raw_primary_release;
+    let primary_released = mouse_buttons.just_released(MouseButton::Left)
+        || raw_primary_release
+        || touch_pointer
+            .as_ref()
+            .is_some_and(|pointer| pointer.edges.contains(&false));
     let secondary_released =
         mouse_buttons.just_released(MouseButton::Right) || raw_secondary_release;
     // The inventory owns pointer buttons while open. Preserve the edges long
@@ -192,7 +199,20 @@ pub(crate) fn drive_inventory_ui_actions(
     if screen != InventoryScreen::Creative {
         runtime.screen_state_mut().search_focused = false;
     }
-    let Some(position) = window.cursor_position() else {
+    if touch_pointer
+        .as_ref()
+        .is_some_and(|pointer| pointer.canceled)
+    {
+        runtime.set_inventory_pointer_gui(None);
+        runtime.screen_state_mut().hover = None;
+        runtime.screen_state_mut().pointer.reset();
+        *close_capture = None;
+        return;
+    }
+    let Some(position) = touch_pointer.as_ref().map_or_else(
+        || window.cursor_position(),
+        |pointer| pointer.cursor(window.cursor_position()),
+    ) else {
         runtime.set_inventory_pointer_gui(None);
         runtime.screen_state_mut().hover = None;
         return;
@@ -205,6 +225,25 @@ pub(crate) fn drive_inventory_ui_actions(
     let physical_size = [window.physical_width(), window.physical_height()];
     let gui = presentation.inventory_gui_point(point, physical_size, window.scale_factor());
     runtime.set_inventory_pointer_gui(gui);
+    let close = gui.and_then(|gui| {
+        let frame = presentation.engine_container_frame()?;
+        let hit = json_ui::hit_test(&frame.hits, [f64::from(gui[0]), f64::from(gui[1])])?;
+        (hit.pressed.is_some() && hit.pressed == frame.cancel_target).then(|| hit.key.clone())
+    });
+    if primary_pressed {
+        *close_capture = close.clone();
+    }
+    if close_capture.is_some() {
+        let close_clicked = primary_released && close_capture.as_ref() == close.as_ref();
+        runtime.screen_state_mut().pointer.reset();
+        if primary_released {
+            *close_capture = None;
+        }
+        if close_clicked {
+            runtime.close_inventory(&mut player_runtime);
+        }
+        return;
+    }
     let book_open = runtime.screen_state().book_open;
     let reader_mode = runtime
         .screen_state()

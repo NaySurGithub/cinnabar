@@ -374,7 +374,11 @@ pub(crate) fn preferred_render_backends(explicit: Option<&OsStr>) -> Option<Back
     {
         Some(Backends::DX12)
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "android")]
+    {
+        Some(Backends::VULKAN)
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "android")))]
     {
         None
     }
@@ -595,6 +599,7 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
         .enable_json_ui(ui_assets)
         .map_err(|reason| anyhow::anyhow!("JSON-UI engine failed to start: {reason}"))?;
     ui_presentation.set_form_texture_fallbacks(&entity_runtime, layout.vanilla_pack_dir());
+    ui_presentation.enable_touch_controls(cfg!(target_os = "android"));
     // Dev-only: CINNABAR_OREUI_LOCAL_ASSETS compares OreUI against the install's originals.
     if let Some(images) = client_ui::ui_runtime::oreui_assets::load_optional_oreui_images()
         && let Err(reason) = ui_presentation.enable_oreui_originals(images)
@@ -731,6 +736,8 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
 
     let mut app = App::new();
     configure_client_frame_schedule(&mut app);
+    #[cfg(target_os = "android")]
+    crate::android_keyboard::configure_app(&mut app);
     app.add_plugins(
         DefaultPlugins
             .set(WindowPlugin {

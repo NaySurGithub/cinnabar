@@ -386,11 +386,5 @@ fn semantic_runtime_synthesizes_controller_disconnect_and_releases_stale_touch_t
     targets.release_all();
     assert_eq!(targets.target(2), None);
 
-    let physical_source = include_str!("../../semantic_controls/physical.rs");
-    assert!(physical_source.contains("ResMut<'w, SemanticTouchTargets>"));
-    assert!(physical_source.contains("retain_active_contacts"));
-    let touch_source = include_str!("../../ui_runtime/gameplay_touch.rs");
-    assert!(touch_source.contains("PRODUCTION_TOUCH_LAYOUT_AVAILABLE: bool = false"));
-    assert!(touch_source.contains("targets.release_all()"));
-    assert!(!touch_source.contains("targets.set("));
+
 }

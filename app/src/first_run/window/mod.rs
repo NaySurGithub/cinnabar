@@ -6,6 +6,7 @@ mod canvas;
 mod gpu;
 mod view;
 
+#[cfg(not(target_os = "android"))]
 use std::process::Command;
 
 use winit::event_loop::{ControlFlow, EventLoop};
@@ -20,6 +21,7 @@ const EXIT_UNAVAILABLE: i32 = 4;
 /// Where packaging installs the pinned UI font, under the resource root.
 const FONT_DIR: &str = "fonts";
 
+#[cfg(not(target_os = "android"))]
 #[derive(Debug, Eq, PartialEq)]
 pub(super) enum ChildOutcome {
     Prepared,
@@ -29,6 +31,7 @@ pub(super) enum ChildOutcome {
 }
 
 /// Runs the setup window as `<current exe> --first-run-setup` and waits for it.
+#[cfg(not(target_os = "android"))]
 pub(super) fn run_in_child() -> ChildOutcome {
     let Ok(executable) = std::env::current_exe() else {
         return ChildOutcome::Unavailable;
@@ -39,6 +42,7 @@ pub(super) fn run_in_child() -> ChildOutcome {
     }
 }
 
+#[cfg(not(target_os = "android"))]
 fn outcome(code: Option<i32>) -> ChildOutcome {
     match code {
         Some(0) => ChildOutcome::Prepared,
@@ -96,6 +100,7 @@ fn decode_logo() -> Option<Image> {
 mod tests {
     use super::*;
 
+    #[cfg(not(target_os = "android"))]
     #[test]
     fn child_exit_codes_map_to_outcomes() {
         assert_eq!(outcome(Some(0)), ChildOutcome::Prepared);

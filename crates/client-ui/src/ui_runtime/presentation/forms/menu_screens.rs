@@ -70,7 +70,11 @@ const UNLOCK_FULL_GAME_TEXT: &str = "trial.pauseScreen.buyGame";
 
 /// The retail desktop context for this build's platform.
 pub(super) fn retail_context() -> Context {
-    Context::retail(cfg!(target_os = "macos"))
+    if cfg!(target_os = "android") {
+        Context::android()
+    } else {
+        Context::retail(cfg!(target_os = "macos"))
+    }
 }
 
 /// `StartMenuScreenController::addStaticScreenVars` for a full-game, non-edu
@@ -582,10 +586,12 @@ pub(super) fn settings_target() -> (&'static str, Context) {
 
 /// Every launcher screen's context before its own vars.
 fn base_context() -> Context {
-    retail_context().with_flag("can_quit", true).with_var(
-        "play_button_target",
-        Value::String("button.menu_play".into()),
-    )
+    retail_context()
+        .with_flag("can_quit", !cfg!(target_os = "android"))
+        .with_var(
+            "play_button_target",
+            Value::String("button.menu_play".into()),
+        )
 }
 
 /// The static vars `SettingsScreenController` sets for the global settings a

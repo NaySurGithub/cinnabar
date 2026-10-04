@@ -23,14 +23,27 @@ fn server_pin() -> &'static ServerPin {
 /// Core arguments that enable local worlds on the manifest's exact server build and image.
 pub(crate) fn core_args(layout: &InstallLayout) -> Vec<OsString> {
     let pin = server_pin();
-    vec![
+    let args = vec![
         "-local-worlds-dir".into(),
         layout.local_worlds_dir().into(),
         "-bds-version".into(),
         pin.server_version.clone().into(),
         "-bds-image".into(),
         pin.bds_container_image.clone().into(),
-    ]
+    ];
+    #[cfg(target_os = "android")]
+    {
+        let mut args = args;
+        args.extend([
+            "-local-server-bin".into(),
+            layout.local_server_executable().into(),
+            "-local-backend".into(),
+            "dragonfly".into(),
+        ]);
+        args
+    }
+    #[cfg(not(target_os = "android"))]
+    args
 }
 
 #[cfg(test)]

@@ -1,0 +1,573 @@
+{
+  "namespace": "cinnabar_touch",
+  "screen": {
+    "type": "screen",
+    "render_only_when_topmost": false,
+    "controls": [
+      {
+        "look": {
+          "type": "input_panel",
+          "size": [
+            "100%",
+            "100%"
+          ],
+          "button_mappings": [
+            {
+              "from_button_id": "button.menu_select",
+              "to_button_id": "cinnabar.touch.look",
+              "mapping_type": "pressed",
+              "scope": "view"
+            }
+          ]
+        }
+      },
+      {
+        "joystick": {
+          "type": "button",
+          "anchor_from": "bottom_left",
+          "anchor_to": "bottom_left",
+          "offset": [
+            24,
+            -46
+          ],
+          "size": [
+            64,
+            64
+          ],
+          "layer": 10,
+          "button_mappings": [
+            {
+              "from_button_id": "button.menu_select",
+              "to_button_id": "cinnabar.touch.joystick",
+              "mapping_type": "pressed",
+              "scope": "view"
+            }
+          ],
+          "controls": [
+            {
+              "normal": {
+                "type": "image",
+                "texture": "textures/ui/joystick_frame",
+                "size": [
+                  "100%",
+                  "100%"
+                ],
+                "bindings": [
+                  {
+                    "binding_name": "#touch_joystick_normal",
+                    "binding_name_override": "#visible"
+                  }
+                ]
+              }
+            },
+            {
+              "held": {
+                "type": "image",
+                "texture": "textures/ui/joystick_frame",
+                "size": [
+                  "100%",
+                  "100%"
+                ],
+                "bindings": [
+                  {
+                    "binding_name": "#touch_joystick_pressed",
+                    "binding_name_override": "#visible"
+                  }
+                ]
+              }
+            },
+            {
+              "knob": {
+                "type": "draggable",
+                "draggable": "both",
+                "size": [
+                  32,
+                  32
+                ],
+                "anchor_from": "center",
+                "anchor_to": "center",
+                "layer": 11,
+                "controls": [
+                  {
+                    "art": {
+                      "type": "image",
+                      "texture": "textures/ui/joystick_knob",
+                      "size": [
+                        "100%",
+                        "100%"
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "jump": {
+          "type": "button",
+          "anchor_from": "bottom_right",
+          "anchor_to": "bottom_right",
+          "offset": [
+            -20,
+            -44
+          ],
+          "size": [
+            32,
+            32
+          ],
+          "layer": 10,
+          "button_mappings": [
+            {
+              "from_button_id": "button.menu_select",
+              "to_button_id": "cinnabar.touch.jump",
+              "mapping_type": "pressed",
+              "scope": "view"
+            }
+          ],
+          "controls": [
+            {
+              "normal": {
+                "type": "image",
+                "texture": "textures/ui/jump",
+                "size": [
+                  "100%",
+                  "100%"
+                ],
+                "bindings": [
+                  {
+                    "binding_name": "#touch_jump_normal",
+                    "binding_name_override": "#visible"
+                  }
+                ]
+              }
+            },
+            {
+              "held": {
+                "type": "image",
+                "texture": "textures/ui/jump_pressed",
+                "size": [
+                  "100%",
+                  "100%"
+                ],
+                "bindings": [
+                  {
+                    "binding_name": "#touch_jump_pressed",
+                    "binding_name_override": "#visible"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "sneak": {
+          "type": "button",
+          "anchor_from": "bottom_right",
+          "anchor_to": "bottom_right",
+          "offset": [
+            -58,
+            -44
+          ],
+          "size": [
+            32,
+            32
+          ],
+          "layer": 10,
+          "button_mappings": [
+            {
+              "from_button_id": "button.menu_select",
+              "to_button_id": "cinnabar.touch.sneak",
+              "mapping_type": "pressed",
+              "scope": "view"
+            }
+          ],
+          "controls": [
+            {
+              "normal": {
+                "type": "image",
+                "texture": "textures/ui/sneak",
+                "size": [
+                  "100%",
+                  "100%"
+                ],
+                "bindings": [
+                  {
+                    "binding_name": "#touch_sneak_normal",
+                    "binding_name_override": "#visible"
+                  }
+                ]
+              }
+            },
+            {
+              "held": {
+                "type": "image",
+                "texture": "textures/ui/sneak_pressed",
+                "size": [
+                  "100%",
+                  "100%"
+                ],
+                "bindings": [
+                  {
+                    "binding_name": "#touch_sneak_pressed",
+                    "binding_name_override": "#visible"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "attack": {
+          "type": "button",
+          "anchor_from": "bottom_right",
+          "anchor_to": "bottom_right",
+          "offset": [
+            -20,
+            -82
+          ],
+          "size": [
+            32,
+            32
+          ],
+          "layer": 10,
+          "button_mappings": [
+            {
+              "from_button_id": "button.menu_select",
+              "to_button_id": "cinnabar.touch.attack",
+              "mapping_type": "pressed",
+              "scope": "view"
+            }
+          ],
+          "controls": [
+            {
+              "normal": {
+                "type": "image",
+                "texture": "textures/ui/attack",
+                "size": [
+                  "100%",
+                  "100%"
+                ],
+                "bindings": [
+                  {
+                    "binding_name": "#touch_attack_normal",
+                    "binding_name_override": "#visible"
+                  }
+                ]
+              }
+            },
+            {
+              "held": {
+                "type": "image",
+                "texture": "textures/ui/attack_pressed",
+                "size": [
+                  "100%",
+                  "100%"
+                ],
+                "bindings": [
+                  {
+                    "binding_name": "#touch_attack_pressed",
+                    "binding_name_override": "#visible"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "use": {
+          "type": "button",
+          "anchor_from": "bottom_right",
+          "anchor_to": "bottom_right",
+          "offset": [
+            -58,
+            -82
+          ],
+          "size": [
+            32,
+            32
+          ],
+          "layer": 10,
+          "button_mappings": [
+            {
+              "from_button_id": "button.menu_select",
+              "to_button_id": "cinnabar.touch.use",
+              "mapping_type": "pressed",
+              "scope": "view"
+            }
+          ],
+          "controls": [
+            {
+              "normal": {
+                "type": "image",
+                "texture": "textures/ui/interact",
+                "size": [
+                  "100%",
+                  "100%"
+                ],
+                "bindings": [
+                  {
+                    "binding_name": "#touch_use_normal",
+                    "binding_name_override": "#visible"
+                  }
+                ]
+              }
+            },
+            {
+              "held": {
+                "type": "image",
+                "texture": "textures/ui/interact_pressed",
+                "size": [
+                  "100%",
+                  "100%"
+                ],
+                "bindings": [
+                  {
+                    "binding_name": "#touch_use_pressed",
+                    "binding_name_override": "#visible"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "sprint": {
+          "type": "button",
+          "anchor_from": "bottom_left",
+          "anchor_to": "bottom_left",
+          "offset": [
+            92,
+            -46
+          ],
+          "size": [
+            28,
+            28
+          ],
+          "layer": 10,
+          "button_mappings": [
+            {
+              "from_button_id": "button.menu_select",
+              "to_button_id": "cinnabar.touch.sprint",
+              "mapping_type": "pressed",
+              "scope": "view"
+            }
+          ],
+          "controls": [
+            {
+              "normal": {
+                "type": "image",
+                "texture": "textures/ui/sprint",
+                "size": [
+                  "100%",
+                  "100%"
+                ],
+                "bindings": [
+                  {
+                    "binding_name": "#touch_sprint_normal",
+                    "binding_name_override": "#visible"
+                  }
+                ]
+              }
+            },
+            {
+              "held": {
+                "type": "image",
+                "texture": "textures/ui/sprint_pressed",
+                "size": [
+                  "100%",
+                  "100%"
+                ],
+                "bindings": [
+                  {
+                    "binding_name": "#touch_sprint_pressed",
+                    "binding_name_override": "#visible"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "menu": {
+          "type": "button",
+          "anchor_from": "top_right",
+          "anchor_to": "top_right",
+          "offset": [
+            -8,
+            8
+          ],
+          "size": [
+            24,
+            24
+          ],
+          "layer": 10,
+          "button_mappings": [
+            {
+              "from_button_id": "button.menu_select",
+              "to_button_id": "cinnabar.touch.menu",
+              "mapping_type": "pressed",
+              "scope": "view"
+            }
+          ],
+          "controls": [
+            {
+              "normal": {
+                "type": "image",
+                "texture": "textures/ui/pause_icon",
+                "size": [
+                  "100%",
+                  "100%"
+                ],
+                "bindings": [
+                  {
+                    "binding_name": "#touch_menu_normal",
+                    "binding_name_override": "#visible"
+                  }
+                ]
+              }
+            },
+            {
+              "held": {
+                "type": "image",
+                "texture": "textures/ui/pause_icon",
+                "size": [
+                  "100%",
+                  "100%"
+                ],
+                "bindings": [
+                  {
+                    "binding_name": "#touch_menu_pressed",
+                    "binding_name_override": "#visible"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "chat": {
+          "type": "button",
+          "anchor_from": "top_right",
+          "anchor_to": "top_right",
+          "offset": [
+            -36,
+            8
+          ],
+          "size": [
+            24,
+            24
+          ],
+          "layer": 10,
+          "button_mappings": [
+            {
+              "from_button_id": "button.menu_select",
+              "to_button_id": "cinnabar.touch.chat",
+              "mapping_type": "pressed",
+              "scope": "view"
+            }
+          ],
+          "controls": [
+            {
+              "normal": {
+                "type": "image",
+                "texture": "textures/ui/chat_keyboard",
+                "size": [
+                  "100%",
+                  "100%"
+                ],
+                "bindings": [
+                  {
+                    "binding_name": "#touch_chat_normal",
+                    "binding_name_override": "#visible"
+                  }
+                ]
+              }
+            },
+            {
+              "held": {
+                "type": "image",
+                "texture": "textures/ui/chat_keyboard",
+                "size": [
+                  "100%",
+                  "100%"
+                ],
+                "bindings": [
+                  {
+                    "binding_name": "#touch_chat_pressed",
+                    "binding_name_override": "#visible"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "inventory": {
+          "type": "button",
+          "anchor_from": "top_right",
+          "anchor_to": "top_right",
+          "offset": [
+            -64,
+            8
+          ],
+          "size": [
+            24,
+            24
+          ],
+          "layer": 10,
+          "button_mappings": [
+            {
+              "from_button_id": "button.menu_select",
+              "to_button_id": "cinnabar.touch.inventory",
+              "mapping_type": "pressed",
+              "scope": "view"
+            }
+          ],
+          "controls": [
+            {
+              "normal": {
+                "type": "image",
+                "texture": "textures/ui/inventory_mobile",
+                "size": [
+                  "100%",
+                  "100%"
+                ],
+                "bindings": [
+                  {
+                    "binding_name": "#touch_inventory_normal",
+                    "binding_name_override": "#visible"
+                  }
+                ]
+              }
+            },
+            {
+              "held": {
+                "type": "image",
+                "texture": "textures/ui/inventory_mobile",
+                "size": [
+                  "100%",
+                  "100%"
+                ],
+                "bindings": [
+                  {
+                    "binding_name": "#touch_inventory_pressed",
+                    "binding_name_override": "#visible"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

@@ -37,7 +37,7 @@ fn outline_cli_accepts_explicit_secondary_source_only_as_a_separate_option() {
 
 #[test]
 fn outline_manifest_identity_is_portable_across_checkout_line_endings() {
-    let lf = include_bytes!("../../../../../assets/ui-font-source.json");
+    let lf = include_bytes!("../../../../assets/ui-font-source.json");
     assert!(!lf.contains(&b'\r'));
     let crlf = String::from_utf8(lf.to_vec())
         .unwrap()

@@ -1,3 +1,8 @@
+#[cfg(target_os = "android")]
+pub mod android;
+#[cfg(any(target_os = "android", test))]
+mod android_keyboard;
+mod android_pointer;
 pub mod args;
 pub mod asset_startup;
 mod audio;
@@ -24,6 +29,7 @@ mod mining;
 mod modding;
 pub mod movement;
 mod named_audio;
+#[cfg(not(target_os = "android"))]
 mod native_dialog;
 mod particles;
 mod pick_block;

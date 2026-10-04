@@ -91,7 +91,7 @@ pub(super) fn prune(workspace: &Path) {
     }
 }
 
-fn archive_path(workspace: &Path, archive: &str) -> PathBuf {
+pub(super) fn archive_path(workspace: &Path, archive: &str) -> PathBuf {
     workspace.join(DOWNLOADS).join(archive)
 }
 

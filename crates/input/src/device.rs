@@ -34,6 +34,7 @@ pub struct TouchContact {
     /// Last change stamp from the same global counter used by every device mode.
     pub activity_sequence: u64,
     pub position: [f32; 2],
+    /// Frame drag for look; normalized stick deflection for `touch::JOYSTICK`.
     pub delta: [f32; 2],
     pub hit_id: Option<u16>,
 }
@@ -136,6 +137,22 @@ impl Default for TouchControlLayout {
                 kind: TouchControlKind::LookAxis(TouchAxis::XPositive),
             },
         ]);
+        controls.extend(
+            [
+                crate::touch::LOOK_SURFACE,
+                crate::touch::JOYSTICK,
+                crate::touch::MOVE_FORWARD,
+                crate::touch::MOVE_BACKWARD,
+                crate::touch::MOVE_LEFT,
+                crate::touch::MOVE_RIGHT,
+                crate::touch::INVENTORY,
+                crate::touch::CHAT,
+            ]
+            .map(|hit_id| TouchControl {
+                hit_id,
+                kind: TouchControlKind::Button,
+            }),
+        );
         Self::new(controls).expect("built-in touch controls are valid")
     }
 }

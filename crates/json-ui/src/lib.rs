@@ -111,6 +111,8 @@ pub struct Context {
     vars: BTreeMap<String, Value>,
 }
 
+mod context_mobile;
+
 impl Context {
     /// An empty context. As in the vanilla client, an unset `$flag` reads as its
     /// literal text: `ignored` keeps the control and a `requires` block applies,

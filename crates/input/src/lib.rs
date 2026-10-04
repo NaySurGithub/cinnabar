@@ -54,4 +54,15 @@ pub mod touch {
     pub const LOOK_DOWN: u16 = 29;
     pub const LOOK_LEFT: u16 = 30;
     pub const LOOK_RIGHT: u16 = 31;
+    pub const LOOK_SURFACE: u16 = 32;
+    pub const JOYSTICK: u16 = 33;
+    pub const MOVE_FORWARD: u16 = 34;
+    pub const MOVE_BACKWARD: u16 = 35;
+    pub const MOVE_LEFT: u16 = 36;
+    pub const MOVE_RIGHT: u16 = 37;
+    pub const INVENTORY: u16 = 38;
+    pub const CHAT: u16 = 39;
 }
+
+mod touch_controls;
+pub use touch_controls::{TouchBounds, TouchControlRegion, TouchControlState};

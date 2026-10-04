@@ -686,8 +686,8 @@ fn touch_joystick_carriers_equal_the_bounded_device_sample() {
                 contact_id: 1,
                 activity_sequence: 1,
                 position: [0.25, 0.5],
-                delta: [0.0, 0.0],
-                hit_id: None,
+                delta: [0.0, 1.0],
+                hit_id: Some(semantic_input::touch::JOYSTICK),
             }],
             ..DeviceFrame::default()
         })
@@ -698,6 +698,38 @@ fn touch_joystick_carriers_equal_the_bounded_device_sample() {
     assert_eq!(snapshot.raw_movement, [0.0, 1.0]);
     assert_eq!(snapshot.analogue_movement, [0.0, 1.0]);
     assert_eq!(snapshot.movement, [0.0, 1.0]);
+}
+
+#[test]
+fn unclaimed_touch_never_moves_the_player() {
+    let mut router = SemanticInputRouter::default();
+    router.route(DeviceFrame {
+        touches: vec![semantic_input::TouchContact {
+            contact_id: 1, activity_sequence: 1, position: [0.25, 0.5],
+            delta: [0.0, 1.0], hit_id: None,
+        }], ..DeviceFrame::default()
+    }).unwrap();
+    assert_eq!(router.finalize().unwrap().movement, [0.0, 0.0]);
+}
+
+#[test]
+fn one_look_finger_routes_both_axes_while_another_moves() {
+    let mut router = SemanticInputRouter::default();
+    router.route(DeviceFrame {
+        touches: vec![
+            semantic_input::TouchContact { contact_id: 1, activity_sequence: 1,
+                position: [0.2, 0.8], delta: [0.3, 0.7], hit_id: Some(semantic_input::touch::JOYSTICK) },
+            semantic_input::TouchContact { contact_id: 2, activity_sequence: 2,
+                position: [0.8, 0.5], delta: [0.01, -0.02], hit_id: Some(semantic_input::touch::LOOK_SURFACE) },
+        ], ..DeviceFrame::default()
+    }).unwrap();
+    let snapshot = router.finalize().unwrap();
+    assert_eq!(snapshot.movement, [0.3, 0.7]);
+    assert!(snapshot.look_delta[0] > 0.0 && snapshot.look_delta[1] < 0.0);
+    router.route(DeviceFrame::default()).unwrap();
+    let released = router.finalize().unwrap();
+    assert_eq!(released.movement, [0.0, 0.0]);
+    assert_eq!(released.look_delta, [0.0, 0.0]);
 }
 
 #[test]

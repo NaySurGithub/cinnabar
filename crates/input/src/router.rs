@@ -507,8 +507,11 @@ impl SemanticInputRouter {
             InputMode::Touch => movement,
         };
         if input_mode == InputMode::Touch && self.context == InputContext::Gameplay {
-            movement = touch_movement;
-            analogue = touch_movement;
+            movement = [
+                movement[0] + touch_movement[0],
+                movement[1] + touch_movement[1],
+            ];
+            analogue = movement;
             synthesize_directions(
                 &mut strengths,
                 movement,

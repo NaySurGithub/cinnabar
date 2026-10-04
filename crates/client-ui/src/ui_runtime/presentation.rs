@@ -576,6 +576,9 @@ impl UiPresentationRuntime {
                     )?;
                     if !crosshair {
                         self.append_mod_hud(player_runtime, runtime, nodes, next, metrics, content);
+                        self.append_touch_controls(
+                            runtime, nodes, next, metrics, content, now_millis,
+                        )?;
                     }
                 }
                 Scene::Bed => {

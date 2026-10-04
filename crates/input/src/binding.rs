@@ -358,6 +358,10 @@ fn default_bindings() -> Vec<ActionBinding> {
     }
 
     for (action, hit_id, context) in [
+        (MoveForward, touch::MOVE_FORWARD, Gameplay),
+        (MoveBackward, touch::MOVE_BACKWARD, Gameplay),
+        (MoveLeft, touch::MOVE_LEFT, Gameplay),
+        (MoveRight, touch::MOVE_RIGHT, Gameplay),
         (Jump, touch::JUMP, Gameplay),
         (Sneak, touch::SNEAK, Gameplay),
         (Sprint, touch::SPRINT, Gameplay),

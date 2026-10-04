@@ -186,6 +186,7 @@ fn review_pointer_release_then_press_keeps_the_second_capture() {
                 held: true,
             },
             pointer_edges: vec![false, true],
+            pointer_mode: InputMode::Mouse,
             wheel: Vec::new(),
             typed: Vec::new(),
             now: 0.0,
@@ -236,6 +237,7 @@ fn review_ui_release_applies_the_final_control_drag_position() {
                     held: down,
                 },
                 pointer_edges: vec![down],
+                pointer_mode: InputMode::Mouse,
                 wheel: Vec::new(),
                 typed: Vec::new(),
                 now: 0.0,
@@ -293,6 +295,7 @@ fn review_ui_release_applies_the_final_scrollbar_position() {
                 ..Default::default()
             },
             pointer_edges: vec![false],
+            pointer_mode: InputMode::Mouse,
             wheel: Vec::new(),
             typed: Vec::new(),
             now: 0.0,
@@ -302,4 +305,65 @@ fn review_ui_release_applies_the_final_scrollbar_position() {
     let engine = runtime.server_forms().engine();
     assert_eq!(engine.view.scroll.get(&key), Some(&30.0));
     assert!(engine.drag.is_none());
+}
+
+#[test]
+fn touch_form_buttons_answer_on_release_and_respect_cancellation_and_touch_exclusion() {
+    for (prevent_touch, canceled) in [(false, false), (true, false), (false, true)] {
+        let mut presentation = mini_engine_presentation();
+        let mut player = player_state::PlayerState::new(1);
+        let mut runtime = pack_harness::action_form(&mut player, "Shop", &["Buy"]);
+        presentation
+            .build(
+                &player,
+                &runtime,
+                0,
+                [1280, 720],
+                ui::DpiScale::new(1.0).unwrap(),
+            )
+            .unwrap();
+        let identity = runtime.server_forms().active().unwrap().identity;
+        let mut frame = presentation.form_engine_frame(identity).unwrap().clone();
+        for hit in std::sync::Arc::make_mut(&mut frame.hits) {
+            hit.input.prevent_touch_input = prevent_touch;
+        }
+        let hit = &frame.hits[0];
+        let cursor = UiPoint::new(
+            frame.origin[0] + (hit.rect.x + 1.0) as f32 * frame.scale,
+            frame.origin[1] + (hit.rect.y + 1.0) as f32 * frame.scale,
+        )
+        .unwrap();
+        for down in [true, false] {
+            drive(
+                &mut runtime,
+                &frame,
+                EngineInput {
+                    cursor: (!canceled || down).then_some(cursor),
+                    keys: &ButtonInput::default(),
+                    pointer: PointerButtons {
+                        pressed: down,
+                        released: !down,
+                        held: down,
+                    },
+                    pointer_edges: vec![down],
+                    pointer_mode: InputMode::Touch,
+                    wheel: Vec::new(),
+                    typed: Vec::new(),
+                    now: 0.0,
+                    animator: None,
+                },
+            );
+            if down {
+                assert!(
+                    runtime.server_forms().active().is_some(),
+                    "touch-down does not answer"
+                );
+            }
+        }
+        assert_eq!(
+            runtime.server_forms().active().is_none(),
+            !prevent_touch && !canceled,
+            "touch exclusion and cancellation must never submit a button"
+        );
+    }
 }

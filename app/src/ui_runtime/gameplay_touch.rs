@@ -1,54 +1,105 @@
-use std::sync::Once;
+use bevy::{input::touch::Touches, prelude::*, window::PrimaryWindow};
+use semantic_input::{TouchControlState, touch};
 
-use bevy::{
-    input::touch::Touches,
-    prelude::{Res, ResMut},
+use super::{UiRuntime, presentation::UiPresentationRuntime};
+use crate::{
+    menu::MenuRuntime, player_runtime::PlayerRuntime, semantic_controls::SemanticTouchTargets,
 };
 
-use super::UiRuntime;
-use crate::semantic_controls::SemanticTouchTargets;
-
-/// Production has no version-matched native Bedrock touch geometry yet.
-///
-/// Keeping this false is intentional: assigning inferred rectangles here would
-/// make the default touch bindings appear reachable without authoritative
-/// layout, scale, or DPI evidence.
-pub(crate) const PRODUCTION_TOUCH_LAYOUT_AVAILABLE: bool = false;
-
-static TOUCH_LAYOUT_DIAGNOSTIC: Once = Once::new();
-
-#[cfg(test)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct GameplayTouchSample;
-
-#[cfg(test)]
-impl GameplayTouchSample {
-    #[must_use]
-    pub(crate) const fn new(_contact_id: u64, _position: [f32; 2], _delta: [f32; 2]) -> Self {
-        Self
-    }
-}
-
-#[cfg(test)]
-pub(crate) fn reconcile_gameplay_touch_targets(
-    targets: &mut SemanticTouchTargets,
-    _samples: &[GameplayTouchSample],
-) {
-    targets.release_all();
-}
-
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn drive_gameplay_touch_targets(
     touches: Res<Touches>,
-    _ui: Res<UiRuntime>,
+    mut ui: ResMut<UiRuntime>,
     mut targets: ResMut<SemanticTouchTargets>,
+    mut player: ResMut<PlayerRuntime>,
+    mut menu: Option<ResMut<MenuRuntime>>,
+    mut presentation: Option<ResMut<UiPresentationRuntime>>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mut state: Local<TouchControlState>,
 ) {
     targets.release_all();
-    if touches.iter().next().is_some() {
-        TOUCH_LAYOUT_DIAGNOSTIC.call_once(|| {
-            bevy::log::warn!(
-                layout_available = PRODUCTION_TOUCH_LAYOUT_AVAILABLE,
-                "gameplay touch controls are unavailable: native Bedrock layout/scale/DPI authority is not yet established",
-            );
-        });
+    let Some(window) = windows.single().ok().filter(|window| window.focused) else {
+        state.clear();
+        if let Some(presentation) = presentation.as_mut() {
+            presentation.set_touch_contacts(Vec::new());
+        }
+        return;
+    };
+    if crate::screen_policy::absorbs_input(
+        &player,
+        Some(&ui),
+        menu.as_deref(),
+        presentation.as_deref(),
+    ) {
+        state.clear();
+        if let Some(presentation) = presentation.as_mut() {
+            presentation.set_touch_contacts(Vec::new());
+        }
+        return;
+    }
+    let Some(presentation) = presentation
+        .as_mut()
+        .filter(|presentation| presentation.touch_controls_enabled())
+    else {
+        state.clear();
+        return;
+    };
+    let size = [window.width().max(1.0), window.height().max(1.0)];
+    let position = |position: Vec2| {
+        [
+            (position.x / size[0]).clamp(0.0, 1.0),
+            (position.y / size[1]).clamp(0.0, 1.0),
+        ]
+    };
+    for contact in touches.iter_just_canceled() {
+        state.release(contact.id());
+    }
+    for contact in touches.iter_just_pressed() {
+        if touches.just_canceled(contact.id()) {
+            continue;
+        }
+        let start = position(contact.start_position());
+        let region = presentation.gameplay_touch_region(start, size);
+        let opened_ui = match region.map(|region| region.hit_id) {
+            Some(touch::INVENTORY) => {
+                ui.toggle_inventory(&mut player);
+                true
+            }
+            Some(touch::CHAT) => {
+                ui.open_chat(&mut player);
+                true
+            }
+            Some(touch::MENU) => {
+                if let Some(menu) = menu.as_mut() {
+                    menu.open_pause();
+                }
+                true
+            }
+            _ => false,
+        };
+        if opened_ui {
+            state.clear();
+            presentation.set_touch_contacts(Vec::new());
+            return;
+        }
+        state.begin(contact.id(), start, 0, region);
+    }
+    for contact in touches.iter().chain(touches.iter_just_released()) {
+        state.move_to(contact.id(), position(contact.position()), 0);
+    }
+    let samples = state.sample();
+    presentation.set_touch_contacts(samples.clone());
+    for mut sample in samples {
+        if sample.hit_id == Some(touch::LOOK_SURFACE) {
+            sample.delta = [sample.delta[0] * 4.0, sample.delta[1] * 2.0];
+        }
+        if touches.just_released(sample.contact_id) {
+            targets.pulse(sample);
+        } else {
+            targets.set_sample(&sample);
+        }
+    }
+    for contact in touches.iter_just_released() {
+        state.release(contact.id());
     }
 }

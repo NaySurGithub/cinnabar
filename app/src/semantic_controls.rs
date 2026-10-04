@@ -272,18 +272,41 @@ fn touch_physical_eq(left: &TouchContact, right: &TouchContact) -> bool {
     left.position == right.position && left.delta == right.delta && left.hit_id == right.hit_id
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 enum SemanticTouchTarget {
-    Control(u16),
+    Control(u16, Option<[f32; 2]>),
 }
 
 #[derive(Resource, Debug, Default)]
-pub struct SemanticTouchTargets(HashMap<u64, SemanticTouchTarget>);
+pub struct SemanticTouchTargets(HashMap<u64, SemanticTouchTarget>, Vec<TouchContact>);
 
 impl SemanticTouchTargets {
     pub fn set(&mut self, contact_id: u64, hit_id: u16) {
         self.0
-            .insert(contact_id, SemanticTouchTarget::Control(hit_id));
+            .insert(contact_id, SemanticTouchTarget::Control(hit_id, None));
+    }
+
+    pub(crate) fn set_sample(&mut self, sample: &TouchContact) {
+        if let Some(hit_id) = sample.hit_id {
+            self.0.insert(
+                sample.contact_id,
+                SemanticTouchTarget::Control(hit_id, Some(sample.delta)),
+            );
+        }
+    }
+
+    pub(crate) fn delta(&self, contact_id: u64) -> Option<[f32; 2]> {
+        self.0
+            .get(&contact_id)
+            .and_then(|SemanticTouchTarget::Control(_, delta)| *delta)
+    }
+
+    pub(crate) fn pulse(&mut self, sample: TouchContact) {
+        self.1.push(sample);
+    }
+
+    pub(crate) fn take_pulses(&mut self) -> Vec<TouchContact> {
+        std::mem::take(&mut self.1)
     }
 
     pub fn clear(&mut self, contact_id: u64) {
@@ -302,11 +325,12 @@ impl SemanticTouchTargets {
     pub fn target(&self, contact_id: u64) -> Option<u16> {
         self.0
             .get(&contact_id)
-            .map(|SemanticTouchTarget::Control(hit_id)| *hit_id)
+            .map(|SemanticTouchTarget::Control(hit_id, _)| *hit_id)
     }
 
     pub fn release_all(&mut self) {
         self.0.clear();
+        self.1.clear();
     }
 }
 

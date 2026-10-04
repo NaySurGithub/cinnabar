@@ -237,6 +237,7 @@ pub(super) struct HudScreens {
     model: Option<HudModel>,
     opacity: Option<i32>,
     data: Arc<DataSource>,
+    pub(super) touch: super::touch::TouchPresentation,
 }
 
 impl UiPresentationRuntime {
@@ -354,7 +355,7 @@ impl UiPresentationRuntime {
             next: &mut *next,
             overlay: &[],
         };
-        renderer.draw(art, inputs, out, |env, root| {
+        let frame = renderer.draw(art, inputs, out, |env, root| {
             screen.render(
                 reference,
                 &catalog,
@@ -364,6 +365,9 @@ impl UiPresentationRuntime {
                 env,
             )
         })?;
+        if !crosshair {
+            screens.touch.hotbar = frame;
+        }
         if let Some(view) = preview_view.get() {
             self.player_preview_view = view;
         }

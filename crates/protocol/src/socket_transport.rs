@@ -15,6 +15,12 @@ pub fn bridge_endpoint_path(socket_dir: &Path) -> std::path::PathBuf {
     bridge::endpoint_path(socket_dir)
 }
 
+/// Returns the local control endpoint for the same logical socket directory.
+#[must_use]
+pub fn control_endpoint_path(socket_dir: &Path) -> std::path::PathBuf {
+    bridge::control_endpoint_path(socket_dir)
+}
+
 /// Best-effort: tells the core whether this client applied (or reverted) the
 /// newest attempt's handed-off packs; returns whether the core recorded it.
 pub async fn report_pack_application(socket_dir: &Path, applied: bool) -> bool {

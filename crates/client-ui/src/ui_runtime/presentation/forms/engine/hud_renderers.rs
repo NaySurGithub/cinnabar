@@ -286,5 +286,17 @@ pub(super) fn with_java_hud(
         .chain(super::menu_renderers::NO_COPYRIGHT_OVERLAYS),
     );
     super::super::enhanced_setting::install(&mut catalog);
+    let touch_index =
+        include_bytes!("../../../../../../../assets/touch-ui/ui/_ui_defs.json").as_slice();
+    let touch_paths =
+        json_ui::Catalog::declared_paths(touch_index).expect("built-in touch UI index");
+    catalog.apply_pack([
+        ("ui/_ui_defs.json", touch_index),
+        (
+            touch_paths[0].as_str(),
+            include_bytes!("../../../../../../../assets/touch-ui/ui/touch_controls.json")
+                .as_slice(),
+        ),
+    ]);
     catalog
 }

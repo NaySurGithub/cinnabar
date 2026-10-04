@@ -207,9 +207,7 @@ forbidden_transitive_dependencies = ["client-world", "chunk-pipeline", "protocol
 [[crates]]
 name = "app"
 path = "app"
-allowed_dependencies = ["acceptance", "assets", "chunk-pipeline", "client-presentation", "client-session", "client-ui", "client-world", "diagnostics", "gameplay", "inventory", "json-ui", "launcher", "meshing", "mod-host", "pack-compiler", "particles", "player-state", "protocol", "render", "resource-pack", "semantic-input", "server-experience", "sim", "ui", "world"]
-forbidden_dependencies = ["asset-compiler"]
-forbidden_transitive_dependencies = ["asset-compiler"]
+allowed_dependencies = ["asset-compiler", "acceptance", "assets", "chunk-pipeline", "client-presentation", "client-session", "client-ui", "client-world", "diagnostics", "gameplay", "inventory", "json-ui", "launcher", "meshing", "mod-host", "pack-compiler", "particles", "player-state", "protocol", "render", "resource-pack", "semantic-input", "server-experience", "sim", "ui", "world"]
 
 [[crates]]
 name = "sim"
@@ -683,3 +681,8 @@ forbidden_owned_types = ["InventorySession", "PlayerInventoryLedger", "LocalPlay
 [[module_boundaries]]
 path = "crates/particles/src"
 forbidden_modules = ["bevy", "wgpu"]
+
+[[crates]]
+name = "cinnabar-android"
+path = "packaging/android/client"
+allowed_dependencies = ["app"]

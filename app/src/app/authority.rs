@@ -29,11 +29,16 @@ pub(crate) fn configure_client_authority_systems(app: &mut App) {
         .add_message::<client_presentation::audio_ingress::SequencedAudioEvent>()
         .add_message::<bevy::input::mouse::MouseWheel>()
         .init_resource::<WorldStreamFramePoll>()
+        .init_resource::<crate::android_pointer::UiTouchPointer>()
         .init_resource::<client_ui::ui_runtime::presentation::PreparedUiPublication>()
         .init_resource::<crate::ui_runtime::emotes::EmoteInputConsumed>()
         .add_systems(
             Update,
-            (drive_gameplay_touch_targets, collect_raw_input)
+            (
+                crate::android_pointer::drive_ui_touch_pointer,
+                drive_gameplay_touch_targets,
+                collect_raw_input,
+            )
                 .chain()
                 .in_set(ClientFrameSet::RawInput),
         )

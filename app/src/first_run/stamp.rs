@@ -74,7 +74,10 @@ pub(super) fn select(steps: &[Step], kit: &Path, prepared: &Path) -> Result<Sele
     let manifest = super::runner::kit_file(kit, VANILLA_MANIFEST)
         .with_context(|| format!("the preparation kit lacks {VANILLA_MANIFEST}"))?;
     let pack = file_sha256(&manifest)?;
+    #[cfg(not(target_os = "android"))]
     let compiler = file_sha256(&kit.join("bin").join(super::runner::assetc_name()))?;
+    #[cfg(target_os = "android")]
+    let compiler = file_sha256(&kit.join(crate::android::runtime().compiler_identity_asset))?;
     let resolve = |arg: &str| super::runner::kit_file(kit, arg);
     let mut selection = Selection {
         run: vec![false; steps.len()],

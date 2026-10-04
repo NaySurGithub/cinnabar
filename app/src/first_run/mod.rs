@@ -4,6 +4,8 @@
 //! setup window in a child process shows it; without one, native dialogs do. Progress is mirrored
 //! to `logs/first-run-status.json`.
 
+#[cfg(target_os = "android")]
+pub(crate) mod android;
 mod download;
 mod plan;
 mod prepare;
@@ -15,17 +17,23 @@ mod status;
 mod test_support;
 mod window;
 
-use std::{fs, path::PathBuf, sync::atomic::AtomicBool};
+#[cfg(not(target_os = "android"))]
+use std::sync::atomic::AtomicBool;
+use std::{fs, path::PathBuf};
 
-use anyhow::{Context, Result, bail};
+#[cfg(not(target_os = "android"))]
+use anyhow::bail;
+use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
 
-use crate::{
-    install_layout::InstallLayout,
-    native_dialog::{NativePrompter, Prompter},
-};
+use crate::install_layout::InstallLayout;
+#[cfg(not(target_os = "android"))]
+use crate::native_dialog::{NativePrompter, Prompter};
+#[cfg(not(target_os = "android"))]
 use prepare::prepare;
-use status::{Phase, Status};
+#[cfg(not(target_os = "android"))]
+use status::Phase;
+use status::Status;
 pub(crate) use window::{SETUP_FLAG, run_setup_process};
 
 const CONSENT_ENV: &str = "CINNABAR_ACCEPT_MOJANG_EULA";
@@ -33,6 +41,7 @@ const TITLE: &str = "Cinnabar first-time setup";
 const CONSENT_BODY: &str = "Cinnabar needs Minecraft's official sample resource pack. It is downloaded from Mojang's public release (a large one-time download), converted on this computer, and never redistributed by Cinnabar.\n\nContinuing confirms you accept the Minecraft EULA (https://www.minecraft.net/eula). Setup runs once and takes a few minutes.";
 const EULA_URL: &str = "https://www.minecraft.net/eula";
 
+#[cfg(not(target_os = "android"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Outcome {
     NotNeeded,
@@ -43,6 +52,7 @@ pub(crate) enum Outcome {
 
 /// Prepares the per-user carriers when a packaged install has none or they predate the pins this
 /// build carries; a no-op for development checkouts.
+#[cfg(not(target_os = "android"))]
 pub(crate) fn ensure_prepared(layout: &InstallLayout) -> Result<Outcome> {
     if !needs_preparation(layout) {
         return Ok(Outcome::NotNeeded);
@@ -59,6 +69,7 @@ pub(crate) fn ensure_prepared(layout: &InstallLayout) -> Result<Outcome> {
 }
 
 /// An unreadable kit counts as needing preparation, which then reports it.
+#[cfg(not(target_os = "android"))]
 fn needs_preparation(layout: &InstallLayout) -> bool {
     layout.is_installed()
         && !prepare::selection(layout).is_ok_and(|(_, selection)| selection.is_current())
@@ -110,6 +121,7 @@ fn reporter<'a>(
 }
 
 /// The native-dialog flow, used when no setup window can open.
+#[cfg(not(target_os = "android"))]
 fn ensure_with(
     layout: &InstallLayout,
     prompter: &dyn Prompter,
@@ -158,7 +170,7 @@ fn ensure_with(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_os = "android")))]
 mod tests {
     use std::{cell::Cell, path::PathBuf};
 

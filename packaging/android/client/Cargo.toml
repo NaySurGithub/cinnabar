@@ -1,0 +1,13 @@
+[package]
+name = "cinnabar-android"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[target.'cfg(target_os = "android")'.dependencies]
+bedrock-client = { path = "../../../app", default-features = false }
+bevy.workspace = true

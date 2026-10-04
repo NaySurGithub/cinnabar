@@ -5240,3 +5240,22 @@ all task background processes, skipping the remaining verification and pushing
 directly to remote dev; the affected gate and new unit regressions were not run.
 Native hat geometry, other block-entity materials and full version-matched
 rendering parity remain open gates.
+
+### Android preview (incomplete native touch and device acceptance)
+
+An experimental Android NativeActivity package runs the Rust renderer and the Go
+core/local-world server from immutable APK libraries. First-run consent, pinned
+asset acquisition and carrier compilation run before the game window. Private
+storage, browser links, clipboard and soft-keyboard input have Android adapters.
+
+Joystick + Crosshair controls use JSON-UI artwork and the same painted hit bounds.
+Movement, look and action fingers retain independent owners until lift/cancel;
+unclaimed contacts do not imply movement. Short action taps survive a frame
+boundary, and inventories/server forms receive a captured touch pointer.
+
+Control sizes/positions, GUI scale, safe areas and turn sensitivity remain
+provisional. D-pad + Tap, Joystick + Tap, dynamic joystick settings, native
+tap/hold targeting, touch inventory gestures and scrolling, touch-specific form
+mapping, keyboard composition/preedit, Android Back, toggle crouch, auto-jump,
+control customization and complete lifecycle/performance acceptance remain incomplete.
+The first APK is a test preview, and closes no vanilla parity gate.

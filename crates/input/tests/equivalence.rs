@@ -36,8 +36,8 @@ fn keyboard_controller_and_touch_scripts_are_semantically_equivalent() {
                 contact_id: 1,
                 activity_sequence: 1,
                 position: [0.25, 0.5],
-                delta: [0.0, 0.0],
-                hit_id: None,
+                delta: [0.0, 1.0],
+                hit_id: Some(semantic_input::touch::JOYSTICK),
             },
             TouchContact {
                 contact_id: 2,
@@ -92,8 +92,8 @@ fn radial_deadzone_preserves_direction_and_remaps_magnitude() {
 }
 
 #[test]
-fn lower_left_touch_movement_maps_screen_up_to_positive_forward() {
-    let route = |position| {
+fn captured_joystick_deflection_is_independent_of_screen_position() {
+    let route = |position, delta| {
         let mut router = SemanticInputRouter::default();
         router
             .route(DeviceFrame {
@@ -101,8 +101,8 @@ fn lower_left_touch_movement_maps_screen_up_to_positive_forward() {
                     contact_id: 1,
                     activity_sequence: 1,
                     position,
-                    delta: [0.0, 0.0],
-                    hit_id: None,
+                    delta,
+                    hit_id: Some(semantic_input::touch::JOYSTICK),
                 }],
                 ..DeviceFrame::default()
             })
@@ -110,7 +110,7 @@ fn lower_left_touch_movement_maps_screen_up_to_positive_forward() {
         router.finalize().unwrap().movement
     };
 
-    assert_eq!(route([0.25, 0.625]), [0.0, 0.5]);
-    assert_eq!(route([0.25, 0.875]), [0.0, -0.5]);
-    assert_eq!(route([0.25, 0.25]), [0.0, 0.0]);
+    assert_eq!(route([0.25, 0.625], [0.0, 0.5]), [0.0, 0.5]);
+    assert_eq!(route([0.25, 0.875], [0.0, -0.5]), [0.0, -0.5]);
+    assert_eq!(route([0.8, 0.25], [0.0, 0.5]), [0.0, 0.5]);
 }

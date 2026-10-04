@@ -29,11 +29,6 @@ const LAUNCHER_GENERATION: u64 = 0;
 /// How long a join waits for the core to answer `connect.v1`.
 const SELECT_TIMEOUT: Duration = Duration::from_secs(3);
 const DEFAULT_PORT: u16 = 19132;
-const LOCAL_SERVER: &str = if cfg!(windows) {
-    "bedrock-local-server.exe"
-} else {
-    "bedrock-local-server"
-};
 
 /// Allows auth updates beside a separate direct game core, but protects games this core owns.
 pub(super) fn account_core_idle(
@@ -239,7 +234,7 @@ fn launcher_command(
             .arg(layout.resource_pack_cache_dir());
     }
     // The core refuses to start local worlds without their server binary.
-    if executable.with_file_name(LOCAL_SERVER).is_file() {
+    if layout.local_server_executable().is_file() {
         command.args(crate::local_worlds::core_args(layout));
     }
     if upstream_client_cache {

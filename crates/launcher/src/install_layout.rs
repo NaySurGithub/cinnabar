@@ -1,6 +1,11 @@
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
+#[cfg(any(target_os = "android", test))]
+mod android;
+#[cfg(target_os = "android")]
+pub use android::configure_android;
+
 const APP_DIR: &str = crate::PRODUCT_NAME;
 
 /// The pinned vanilla resource pack below a resource root, which mirrors `.local/`.
@@ -28,6 +33,10 @@ pub struct InstallEnvironment {
 
 #[derive(Debug, Error, Eq, PartialEq)]
 pub enum LayoutError {
+    #[error("Android installation paths have not been configured by the activity")]
+    AndroidNotConfigured,
+    #[error("Android installation paths cannot change during a process lifetime")]
+    AndroidAlreadyConfigured,
     #[error("the current executable path is unavailable")]
     MissingExecutable,
     #[error("{platform} user home is unavailable")]
@@ -70,7 +79,7 @@ impl InstallLayout {
             return Ok(Self {
                 resource_root: local.clone(),
                 compiled_assets: local.join("assets/compiled"),
-                physics_registry: local.join("assets/block-physics-v2193.bin"),
+                physics_registry: local.join(physics_registry_relative()),
                 core_executable: binary_dir.join(core_filename(platform)),
                 user_config_root: local.join("cinnabar"),
                 user_data_root: local.clone(),
@@ -125,7 +134,7 @@ impl InstallLayout {
         let (user_config_root, user_data_root, runtime_root) = user_roots(platform, environment)?;
         Ok(Self {
             compiled_assets: resource_root.join("assets"),
-            physics_registry: resource_root.join("assets/block-physics-v2193.bin"),
+            physics_registry: resource_root.join(physics_registry_relative()),
             resource_root,
             core_executable,
             user_config_root,
@@ -136,20 +145,28 @@ impl InstallLayout {
     }
 
     pub fn discover() -> Result<Self, LayoutError> {
-        let platform = current_platform();
-        let home = std::env::var_os(home_variable(platform)).map(PathBuf::from);
-        let layout = Self::resolve(
-            platform,
-            &InstallEnvironment {
-                executable: std::env::current_exe().map_err(|_| LayoutError::MissingExecutable)?,
-                home,
-                local_app_data: std::env::var_os("LOCALAPPDATA").map(PathBuf::from),
-                xdg_config_home: std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from),
-                xdg_data_home: std::env::var_os("XDG_DATA_HOME").map(PathBuf::from),
-                xdg_runtime_dir: std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from),
-            },
-        )?;
-        Ok(layout.with_prepared_assets())
+        #[cfg(target_os = "android")]
+        {
+            android::discover()
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            let platform = current_platform();
+            let home = std::env::var_os(home_variable(platform)).map(PathBuf::from);
+            let layout = Self::resolve(
+                platform,
+                &InstallEnvironment {
+                    executable: std::env::current_exe()
+                        .map_err(|_| LayoutError::MissingExecutable)?,
+                    home,
+                    local_app_data: std::env::var_os("LOCALAPPDATA").map(PathBuf::from),
+                    xdg_config_home: std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from),
+                    xdg_data_home: std::env::var_os("XDG_DATA_HOME").map(PathBuf::from),
+                    xdg_runtime_dir: std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from),
+                },
+            )?;
+            Ok(layout.with_prepared_assets())
+        }
     }
 
     /// True for a packaged install (not a `target/` checkout), where Mojang-derived carriers are
@@ -246,6 +263,20 @@ impl InstallLayout {
         self.user_data_root.join("worlds")
     }
 
+    /// The immutable local-server helper shipped beside the core.
+    #[must_use]
+    pub fn local_server_executable(&self) -> PathBuf {
+        #[cfg(target_os = "android")]
+        let name = android::helper_names().local_server_library.as_str();
+        #[cfg(not(target_os = "android"))]
+        let name = if cfg!(windows) {
+            "bedrock-local-server.exe"
+        } else {
+            "bedrock-local-server"
+        };
+        self.core_executable.with_file_name(name)
+    }
+
     #[must_use]
     pub fn server_file(&self) -> PathBuf {
         self.user_config_root.join("servers.json")
@@ -280,6 +311,23 @@ impl InstallLayout {
         self.transient_runtime_root
             .join(format!("connect-{process_id}-{generation}"))
     }
+}
+
+fn physics_registry_relative() -> &'static Path {
+    static PATH: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    PATH.get_or_init(|| {
+        let target: serde_json::Value =
+            serde_json::from_str(include_str!("../../../assets/bedrock-target.json"))
+                .expect("tracked Bedrock target manifest");
+        let artifact = target["artifacts"]["physics_registry"]
+            .as_str()
+            .expect("target physics registry artifact");
+        Path::new("assets").join(
+            Path::new(artifact)
+                .file_name()
+                .expect("physics registry artifact filename"),
+        )
+    })
 }
 
 fn development_root(executable: &Path) -> Option<(PathBuf, PathBuf)> {
@@ -423,6 +471,7 @@ const fn core_filename(platform: Platform) -> &'static str {
     }
 }
 
+#[cfg(not(target_os = "android"))]
 const fn home_variable(platform: Platform) -> &'static str {
     match platform {
         Platform::Windows => "USERPROFILE",
@@ -430,6 +479,7 @@ const fn home_variable(platform: Platform) -> &'static str {
     }
 }
 
+#[cfg(not(target_os = "android"))]
 const fn current_platform() -> Platform {
     #[cfg(target_os = "windows")]
     return Platform::Windows;
@@ -484,7 +534,7 @@ mod tests {
         );
         assert_eq!(
             layout.physics_registry,
-            PathBuf::from("/work/cinnabar/.local/assets/block-physics-v2193.bin")
+            PathBuf::from("/work/cinnabar/.local").join(physics_registry_relative())
         );
         assert_eq!(
             layout.runtime_root,
