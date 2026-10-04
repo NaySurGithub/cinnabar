@@ -786,6 +786,21 @@ cross-platform runtime acceptance. Loaded player data is not line-of-sight or
 visibility evidence. No aim-assist algorithm is installed and no vanilla parity
 gate is closed; see `docs/modding-spike.md` for the contract and opt-in switches.
 
+2026-10-04 modding screens (extension 0.2, BEI platform P1–P5): experimental,
+non-parity extension. `CINNABAR_MOD_PACKAGE` loads a hashed package (`mod.toml`);
+its JSON-UI overlay draws beside every container screen, clipped outside the
+container's panels, and its view draws over the still-open container. Session
+items and recipes (`cinnabar:session`) are read-only. Provisional, labeled
+incomplete: the GUI rect is the bounding box of `root_panel` and every laid-out
+non-full-screen control, not a per-panel union read from the vanilla pack; the
+exclusion list is empty (vanilla status-effect and toast areas are not yet
+reported); an overlay node that meets the GUI rect is dropped whole rather than
+clipped; Escape closing the view sends the mod no event. Not yet verified on a
+rendered frame (the `.local` carriers were absent when it landed). Session data
+gaps: no smelting at 1.26.x, brewing skipped, recipes with Molang/complex/deferred
+ingredients dropped. Incomplete as for the spike: process isolation, signing,
+consent, several mods, rebinding UI. See `docs/modding-spike.md`.
+
 2026-10-01 crouch, shield and crossbow follow-up: the local camera now consumes
 the native 0.35-block crouch offset, half-blended once per completed tick and
 interpolated per frame. Local actor feet, interaction eye and network anchor are
