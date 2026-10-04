@@ -3,7 +3,6 @@ use super::{BlockEntityVertex, CrackShape, crack::FACE_OFFSET};
 use bevy::{math::Vec3, prelude::Resource, render::extract_resource::ExtractResource};
 use std::sync::Arc;
 
-// R:l/LevelRendererPlayer.cpp:11653,11827,12038; Lens data 0x10dd71d9c/0x10dd71ec0.
 const OUTLINE_ANGULAR_WIDTH: f32 = 0.003;
 const HIGHLIGHT_COLOR: [f32; 4] = [0.65, 0.65, 0.65, 1.0];
 // Negative UV selects the untextured overlay branch, outside any atlas coordinates.
@@ -72,20 +71,9 @@ impl BlockSelectionFrame {
                             for face in quads.iter() {
                                 let corners =
                                     face.corners.map(|corner| block + Vec3::from_array(corner));
-                                let normal = (corners[1] - corners[0])
-                                    .cross(corners[2] - corners[0])
-                                    .normalize_or_zero();
-                                let outward = if normal.dot(
-                                    corners.iter().sum::<Vec3>() * 0.25 - block - Vec3::splat(0.5),
-                                ) < 0.0
-                                {
-                                    -normal
-                                } else {
-                                    normal
-                                };
                                 quad(
                                     &mut surface,
-                                    corners.map(|corner| corner + outward * FACE_OFFSET),
+                                    corners.map(|corner| corner + face.outward_offset()),
                                     HIGHLIGHT_COLOR,
                                 );
                             }
@@ -177,6 +165,7 @@ fn quad(output: &mut Vec<BlockEntityVertex>, corners: [Vec3; 4], color: [f32; 4]
         position: corners[index].to_array(),
         uv: UNTEXTURED_UV,
         color,
+        ..Default::default()
     }));
 }
 
