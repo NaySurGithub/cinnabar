@@ -1,5 +1,6 @@
 //! Bounded process protocol. OS-restricted production launch deliberately fails closed.
 
+#[cfg(feature = "execution")]
 use crate::server::BundleHost;
 use anyhow::{Result, bail, ensure};
 use serde::{Deserialize, Serialize};
@@ -7,6 +8,7 @@ use server_experience::{
     crypto,
     policy::*,
     runtime::{Capabilities, Principal, Transaction},
+    screen::{self, GuiSize},
 };
 use std::{
     io::{Read, Write},
@@ -85,6 +87,14 @@ pub enum Event {
     Action { id: String, index: Option<u32> },
     /// The world epoch changed, to `epoch`; the guest and its state live on.
     Epoch,
+    /// A secondary press fired a declared action from the focused modal, to `secondary-action`,
+    /// with its collection row.
+    SecondaryAction { id: String, index: Option<u32> },
+    /// The open modal was first drawn at, or resized to, `size`, to `modal-resized`.
+    Resized { size: GuiSize },
+    /// The text of the modal's edit box `control`, a declared action, changed while the modal had
+    /// focus, to `text-changed`.
+    Text { control: String, text: String },
 }
 
 impl Event {
@@ -95,8 +105,14 @@ impl Event {
                 server_experience::manifest::identifier(channel)
                     && record.len() <= MAX_MESSAGE_BYTES
             }
-            Event::Action { id, .. } => server_experience::manifest::identifier(id),
+            Event::Action { id, .. } | Event::SecondaryAction { id, .. } => {
+                server_experience::manifest::identifier(id)
+            }
             Event::Epoch => true,
+            Event::Resized { size } => size.valid(),
+            Event::Text { control, text } => {
+                server_experience::manifest::identifier(control) && screen::edit_text(text)
+            }
         };
         ensure!(valid, "helper event too large or malformed");
         Ok(())
@@ -110,6 +126,9 @@ impl Event {
             Event::Message { .. } => "dispatch",
             Event::Action { .. } => "action",
             Event::Epoch => "epoch",
+            Event::SecondaryAction { .. } => "secondary-action",
+            Event::Resized { .. } => "modal-resized",
+            Event::Text { .. } => "text-changed",
         }
     }
 }
@@ -160,6 +179,7 @@ pub struct CallFailure {
 impl CallFailure {
     /// The failure of `bundle`'s `callback` with `error`: its error chain, which carries the
     /// guest backtrace of a trap.
+    #[cfg(feature = "execution")]
     pub(crate) fn of(bundle: &str, callback: &str, error: &anyhow::Error) -> Self {
         use wasmtime::Trap;
         let kind = match error.downcast_ref::<Trap>() {
@@ -171,11 +191,13 @@ impl CallFailure {
         Self::new(bundle, callback, kind, error)
     }
 
+    #[cfg(feature = "execution")]
     /// A start of `bundle` that failed with `error`.
     fn startup(bundle: &str, error: &anyhow::Error) -> Self {
         Self::new(bundle, "init", FailureKind::Startup, error)
     }
 
+    #[cfg(feature = "execution")]
     fn new(bundle: &str, callback: &str, kind: FailureKind, error: &anyhow::Error) -> Self {
         let mut reason: String = format!("{error:#}")
             .chars()
@@ -198,6 +220,8 @@ pub struct Dispatch {
     pub event: Event,
     /// The world epoch the callback's output must carry.
     pub epoch: u64,
+    /// The bundle's open modal's size, which `ui.modal-size` returns; none while it is closed.
+    pub gui: Option<GuiSize>,
 }
 
 pub struct Helper {
@@ -335,6 +359,7 @@ impl Drop for Helper {
 }
 
 /// Runs only as the private helper entry point; there are no inherited game handles.
+#[cfg(feature = "execution")]
 pub fn serve_developer() -> Result<()> {
     ensure!(
         std::env::var(DEVELOPER_ENV).as_deref() == Ok("1"),
@@ -377,6 +402,7 @@ pub fn serve_developer() -> Result<()> {
     loop {
         let request: Dispatch = read_frame(&mut input, MAX_DISPATCH_IPC)?;
         let callback = request.event.callback();
+        host.set_modal_size(request.gui);
         let reply = match host.dispatch(&request.event, request.epoch) {
             Ok(transaction) => Reply::Committed {
                 transaction,
@@ -391,6 +417,7 @@ pub fn serve_developer() -> Result<()> {
     }
 }
 
+#[cfg(feature = "execution")]
 /// Writes `reply`, or a failure in its place when it does not fit a reply frame.
 fn answer(output: &mut impl Write, reply: Reply, bundle: &str, callback: &str) -> Result<()> {
     let bytes = match serialize_frame(&reply, MAX_REPLY_IPC) {

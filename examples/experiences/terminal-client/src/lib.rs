@@ -5,6 +5,10 @@
 //! - `terminal.spin` loops until its fuel runs out;
 //! - `terminal.count` counts its calls in guest memory and binds the count as the `count`
 //!   collection's one row, so a fresh instance shows up as a count of 1;
+//! - `terminal.size` binds what `ui.modal-size` reads as `#read`;
+//! - `modal-resized` binds its size as `#size` and reads it back as `#read`, and `text-changed`
+//!   in `terminal.search` sets `terminal.echo` to the text in capitals, and `secondary-action`
+//!   binds its action and row as `#secondary`;
 //! - anything else binds its item list (records of an id, a count and a display name) into the
 //!   `items` collection, one row per item, and binds nothing for any other record.
 
@@ -28,6 +32,7 @@ impl ClientPart for Terminal {
             "terminal.spin" => loop {
                 std::hint::black_box(&channel);
             },
+            "terminal.size" => read_size(),
             "terminal.count" => {
                 let calls = CALLS.fetch_add(1, Ordering::Relaxed) + 1;
                 let mut row = Map::new();
@@ -37,6 +42,37 @@ impl ClientPart for Terminal {
             _ => items(&record),
         }
     }
+
+    /// Binds the size it was given as `#size` and what `ui.modal-size` reads as `#read`.
+    fn modal_resized(size: ui::GuiSize) {
+        let _ = ui::set_value(
+            "#size",
+            &ui::Value::Numbers(vec![size.width, size.height, size.scale]),
+        );
+        read_size();
+    }
+
+    /// Binds a secondary press's action and row as `#secondary`.
+    fn secondary_action(id: String, collection_index: Option<u32>) {
+        let row = collection_index.map_or_else(|| "none".to_owned(), |row| row.to_string());
+        let _ = ui::set_value("#secondary", &ui::Value::Text(format!("{id} {row}")));
+    }
+
+    /// Answers text typed into `terminal.search` by setting `terminal.echo` to it in capitals.
+    fn text_changed(control: String, text: String) {
+        if control == "terminal.search" {
+            let _ = ui::set_text("terminal.echo", &text.to_uppercase());
+        }
+    }
+}
+
+/// Binds the modal size `ui.modal-size` reads as `#read`: its width, height and scale, or
+/// `false` for none.
+fn read_size() {
+    let read = ui::modal_size().map_or(ui::Value::Boolean(false), |size| {
+        ui::Value::Numbers(vec![size.width, size.height, size.scale])
+    });
+    let _ = ui::set_value("#read", &read);
 }
 
 /// Binds the records of the item list in `record` as the `items` collection.

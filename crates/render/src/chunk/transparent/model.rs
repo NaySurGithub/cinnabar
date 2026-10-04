@@ -1,5 +1,8 @@
 use crate::chunk::*;
 
+mod orders;
+pub(in crate::chunk) use orders::{TransparentModelDrawOrders, camera_position_bits};
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(in crate::chunk) struct TransparentModelAllocationIdentity {
     pub(in crate::chunk) entity: Entity,
@@ -15,10 +18,11 @@ pub(in crate::chunk) struct TransparentModelAddressIdentity {
     pub(in crate::chunk) allocations: Arc<[TransparentModelAllocationIdentity]>,
 }
 
+/// Omits camera rotation: each sub-chunk's order is a distance sort from the camera position.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(in crate::chunk) struct TransparentModelSortKey {
     pub(in crate::chunk) view_entity: Entity,
-    pub(in crate::chunk) rotation_bits: [u32; 4],
+    pub(in crate::chunk) camera_position_bits: [u32; 3],
     pub(in crate::chunk) address: TransparentModelAddressIdentity,
 }
 
@@ -42,7 +46,7 @@ pub(in crate::chunk) struct TransparentModelCandidateCache {
 pub(in crate::chunk) struct TransparentModelSortWork {
     pub(in crate::chunk) generation: ViewSortGeneration,
     pub(in crate::chunk) key: TransparentModelSortKey,
-    pub(in crate::chunk) view_from_world: Mat4,
+    pub(in crate::chunk) camera_position: Vec3,
     pub(in crate::chunk) candidates: Arc<[TransparentModelSortCandidate]>,
 }
 
@@ -75,6 +79,7 @@ pub(in crate::chunk) struct TransparentModelSortRuntime {
     pub(in crate::chunk) result_sender: SyncSender<TransparentModelWorkerResult>,
     pub(in crate::chunk) result_receiver: Mutex<Receiver<TransparentModelWorkerResult>>,
     pub(in crate::chunk) candidate_cache: Option<TransparentModelCandidateCache>,
+    pub(in crate::chunk) draw_orders: TransparentModelDrawOrders,
 }
 
 #[derive(Debug, Resource)]
@@ -120,6 +125,7 @@ impl Default for TransparentModelSortRuntime {
             result_sender,
             result_receiver: Mutex::new(result_receiver),
             candidate_cache: None,
+            draw_orders: TransparentModelDrawOrders::default(),
         }
     }
 }
@@ -320,59 +326,11 @@ pub(in crate::chunk) fn transparent_model_draw_candidate(
     ))
 }
 
-#[cfg(test)]
-pub(in crate::chunk) fn sorted_transparent_model_draw_words(
-    rangefinder: &ViewRangefinder3d,
-    key: SubChunkKey,
-    model_refs: &[PackedModelRef],
-    draw_refs: &[PackedModelDrawRef],
-    model_templates: &[ModelTemplate],
-    model_quads: &[assets::ModelQuad],
-    model_record_base: u32,
-) -> Option<Vec<[u32; 2]>> {
-    let mut sorted = Vec::with_capacity(draw_refs.len());
-    for (stable_index, draw_ref) in draw_refs.iter().copied().enumerate() {
-        let (world_centroid, words) = transparent_model_draw_candidate(
-            key,
-            model_refs,
-            draw_ref,
-            model_templates,
-            model_quads,
-            model_record_base,
-        )?;
-        sorted.push((rangefinder.distance(&world_centroid), stable_index, words));
-    }
-    sorted.sort_by(|left, right| {
-        left.0
-            .total_cmp(&right.0)
-            .then_with(|| left.1.cmp(&right.1))
-    });
-    Some(sorted.into_iter().map(|(_, _, words)| words).collect())
-}
-
-pub(in crate::chunk) fn canonical_transparent_rotation_bits(
-    mut rotation: Quat,
-) -> Option<[u32; 4]> {
-    let norm_squared = rotation.length_squared();
-    if !norm_squared.is_finite() || norm_squared == 0.0 {
-        return None;
-    }
-    rotation *= norm_squared.sqrt().recip();
-    let mut values = rotation.to_array();
-    let anchor = [values[3], values[2], values[1], values[0]]
-        .into_iter()
-        .find(|value| *value != 0.0)
-        .unwrap_or(1.0);
-    if anchor.is_sign_negative() {
-        values = values.map(|value| -value);
-    }
-    Some(values.map(|value| if value == 0.0 { 0 } else { value.to_bits() }))
-}
-
 pub(in crate::chunk) fn sort_transparent_model_candidates(
-    view_from_world: Mat4,
+    camera_position: Vec3,
     candidates: Arc<[TransparentModelSortCandidate]>,
 ) -> Vec<TransparentModelSortBatch> {
+    let metric = super::face_metric::TransparentFaceMetric::new(camera_position);
     let mut groups =
         HashMap::<Entity, (SubChunkKey, Range<u32>, Vec<TransparentModelSortCandidate>)>::new();
     for candidate in candidates.iter().cloned() {
@@ -385,12 +343,12 @@ pub(in crate::chunk) fn sort_transparent_model_candidates(
     groups.sort_by_key(|(key, range, _)| (*key, range.start));
     groups
         .into_iter()
-        .map(|(_, draw_range, mut candidates)| {
+        .map(|(key, draw_range, mut candidates)| {
+            let metric = metric.for_chunk(key);
             candidates.sort_by(|left, right| {
-                view_from_world
-                    .transform_point3(left.centroid)
-                    .z
-                    .total_cmp(&view_from_world.transform_point3(right.centroid).z)
+                metric
+                    .distance(right.centroid)
+                    .total_cmp(&metric.distance(left.centroid))
                     .then_with(|| left.stable_index.cmp(&right.stable_index))
             });
             TransparentModelSortBatch {
@@ -430,7 +388,7 @@ pub(in crate::chunk) fn spawn_transparent_model_sort(
     work: TransparentModelSortWork,
 ) {
     rayon::spawn(move || {
-        let batches = sort_transparent_model_candidates(work.view_from_world, work.candidates);
+        let batches = sort_transparent_model_candidates(work.camera_position, work.candidates);
         let _ = sender.try_send(TransparentModelWorkerResult {
             generation: work.generation,
             key: work.key,
@@ -451,6 +409,7 @@ pub(in crate::chunk) fn prepare_transparent_model_sorts(
     mut upload_budget: ResMut<TransparentUploadBudget>,
     mut runtime: ResMut<TransparentModelSortRuntime>,
 ) {
+    runtime.draw_orders.refresh(&arena, &instances);
     let Some((view_entity, view, visible_entities)) = views
         .iter()
         .find(|(entity, _, _)| transparent_runtime.view_entity == Some(*entity))
@@ -461,8 +420,8 @@ pub(in crate::chunk) fn prepare_transparent_model_sorts(
         runtime.candidate_cache = None;
         return;
     };
-    let (_, rotation, _) = view.world_from_view.to_scale_rotation_translation();
-    let Some(rotation_bits) = canonical_transparent_rotation_bits(rotation) else {
+    let position = view.world_from_view.translation();
+    let Some(camera_position_bits) = orders::camera_position_bits(position) else {
         return;
     };
     let mut identities = Vec::new();
@@ -515,7 +474,7 @@ pub(in crate::chunk) fn prepare_transparent_model_sorts(
     };
     let key = TransparentModelSortKey {
         view_entity,
-        rotation_bits,
+        camera_position_bits,
         address: address.clone(),
     };
 
@@ -546,11 +505,12 @@ pub(in crate::chunk) fn prepare_transparent_model_sorts(
             spawn_transparent_model_sort(runtime.result_sender.clone(), work);
         }
     }
-    if let Some(staged) = runtime.staged.as_mut() {
+    if let Some(mut staged) = runtime.staged.take() {
         let batches =
             take_transparent_model_upload_batches(&mut staged.batches, upload_budget.remaining());
         let uploaded_refs = batches.iter().map(|batch| batch.words.len()).sum();
         if !upload_budget.consume(uploaded_refs) {
+            runtime.staged = Some(staged);
             bevy::log::error!(
                 "transparent model sort batches exceed the shared per-frame reference upload budget"
             );
@@ -563,10 +523,12 @@ pub(in crate::chunk) fn prepare_transparent_model_sorts(
                 u64::from(batch.draw_range.start) * GEOMETRY_STREAM_WORD_BYTES,
                 bytemuck::cast_slice(&batch.words),
             );
+            runtime.draw_orders.publish(&staged.key.address, batch);
         }
         if staged.batches.is_empty() {
-            runtime.committed = Some(staged.key.clone());
-            runtime.staged = None;
+            runtime.committed = Some(staged.key);
+        } else {
+            runtime.staged = Some(staged);
         }
     }
     if runtime.committed.as_ref() == Some(&key)
@@ -655,7 +617,7 @@ pub(in crate::chunk) fn prepare_transparent_model_sorts(
     let work = TransparentModelSortWork {
         generation,
         key,
-        view_from_world: Mat4::from(view.world_from_view.affine().inverse()),
+        camera_position: position,
         candidates,
     };
     let (start, _) = runtime.gate.submit_with_replacement(generation, work);

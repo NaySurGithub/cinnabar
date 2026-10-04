@@ -39,6 +39,22 @@ pub trait ClientPart {
     /// Handles `epoch`: the world epoch changed, such as on a dimension change, and the client
     /// part and its state live on. The server half resends what it needs to.
     fn epoch() {}
+
+    /// Handles `modal-resized`: the open modal was first drawn, or its size changed (a window
+    /// resize or a GUI scale change). `size` is what [`ui::modal_size`] now returns: the width
+    /// and height the vanilla screen root lays out in, in GUI units, and the GUI scale.
+    fn modal_resized(_size: ui::GuiSize) {}
+
+    /// Handles `text-changed`: the user edited the modal's edit box whose `text_box_name` is
+    /// `control`, a declared action, while the modal had focus; `text` is its whole text. Edits
+    /// are coalesced, so this is the latest text, not each keystroke. [`ui::set_text`] sets a
+    /// box's text without calling this.
+    fn text_changed(_control: String, _text: String) {}
+
+    /// Handles `secondary-action`: a secondary press (a right click) fired the declared action
+    /// `id` from a modal screen control mapping `button.menu_secondary_select` to it, while the
+    /// modal had focus; `collection_index` is as in [`ClientPart::action`].
+    fn secondary_action(_id: String, _collection_index: Option<u32>) {}
 }
 
 /// Sends `record` on the to-server `channel`. The host checks it against the channel's
@@ -82,6 +98,21 @@ macro_rules! export_client_part {
 
             fn epoch() {
                 <$ty as $crate::client::ClientPart>::epoch()
+            }
+
+            fn modal_resized(size: $crate::client::ui::GuiSize) {
+                <$ty as $crate::client::ClientPart>::modal_resized(size)
+            }
+
+            fn text_changed(control: ::std::string::String, text: ::std::string::String) {
+                <$ty as $crate::client::ClientPart>::text_changed(control, text)
+            }
+
+            fn secondary_action(
+                id: ::std::string::String,
+                collection_index: ::core::option::Option<u32>,
+            ) {
+                <$ty as $crate::client::ClientPart>::secondary_action(id, collection_index)
             }
         }
 

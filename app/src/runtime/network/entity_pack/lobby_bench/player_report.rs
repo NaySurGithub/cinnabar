@@ -46,7 +46,7 @@ fn skin_stamp(skin: Option<&PlayerSkin>) -> u64 {
     match skin {
         Some(PlayerSkin::Standard(skin)) => {
             (skin.width, skin.height).hash(&mut hash);
-            skin.rgba8.hash(&mut hash);
+            (*skin.rgba8).hash(&mut hash);
             if let Some(geometry) = &skin.geometry {
                 geometry.resource_patch.hash(&mut hash);
                 geometry.geometry_data.hash(&mut hash);
@@ -206,7 +206,7 @@ fn report_states(
 ) {
     let stream = world.resource::<ClientWorld>().stream.as_ref().unwrap();
     let rendered = world.resource::<ActorRenderFrame>();
-    for (actor, profile) in stream.render_players() {
+    for (actor, profile) in stream.authority().render_players() {
         let ActorKind::Player { uuid, .. } = &actor.kind else {
             continue;
         };
@@ -232,7 +232,7 @@ fn report_states(
             }),
             other => json!({ "unavailable": format!("{other:?}") }),
         };
-        let rig = stream.actor_rig(actor.runtime_id);
+        let rig = stream.authority().actor_rig(actor.runtime_id);
         records.push(json!({
             "player": label, "state": states.len(), "packet_index": packet_index,
             "skin": skin, "invisible_flag": actor.is_invisible(),

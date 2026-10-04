@@ -2,8 +2,8 @@ use assets::{EntityAnimationKeyframe, EntityAnimationProperty};
 
 use super::{tick::WeightedClip, *};
 
-// ModelPart loader 26.50.26 RVA 01e61dd0 uses DAT_14ffa90d8 (24), then the model
-// constructor RVA 01e772b0 negates native Y into BoneOrientation default position.
+// ModelPart loader uses 24, then the model
+// constructor negates native Y into BoneOrientation default position.
 pub const MODEL_PART_ORIGIN_Y: f32 = assets::gui_item::SHIELD_MODEL_PART_HEIGHT;
 
 #[derive(Clone, Copy)]
@@ -11,6 +11,7 @@ pub(super) struct LocalDelta {
     pub(super) translation: [f32; 3],
     pub(super) rotation: [f32; 3],
     pub(super) scale: [f32; 3],
+    pub(super) rotation_relative_to_entity: bool,
 }
 
 impl Default for LocalDelta {
@@ -19,6 +20,7 @@ impl Default for LocalDelta {
             translation: [0.0; 3],
             rotation: [0.0; 3],
             scale: [1.0; 3],
+            rotation_relative_to_entity: false,
         }
     }
 }
@@ -34,19 +36,22 @@ impl LocalDelta {
 }
 
 /// Blends weighted clips into per-bone deltas, evaluating keyframe expressions against the
-/// value earlier clips produced for the same channel.
+/// native default orientation plus the value earlier clips produced for the same channel.
 pub(super) fn sample_clips(
     evaluator: &Evaluator<'_>,
     variables: &mut MolangVariables,
-    bone_count: usize,
+    bones: &[RuntimeBone],
     clips: &[WeightedClip],
     budget: &mut EvalBudget<'_>,
 ) -> Result<Vec<LocalDelta>, EvalError> {
     let assets = evaluator.assets;
-    let mut local = vec![LocalDelta::default(); bone_count];
+    let mut local = vec![LocalDelta::default(); bones.len()];
     for weighted in clips {
         budget.charge_work()?;
         let weight = weighted.weight;
+        if weight < f32::EPSILON {
+            continue;
+        }
         let clip = assets
             .animation_clips()
             .get(weighted.clip)
@@ -56,22 +61,13 @@ pub(super) fn sample_clips(
         let clip_tick = evaluator.anim_tick.saturating_sub(weighted.started_tick);
         let evaluator = &Evaluator {
             anim_tick: clip_tick,
+            anim_time: Some(weighted.time),
             ..*evaluator
         };
-        let frame_alpha = evaluator
-            .context
-            .attachable
-            .map_or(0.0, |input| input.frame_alpha);
-        let raw_time = (clip_tick as f32 + frame_alpha) * ACTOR_TICK_DURATION.as_secs_f32();
-        let time = match clip.loop_mode {
-            EntityAnimationLoop::Loop if length > 0.0 => raw_time.rem_euclid(length),
-            // A finished one-shot stops contributing; only hold keeps its last frame.
-            EntityAnimationLoop::Once if raw_time > length => continue,
-            EntityAnimationLoop::Once | EntityAnimationLoop::HoldOnLastFrame => {
-                raw_time.clamp(0.0, length)
-            }
-            EntityAnimationLoop::Loop => 0.0,
-        };
+        if clip.loop_mode == EntityAnimationLoop::Once && weighted.time > length {
+            continue;
+        }
+        let time = weighted.time;
         let first = clip.first_channel as usize;
         let end = first
             .checked_add(clip.channel_count as usize)
@@ -93,8 +89,17 @@ pub(super) fn sample_clips(
             let bone = local
                 .get_mut(channel.bone as usize)
                 .ok_or(EvalError::Invalid)?;
+            // Native blending retains the greatest frame setting across active clips.
+            bone.rotation_relative_to_entity |= channel.rotation_relative_to_entity;
             let current = bone.property(channel.property);
-            let this = *current;
+            // `this` reads BoneOrientation, not an animation-only delta. ModelPart's
+            // defaults are copied into that orientation before channels add their values.
+            let defaults = default_channel(bones, channel.bone as usize, channel.property)
+                .ok_or(EvalError::Invalid)?;
+            let this = std::array::from_fn(|axis| match channel.property {
+                EntityAnimationProperty::Scale => defaults[axis] * current[axis],
+                _ => defaults[axis] + current[axis],
+            });
             let value = sample_channel(
                 assets,
                 channel.first_keyframe,
@@ -112,6 +117,38 @@ pub(super) fn sample_clips(
         }
     }
     Ok(local)
+}
+
+fn default_channel(
+    bones: &[RuntimeBone],
+    index: usize,
+    property: EntityAnimationProperty,
+) -> Option<[f32; 3]> {
+    let bone = bones.get(index)?;
+    if matches!(bone.attachable_root, AttachableRootFrame::MatchingOwnerName) {
+        return Some(match property {
+            EntityAnimationProperty::Scale => [1.0; 3],
+            _ => [0.0; 3],
+        });
+    }
+    Some(match property {
+        EntityAnimationProperty::Rotation => bone.rotation,
+        EntityAnimationProperty::Scale => [1.0; 3],
+        EntityAnimationProperty::Translation => {
+            // ModelPart uses an authored X/Z frame and a 24-pixel Y origin. A
+            // parented part stores a relative pivot; only roots retain that origin.
+            // BoneOrientation negates ModelPart's Y before exposing it to Molang.
+            let origin = match bone.parent {
+                Some(parent) => bones.get(parent)?.pivot,
+                None => [0.0, MODEL_PART_ORIGIN_Y, 0.0],
+            };
+            [
+                origin[0] - bone.pivot[0],
+                bone.pivot[1] - origin[1],
+                bone.pivot[2] - origin[2],
+            ]
+        }
+    })
 }
 
 fn keyframe_value(
@@ -196,10 +233,20 @@ pub(super) fn compose_pose(
     bones: &[RuntimeBone],
     local: &[LocalDelta],
 ) -> Option<Vec<BoneTransform>> {
+    compose_pose_with_targets(bones, local, &[])
+}
+
+/// Retarget named joints in model space while composing their clothing and other children.
+/// Callers validate the complete hierarchy with an untargeted composition first.
+pub(super) fn compose_pose_with_targets(
+    bones: &[RuntimeBone],
+    local: &[LocalDelta],
+    targets: &[Option<BoneTransform>],
+) -> Option<Vec<BoneTransform>> {
     let mut transforms = vec![None; bones.len()];
     let mut visiting = vec![false; bones.len()];
     for index in 0..bones.len() {
-        compose_bone(index, bones, local, &mut transforms, &mut visiting)?;
+        compose_bone(index, bones, local, targets, &mut transforms, &mut visiting)?;
     }
     transforms.into_iter().collect()
 }
@@ -208,6 +255,7 @@ fn compose_bone(
     index: usize,
     bones: &[RuntimeBone],
     local: &[LocalDelta],
+    targets: &[Option<BoneTransform>],
     transforms: &mut [Option<BoneTransform>],
     visiting: &mut [bool],
 ) -> Option<BoneTransform> {
@@ -218,6 +266,20 @@ fn compose_bone(
         return None;
     }
     visiting[index] = true;
+    if let Some(target) = targets.get(index).copied().flatten() {
+        if target
+            .rotation
+            .iter()
+            .chain(target.translation_scale.iter())
+            .chain(target.axis_scale.iter())
+            .any(|value| !value.is_finite())
+        {
+            return None;
+        }
+        visiting[index] = false;
+        transforms[index] = Some(target);
+        return Some(target);
+    }
     let bone = bones.get(index)?;
     let delta = local.get(index).copied().unwrap_or_default();
     // Owner-name binding clears defaults; an explicit expression keeps ModelPart defaults.
@@ -251,15 +313,24 @@ fn compose_bone(
     // Authored X and Y angles turn against the right-hand rule in the mirrored frame.
     let rotation = quat_from_euler([-x, -y, z]);
     let transform = if let Some(parent_index) = bone.parent {
-        let parent = compose_bone(parent_index, bones, local, transforms, visiting)?;
+        let parent = compose_bone(parent_index, bones, local, targets, transforms, visiting)?;
         let parent_scale = total_scale(&parent);
         let scaled = std::array::from_fn(|axis| translation[axis] * parent_scale[axis]);
         let rotated = rotate_vector(parent.rotation, scaled);
         // A non-uniform parent scale under a rotated child would shear; the child keeps the
         // componentwise product, exact only for a uniform parent scale or an unturned child.
-        let scale = std::array::from_fn(|axis| parent_scale[axis] * delta.scale[axis]);
+        // Entity-relative rotation resets the inherited basis after translating the pivot.
+        // This removes both parent rotation and scale; descendants inherit our new basis.
+        let (rotation, scale) = if delta.rotation_relative_to_entity {
+            (rotation, delta.scale)
+        } else {
+            (
+                quat_multiply(parent.rotation, rotation),
+                std::array::from_fn(|axis| parent_scale[axis] * delta.scale[axis]),
+            )
+        };
         with_scale(
-            quat_multiply(parent.rotation, rotation),
+            rotation,
             std::array::from_fn(|axis| parent.translation_scale[axis] + rotated[axis]),
             scale,
         )
@@ -314,7 +385,7 @@ pub(super) fn quat_from_euler(rotation: [f32; 3]) -> [f32; 4] {
     ]
 }
 
-fn quat_multiply(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
+pub(super) fn quat_multiply(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
     [
         a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1],
         a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0],
@@ -323,7 +394,7 @@ fn quat_multiply(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
     ]
 }
 
-fn rotate_vector(rotation: [f32; 4], vector: [f32; 3]) -> [f32; 3] {
+pub(super) fn rotate_vector(rotation: [f32; 4], vector: [f32; 3]) -> [f32; 3] {
     let qvector = [vector[0], vector[1], vector[2], 0.0];
     let inverse = [-rotation[0], -rotation[1], -rotation[2], rotation[3]];
     let result = quat_multiply(quat_multiply(rotation, qvector), inverse);

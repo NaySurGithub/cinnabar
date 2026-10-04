@@ -15,6 +15,7 @@ use bevy::{
         view::{ExtractedView, ViewTarget},
     },
 };
+use render_api::SkinRgba8;
 use std::{mem::size_of, sync::Arc};
 
 mod node;
@@ -71,7 +72,7 @@ pub struct HandItemAtlas {
 #[derive(Clone, Debug)]
 pub(crate) struct HandRigFrame {
     pub(crate) rig: ActorRigRenderFrame,
-    pub(crate) skin: Arc<[u8]>,
+    pub(crate) skin: SkinRgba8,
     pub(crate) light: HandRigLight,
     pub(crate) fov_radians: f32,
     pub(crate) revision: u64,
@@ -94,7 +95,7 @@ impl HandRigScene {
     pub fn publish(
         &mut self,
         rig: ActorRigRenderFrame,
-        skin: Arc<[u8]>,
+        skin: SkinRgba8,
         light: HandRigLight,
         fov_radians: f32,
         revision: u64,
@@ -156,7 +157,13 @@ fn install(app: &mut App) {
         return;
     }
     app.add_plugins(ExtractResourcePlugin::<HandRigScene>::default());
-    load_internal_asset!(app, HAND_RIG_SHADER, "hand_rig.wgsl", Shader::from_wgsl);
+    load_internal_asset!(
+        app,
+        HAND_RIG_SHADER,
+        "hand_rig.wgsl",
+        crate::shader_safety::from_actor_wgsl,
+        crate::actor::ACTOR_GPU_INSTANCE_WORDS
+    );
     let render_app = app.sub_app_mut(RenderApp);
     render_app
         .insert_resource(Installed)
@@ -166,6 +173,7 @@ fn install(app: &mut App) {
 }
 
 /// The rig pass Enhanced views run after Bloom and grading.
+#[cfg(feature = "enhanced")]
 pub(crate) fn enhanced_post_node(world: &mut World) -> impl bevy::render::render_graph::Node {
     ViewNodeRunner::new(
         crate::ui_render::overlay::GradeStage::<_, true>(node::HandRigViewNode),
@@ -223,7 +231,7 @@ struct HandRigAtlas {
 struct HandRigSkin {
     _texture: Texture,
     view: TextureView,
-    pixels: Arc<[u8]>,
+    pixels: SkinRgba8,
 }
 
 #[derive(Resource)]
@@ -447,7 +455,7 @@ fn upload_skin(
     if gpu
         .skin
         .as_ref()
-        .is_some_and(|skin| Arc::ptr_eq(&skin.pixels, &frame.skin) || skin.pixels == frame.skin)
+        .is_some_and(|skin| skin.pixels == frame.skin)
     {
         return;
     }
@@ -479,7 +487,7 @@ fn upload_skin(
     gpu.skin = Some(HandRigSkin {
         _texture: texture,
         view,
-        pixels: Arc::clone(&frame.skin),
+        pixels: frame.skin.clone(),
     });
     gpu.bind_group = None;
 }

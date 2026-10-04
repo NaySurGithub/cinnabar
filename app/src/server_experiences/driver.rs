@@ -6,12 +6,8 @@ use server_experience::{
     trust::{Choice, Settings},
 };
 
-use crate::{
-    app::ClientFrameSet,
-    menu::MenuRuntime,
-    runtime::network::NetworkHandle,
-    ui_runtime::{UiRuntime, presentation::UiPresentationRuntime},
-};
+use crate::{app::ClientFrameSet, menu::MenuRuntime, runtime::network::NetworkHandle};
+use client_ui::ui_runtime::{UiRuntime, presentation::UiPresentationRuntime};
 
 #[derive(Resource)]
 struct ExperienceService {
@@ -64,6 +60,7 @@ fn drive(
     time: Res<Time<Real>>,
     mut wheel: MessageReader<bevy::input::mouse::MouseWheel>,
     mut buttons: MessageReader<bevy::input::mouse::MouseButtonInput>,
+    mut keyboard: MessageReader<bevy::input::keyboard::KeyboardInput>,
 ) {
     let now_ms = u64::try_from(time.elapsed().as_millis()).unwrap_or(u64::MAX);
     let generation = runtime.session_id();
@@ -155,6 +152,9 @@ fn drive(
     let focused = window.is_some_and(|window| window.focused);
     let modal_focus =
         focused && !wants_prompt && service.live.is_some() && presentation.experience_modal_shown();
+    if let Some(live) = service.live.as_mut() {
+        live.set_modal_size(presentation.experience_modal_size());
+    }
     if modal_focus {
         let notches = wheel_events
             .iter()
@@ -166,22 +166,59 @@ fn drive(
         presentation.hover_experience_modal(cursor);
         presentation.scroll_experience_modal(notches);
         let (mut pressed, mut released) = (false, false);
+        let (mut secondary_pressed, mut secondary_released) = (false, false);
         for input in buttons.read() {
-            if input.button == MouseButton::Left {
-                pressed |= input.state.is_pressed();
-                released |= !input.state.is_pressed();
+            match input.button {
+                MouseButton::Left => {
+                    pressed |= input.state.is_pressed();
+                    released |= !input.state.is_pressed();
+                }
+                MouseButton::Right => {
+                    secondary_pressed |= input.state.is_pressed();
+                    secondary_released |= !input.state.is_pressed();
+                }
+                _ => {}
             }
         }
+        let control = keys.any_pressed([
+            KeyCode::ControlLeft,
+            KeyCode::ControlRight,
+            KeyCode::SuperLeft,
+            KeyCode::SuperRight,
+        ]);
+        let typed: Vec<String> = keyboard
+            .read()
+            .filter(|input| input.state.is_pressed())
+            .filter_map(|input| {
+                crate::ui_runtime::typed_text(input.key_code, input.text.as_deref(), control)
+            })
+            .collect();
+        let escape = keys.just_pressed(KeyCode::Escape);
+        let now = time.elapsed_secs_f64();
+        let press = presentation.press_experience_modal(cursor, pressed, released);
+        let secondary = presentation.secondary_press_experience_modal(
+            cursor,
+            secondary_pressed,
+            secondary_released,
+        );
+        let edits = presentation.edit_experience_modal(cursor, pressed, &typed, escape, now);
         let live = service.live.as_mut().expect("modal focus needs a runtime");
-        if keys.just_pressed(KeyCode::Escape) {
+        for (control, text) in &edits.edits {
+            live.text_changed(control, text);
+        }
+        if escape && !edits.escape_consumed {
             live.close_modal();
-        } else if let Some((id, index)) =
-            presentation.press_experience_modal(cursor, pressed, released)
-        {
-            live.press(&id, index);
+        } else {
+            if let Some((id, index)) = press {
+                live.press(&id, index);
+            }
+            if let Some((id, index)) = secondary {
+                live.press_secondary(&id, index);
+            }
         }
     } else {
         buttons.clear();
+        keyboard.clear();
     }
     let choice =
         if focused && can_disable(&extension.session.state) && keys.just_pressed(KeyCode::F9) {

@@ -26,7 +26,7 @@ use skin::normalize_player_skin;
 pub use skin::{
     CLASSIC_SKIN_SIDE, CapeImage, MAX_CLASSIC_SKIN_SIDE, MAX_SKIN_ANIMATION_LAYERS,
     MAX_SKIN_GEOMETRY_SOURCE_BYTES, PlayerSkin, PlayerSkinUnavailable, SkinAnimation,
-    SkinAnimationKind, SkinGeometrySource, StandardSkin, expand_legacy_skin_rgba8,
+    SkinAnimationKind, SkinGeometrySource, SkinRgba8, StandardSkin, expand_legacy_skin_rgba8,
 };
 pub use status::{ActorStatusEvent, ActorStatusKind, ActorTakeItemEvent};
 pub(crate) use status::{
@@ -46,7 +46,7 @@ pub const MAX_ACTOR_METADATA_NBT_BYTES: usize = 1_048_576;
 pub const MAX_PLAYER_LIST_RECORDS: usize = 4_096;
 pub const MAX_PLAYER_LIST_SKIN_BYTES: usize = 64 * 1024 * 1024;
 
-/// Native ItemActor origin above collision-box feet. Current ctor 0383fdc0 sets
+/// Native ItemActor origin above collision-box feet. Current ctor sets
 /// collision height to .25 and this offset to half that height. AddItemActor and
 /// both absolute/delta movement carry the native origin, not collision feet.
 pub const ITEM_ACTOR_NETWORK_OFFSET: f32 = 0.125;

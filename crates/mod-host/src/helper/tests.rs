@@ -71,6 +71,7 @@ fn delayed_start_keeps_frame_polling_responsive_and_reports_launch_failure() {
             .dispatch(Dispatch {
                 event: Event::Epoch,
                 epoch: 1,
+                gui: None,
             })
             .is_err()
     );
@@ -139,6 +140,7 @@ fn maximum_typed_message_round_trips_through_dispatch_ipc() {
             record,
         },
         epoch: u64::MAX,
+        gui: None,
     };
     request.event.check().unwrap();
     assert!(serde_json::to_vec(&request).unwrap().len() > MAX_HOST_OUTPUT);
@@ -181,6 +183,7 @@ fn review_frame_serialization_stops_at_the_byte_limit() {
     assert_eq!(visits.load(std::sync::atomic::Ordering::Relaxed), 1);
 }
 
+#[cfg(feature = "execution")]
 #[test]
 fn call_failures_name_their_kind_callback_and_bundle_with_a_bounded_clean_reason() {
     let fuel = anyhow::Error::from(wasmtime::Trap::OutOfFuel);

@@ -1,7 +1,7 @@
 use crate::chunk::*;
 
 pub(in crate::chunk) fn drawable_allocation_identity(
-    frame_probe: &ActiveFrameProbe,
+    frame_probe: &FrameProbeScope<'_>,
     entity: Entity,
     allocation: &GpuChunkAllocation,
     active_tint_identity: ChunkBiomeTintIdentity,
@@ -19,7 +19,7 @@ pub(in crate::chunk) fn drawable_allocation_identity(
 
 pub(in crate::chunk) fn prepare_indirect_batch_draws<'a>(
     allocations: impl IntoIterator<Item = (Entity, &'a GpuChunkAllocation)>,
-    frame_probe: &ActiveFrameProbe,
+    frame_probe: &FrameProbeScope<'_>,
     active_tint_identity: ChunkBiomeTintIdentity,
 ) -> (
     Vec<DrawIndexedIndirectArgs>,
@@ -44,7 +44,7 @@ pub(in crate::chunk) fn prepare_indirect_batch_draws<'a>(
 
 pub(in crate::chunk) fn prepare_model_indirect_batch_draws<'a>(
     allocations: impl IntoIterator<Item = (Entity, &'a GpuChunkAllocation)>,
-    frame_probe: &ActiveFrameProbe,
+    frame_probe: &FrameProbeScope<'_>,
     active_tint_identity: ChunkBiomeTintIdentity,
 ) -> (
     Vec<DrawIndexedIndirectArgs>,
@@ -69,7 +69,7 @@ pub(in crate::chunk) fn prepare_model_indirect_batch_draws<'a>(
 
 pub(in crate::chunk) fn prepare_depth_liquid_indirect_batch_draws<'a>(
     allocations: impl IntoIterator<Item = (Entity, &'a GpuChunkAllocation)>,
-    frame_probe: &ActiveFrameProbe,
+    frame_probe: &FrameProbeScope<'_>,
     active_tint_identity: ChunkBiomeTintIdentity,
 ) -> (
     Vec<DrawIndexedIndirectArgs>,
@@ -108,6 +108,7 @@ pub(in crate::chunk) fn prepare_chunk_indirect_batches(
     let _timer = profiler
         .as_deref()
         .map(|profiler| profiler.time(RuntimeStage::IndirectPreparation));
+    let frame_probe = frame_probe.scope();
     let mut all_commands = Vec::new();
     for batch in batches.0.values_mut() {
         let (indirect_commands, drawn_allocations) = prepare_indirect_batch_draws(
@@ -182,6 +183,7 @@ pub(in crate::chunk) fn upload_indirect_commands_if_changed(
         arena.indirect_capacity = commands.len().next_power_of_two();
         arena.indirect_buffer = create_indirect_buffer(render_device, arena.indirect_capacity);
         arena.uploaded_indirect_bytes.clear();
+        crate::chunk::gpu::telemetry::log_arena_capacity(arena, "indirect commands grew");
     }
     let bytes: &[u8] = bytemuck::cast_slice(commands);
     if arena.uploaded_indirect_bytes == bytes {

@@ -54,8 +54,8 @@ pub use bind::{
 pub use catalog::{Catalog, LoadError, RawControl};
 pub use component::{
     ButtonEvent, ButtonInput, CARET_BLINK_SECONDS, CARET_GLYPH, Components, Dispatch, Dispatcher,
-    EditMeta, PointerInput, ScreenEvent, SliderMeta, SoundMeta, TextEdit, TextType, ToggleManager,
-    ToggleMeta, Widget,
+    EditMeta, PointerInput, ScreenEvent, SelectionWheelMeta, SliderMeta, SoundMeta, TextEdit,
+    TextType, ToggleManager, ToggleMeta, Widget,
 };
 pub use emit::{
     Draw, DrawNode, RectOut, SpriteFilter, SpriteQuad, StateGate, TextAlign, UvRect, color_value,
@@ -128,8 +128,7 @@ impl Context {
     }
 
     /// The desktop context plus the globals a retail, full-game, non-edu desktop
-    /// client computes in code (1.26.50 `VanillaSceneFactory::createGlobalVars`,
-    /// RVA 0x076bf510), false ones included.
+    /// client computes in code, false ones included.
     pub fn retail(macos: bool) -> Self {
         let platform: &[(&str, bool)] = &[
             ("win10_edition", !macos),
