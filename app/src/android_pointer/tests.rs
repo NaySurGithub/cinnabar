@@ -157,6 +157,7 @@ fn the_app_adapter_updates_ui_input_without_warping_the_window_cursor() {
     let mut ui = UiRuntime::new(1);
     ui.publish_local_runtime_id(&mut player, 1, 42)
         .expect("local player identity");
+    ui.publish_inventory_authority(&mut player, protocol::InventoryAuthority::Server);
     ui.toggle_inventory(&mut player);
     assert!(ui.inventory_open());
     app.insert_resource(ui)
