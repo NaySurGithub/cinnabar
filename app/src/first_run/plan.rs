@@ -5,11 +5,14 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
+use crate::asset_startup::ACTOR_ASSETS_FILENAME;
+
 /// Carriers the production runtime refuses to start without.
 pub(super) const REQUIRED_CARRIERS: &[&str] = &[
     "vanilla-v2193.mcbea",
     "vanilla-v1.mcbeatm",
     "vanilla-v1.mcbeent",
+    ACTOR_ASSETS_FILENAME,
     "vanilla-v1.mcbehud",
     "vanilla-v1.mcbeico",
     "vanilla-v1.mcbelang",
@@ -225,10 +228,10 @@ pub(super) fn steps(workspace: &Path) -> Result<Vec<Step>> {
             pack_step(
                 "actor-assets",
                 VANILLA_MANIFEST,
-                "vanilla-v1.mcbeact",
+                ACTOR_ASSETS_FILENAME,
                 "actor-assets.json",
             ),
-            false,
+            true,
         ),
         step(
             "Compiling sound bank",

@@ -1,14 +1,14 @@
 use bevy::{input::touch::Touches, prelude::*, window::PrimaryWindow};
 use semantic_input::{TouchControlState, touch};
 
-use super::{UiRuntime, presentation::UiPresentationRuntime};
 use crate::{
     menu::MenuRuntime, player_runtime::PlayerRuntime, semantic_controls::SemanticTouchTargets,
 };
+use client_ui::ui_runtime::{UiRuntime, presentation::UiPresentationRuntime};
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn drive_gameplay_touch_targets(
-    touches: Res<Touches>,
+    mut touches: ResMut<Touches>,
     mut ui: ResMut<UiRuntime>,
     mut targets: ResMut<SemanticTouchTargets>,
     mut player: ResMut<PlayerRuntime>,
@@ -54,11 +54,14 @@ pub(crate) fn drive_gameplay_touch_targets(
     for contact in touches.iter_just_canceled() {
         state.release(contact.id());
     }
-    for contact in touches.iter_just_pressed() {
-        if touches.just_canceled(contact.id()) {
+    let started: Vec<_> = touches
+        .iter_just_pressed()
+        .map(|contact| (contact.id(), position(contact.start_position())))
+        .collect();
+    for &(id, start) in &started {
+        if touches.just_canceled(id) {
             continue;
         }
-        let start = position(contact.start_position());
         let region = presentation.gameplay_touch_region(start, size);
         let opened_ui = match region.map(|region| region.hit_id) {
             Some(touch::INVENTORY) => {
@@ -78,11 +81,14 @@ pub(crate) fn drive_gameplay_touch_targets(
             _ => false,
         };
         if opened_ui {
+            for &(id, _) in &started {
+                touches.clear_just_pressed(id);
+            }
             state.clear();
             presentation.set_touch_contacts(Vec::new());
             return;
         }
-        state.begin(contact.id(), start, 0, region);
+        state.begin(id, start, 0, region);
     }
     for contact in touches.iter().chain(touches.iter_just_released()) {
         state.move_to(contact.id(), position(contact.position()), 0);

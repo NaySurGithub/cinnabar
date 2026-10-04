@@ -21,7 +21,9 @@ use winit::{
 
 use super::{
     super::{
-        EULA_URL, prepare, record_consent, reporter,
+        EULA_URL,
+        prepare::prepare,
+        record_consent, reporter,
         screen::{self, Action, Effect, Meter, Screen},
         status::Status,
     },

@@ -5257,5 +5257,6 @@ Control sizes/positions, GUI scale, safe areas and turn sensitivity remain
 provisional. D-pad + Tap, Joystick + Tap, dynamic joystick settings, native
 tap/hold targeting, touch inventory gestures and scrolling, touch-specific form
 mapping, keyboard composition/preedit, Android Back, toggle crouch, auto-jump,
-control customization and complete lifecycle/performance acceptance remain incomplete.
+control customization, authenticated-service Android identity and complete
+lifecycle/performance acceptance remain incomplete.
 The first APK is a test preview, and closes no vanilla parity gate.

@@ -13,10 +13,11 @@ use bevy::{
 use jni::objects::{JString, JValue};
 
 #[cfg(target_os = "android")]
-use crate::{
-    menu::{MenuField, MenuRuntime},
-    ui_runtime::UiRuntime,
-};
+use crate::menu::MenuRuntime;
+#[cfg(target_os = "android")]
+use client_ui::ui_runtime::UiRuntime;
+#[cfg(target_os = "android")]
+use launcher::menu::MenuField;
 
 #[cfg(target_os = "android")]
 pub(crate) fn configure_app(app: &mut App) {
@@ -76,50 +77,11 @@ fn drive_text_input(
         }
         Ok(())
     });
-    if let Err(error) = result {
-        if *enabled != Some(focus) {
-            warn!("Android text input is unavailable: {error}");
-            *enabled = Some(focus);
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use bevy::ecs::message::Messages;
-
-    #[test]
-    fn ime_commits_preserve_unicode_and_ordered_edits_without_repeating_text_on_release() {
-        let mut app = App::new();
-        app.add_message::<KeyboardInput>();
-        let window = app.world_mut().spawn_empty().id();
-        app.add_systems(Update, move |mut input: MessageWriter<KeyboardInput>| {
-            write_commit("猫🦀\u{8}x\u{7f}\n", window, &mut input);
-        });
-        app.update();
-        let events: Vec<_> = app
-            .world_mut()
-            .resource_mut::<Messages<KeyboardInput>>()
-            .drain()
-            .collect();
-        let pressed: Vec<_> = events
-            .iter()
-            .filter(|event| event.state == ButtonState::Pressed)
-            .map(|event| (event.key_code, event.text.as_deref()))
-            .collect();
-        assert_eq!(pressed.len(), 5);
-        assert_eq!(pressed[0].1, Some("猫🦀"));
-        assert_eq!(pressed[1], (KeyCode::Backspace, None));
-        assert_eq!(pressed[2].1, Some("x"));
-        assert_eq!(pressed[3], (KeyCode::Delete, None));
-        assert_eq!(pressed[4], (KeyCode::Enter, None));
-        for pair in events.chunks_exact(2) {
-            assert_eq!(pair[0].key_code, pair[1].key_code);
-            assert_eq!(pair[1].state, ButtonState::Released);
-            assert_eq!(pair[1].text, None);
-            assert_eq!(pair[1].window, window);
-        }
+    if let Err(error) = result
+        && *enabled != Some(focus)
+    {
+        warn!("Android text input is unavailable: {error}");
+        *enabled = Some(focus);
     }
 }
 
@@ -179,5 +141,44 @@ fn write_key(
             repeat: false,
             window,
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::ecs::message::Messages;
+
+    #[test]
+    fn ime_commits_preserve_unicode_and_ordered_edits_without_repeating_text_on_release() {
+        let mut app = App::new();
+        app.add_message::<KeyboardInput>();
+        let window = app.world_mut().spawn_empty().id();
+        app.add_systems(Update, move |mut input: MessageWriter<KeyboardInput>| {
+            write_commit("猫🦀\u{8}x\u{7f}\n", window, &mut input);
+        });
+        app.update();
+        let events: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Messages<KeyboardInput>>()
+            .drain()
+            .collect();
+        let pressed: Vec<_> = events
+            .iter()
+            .filter(|event| event.state == ButtonState::Pressed)
+            .map(|event| (event.key_code, event.text.as_deref()))
+            .collect();
+        assert_eq!(pressed.len(), 5);
+        assert_eq!(pressed[0].1, Some("猫🦀"));
+        assert_eq!(pressed[1], (KeyCode::Backspace, None));
+        assert_eq!(pressed[2].1, Some("x"));
+        assert_eq!(pressed[3], (KeyCode::Delete, None));
+        assert_eq!(pressed[4], (KeyCode::Enter, None));
+        for pair in events.chunks_exact(2) {
+            assert_eq!(pair[0].key_code, pair[1].key_code);
+            assert_eq!(pair[1].state, ButtonState::Released);
+            assert_eq!(pair[1].text, None);
+            assert_eq!(pair[1].window, window);
+        }
     }
 }

@@ -493,7 +493,9 @@ const fn current_platform() -> Platform {
 
 #[cfg(test)]
 mod tests {
-    use super::{InstallEnvironment, InstallLayout, LayoutError, Platform};
+    use super::{
+        InstallEnvironment, InstallLayout, LayoutError, Platform, physics_registry_relative,
+    };
     use std::path::PathBuf;
 
     fn environment(executable: &str, home: &str) -> InstallEnvironment {

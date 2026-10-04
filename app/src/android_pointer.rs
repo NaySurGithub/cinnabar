@@ -1,8 +1,8 @@
 //! Touch pointer for screens whose existing controllers consume mouse edges.
 use bevy::{input::touch::Touches, prelude::*, window::PrimaryWindow};
-use client_ui::ui_runtime::forms::ServerFormIdentity;
+use client_ui::ui_runtime::{UiRuntime, forms::ServerFormIdentity};
 
-use crate::{menu::MenuRuntime, ui_runtime::UiRuntime};
+use crate::menu::MenuRuntime;
 
 /// Overrides the UI cursor without asking the operating system to warp a mouse.
 #[derive(Resource, Default)]
