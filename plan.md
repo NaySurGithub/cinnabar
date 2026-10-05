@@ -5334,6 +5334,12 @@ Newly arrived nearby lighting competes with distant propagation even after
 the camera settles; a regression exercises the spawn column skylight dependency.
 Fresh nearby solid mesh arrivals also re-enter the bounded near-camera probe
 after a settled view; a regression proves dispatch ahead of blocked distant work.
+Coalesced invalidations and accepted lighting (including unchanged values) wake
+already-pending nearby meshes without adding duplicate ingress records. A wake
+survives unavailable mesh worker capacity; stationary expired-slice regressions
+cover both paths. The supplied S21 recording still shows missing terrain followed
+by a disconnect; this scheduler correction does not establish its cause or close
+the device terrain gate.
 The corrected pipeline rendered continuous flat-world ground and touch camera
 movement on the same emulator. The latest Zeno retest was rejected with
 "Already logged in"; it does not establish full lobby terrain completion.

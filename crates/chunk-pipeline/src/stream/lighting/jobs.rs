@@ -572,6 +572,12 @@ impl WorldStream {
         urgent: bool,
         monotonic_faces: [bool; 6],
     ) {
+        // Even unchanged light restores readiness for meshes waiting on this halo.
+        for dependent in key.mesh_neighbourhood_dependents() {
+            if self.mesh_jobs.pending.contains_key(&dependent) {
+                self.mesh_jobs.refresh.wake_near(dependent);
+            }
+        }
         let mut requeue = self.lighting.waiters.remove(&key).unwrap_or_default();
         let completed_uniform_direct_sky = self
             .lighting

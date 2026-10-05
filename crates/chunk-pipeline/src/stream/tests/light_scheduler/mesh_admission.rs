@@ -315,3 +315,84 @@ fn stationary_spawn_mesh_competes_with_blocked_far_work() {
     assert_eq!(completion.key, near);
     stream.accept_mesh_completion(completion);
 }
+
+fn blocked_stationary_spawn_mesh() -> (WorldStream, SchedulerView, SubChunkKey, u64) {
+    let mut stream = lit_stream(1);
+    let view = SchedulerView {
+        position: [8.0; 3],
+        forward: None,
+    };
+    stream
+        .mesh_jobs
+        .refresh
+        .refresh(view, &mut stream.mesh_jobs.lanes, None, |_, _| true);
+    for x in [
+        scheduler::NEAR_CAMERA_RADIUS + 1,
+        scheduler::NEAR_CAMERA_RADIUS + 2,
+    ] {
+        let key = SubChunkKey::new(1, x, 0, 0);
+        stream
+            .authority
+            .commit_sub_chunk(key, super::uniform_sub_chunk(2))
+            .unwrap();
+        stream.resident.insert(key);
+        let revision = stream.mark_dirty_exact(key, Instant::now());
+        stream.mesh_jobs.lanes[RESIDENT_MESH_LANE]
+            .ready
+            .push(PendingSchedulerCandidate::new(key, revision, view, false));
+    }
+    stream.mesh_jobs.scan.clear();
+    let near = SubChunkKey::new(1, 0, 0, 0);
+    stream
+        .authority
+        .commit_sub_chunk(near, super::uniform_sub_chunk(2))
+        .unwrap();
+    stream.resident.insert(near);
+    let revision = stream.mark_dirty_exact(near, Instant::now());
+    stream.poll_deadline = Some(Instant::now() - Duration::from_secs(1));
+    assert_eq!(stream.dispatch_mesh_jobs(view.position, 1), 0);
+    assert!(stream.mesh_jobs.scan.is_empty());
+    (stream, view, near, revision)
+}
+
+/// Completing light must wake already-pending nearby geometry without a camera move.
+#[test]
+fn stationary_spawn_mesh_wakes_when_coalesced_light_becomes_ready() {
+    let (mut stream, view, near, revision) = blocked_stationary_spawn_mesh();
+    install_current_light(&mut stream, near, 0, 0, false);
+    stream.mark_changed_light_mesh_dependents(near, [false; 6], Instant::now(), false);
+    assert_eq!(stream.mesh_jobs.pending[&near].revision, revision);
+    assert!(
+        stream.mesh_jobs.scan.is_empty(),
+        "coalesced invalidations must not duplicate scan entries"
+    );
+    stream
+        .admitted_mesh_jobs
+        .store(usize::MAX, Ordering::Release);
+    assert_eq!(stream.dispatch_mesh_jobs(view.position, 1), 0);
+    stream.admitted_mesh_jobs.store(0, Ordering::Release);
+    assert_eq!(
+        stream.dispatch_mesh_jobs(view.position, 1),
+        1,
+        "newly lit nearby geometry must dispatch before blocked far meshes consume the slice"
+    );
+    assert!(stream.mesh_jobs.in_flight.contains_key(&near));
+    let completion = stream.mesh_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert_eq!(completion.key, near);
+    stream.accept_mesh_completion(completion);
+}
+
+/// Even unchanged lighting can restore a deferred mesh's halo readiness.
+#[test]
+fn stationary_spawn_mesh_wakes_after_unchanged_light_completion() {
+    let (mut stream, view, near, revision) = blocked_stationary_spawn_mesh();
+    install_current_light(&mut stream, near, 0, 0, false);
+    let direct = stream.lighting.direct_sky[&near].clone();
+    stream.finish_accepted_light_completion(near, 0, &direct, [false; 6], false);
+    assert_eq!(stream.mesh_jobs.pending[&near].revision, revision);
+    assert!(stream.mesh_jobs.scan.is_empty());
+    assert_eq!(stream.dispatch_mesh_jobs(view.position, 1), 1);
+    let completion = stream.mesh_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert_eq!(completion.key, near);
+    stream.accept_mesh_completion(completion);
+}

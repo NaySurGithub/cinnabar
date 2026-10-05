@@ -28,6 +28,7 @@ impl Lane {
 pub(super) struct SchedulerRefresh<const L: usize> {
     previous: [Lane; L],
     view: Option<SchedulerView>,
+    near_wakeup: bool,
 }
 
 impl<const L: usize> Default for SchedulerRefresh<L> {
@@ -35,11 +36,17 @@ impl<const L: usize> Default for SchedulerRefresh<L> {
         Self {
             previous: std::array::from_fn(|_| Lane::default()),
             view: None,
+            near_wakeup: false,
         }
     }
 }
 
 impl<const L: usize> SchedulerRefresh<L> {
+    /// Coalesced invalidations can make deferred nearby work ready without new ingress.
+    pub(super) fn wake_near(&mut self, key: SubChunkKey) {
+        self.near_wakeup |= self.view.is_some_and(|view| mesh_is_near(view, key));
+    }
+
     /// Refreshes bounded queue work and reports whether the view still needs direct local probes.
     pub(super) fn refresh(
         &mut self,
@@ -55,7 +62,9 @@ impl<const L: usize> SchedulerRefresh<L> {
             std::mem::swap(&mut self.previous, queues);
             self.view = Some(view);
         }
-        let probe_near = moved || self.previous.iter().any(|lane| !lane.is_empty());
+        let probe_near = std::mem::take(&mut self.near_wakeup)
+            || moved
+            || self.previous.iter().any(|lane| !lane.is_empty());
         let mut refreshed = false;
         for _ in 0..MAX_PENDING_SCHEDULER_SCANS_PER_POLL {
             if refreshed && deadline.is_some_and(|deadline| Instant::now() >= deadline) {
@@ -228,6 +237,14 @@ fn compact_scheduler_scan(
     }
     let mut seen = HashSet::with_capacity(live_len);
     scan.retain(|&(key, revision)| is_live(key, revision) && seen.insert(key));
+}
+
+pub(super) fn mesh_is_near(view: SchedulerView, key: SubChunkKey) -> bool {
+    let [x, y, z, _] = view.cell();
+    let radius = NEAR_CAMERA_RADIUS as u64;
+    i64::from(key.x).abs_diff(i64::from(x)) <= radius
+        && i64::from(key.y).abs_diff(i64::from(y)) <= radius
+        && i64::from(key.z).abs_diff(i64::from(z)) <= radius
 }
 
 /// Probes the camera's immediate sub-chunk neighbourhood without scanning pending maps.

@@ -17,8 +17,6 @@ impl WorldStream {
             forward: self.view_forward,
         };
         let (resident, known_air) = (&self.resident, &self.known_air);
-        let [camera_x, camera_y, camera_z, _] = view.cell();
-        let near_radius = scheduler::NEAR_CAMERA_RADIUS as u64;
         let mut local_ingress = false;
         let probe_near = self
             .mesh_jobs
@@ -28,10 +26,7 @@ impl WorldStream {
                 } else {
                     MESH_REMOVAL_LANE
                 };
-                local_ingress |= lane == RESIDENT_MESH_LANE
-                    && i64::from(key.x).abs_diff(i64::from(camera_x)) <= near_radius
-                    && i64::from(key.y).abs_diff(i64::from(camera_y)) <= near_radius
-                    && i64::from(key.z).abs_diff(i64::from(camera_z)) <= near_radius;
+                local_ingress |= lane == RESIDENT_MESH_LANE && scheduler::mesh_is_near(view, key);
                 (lane, pending.urgent)
             });
 
@@ -161,6 +156,11 @@ impl WorldStream {
                 || dispatched >= worker_budget
                 || (examined && self.poll_budget_exhausted())
             {
+                if dispatched >= worker_budget
+                    || self.mesh_changes.len() >= MAX_PENDING_MESH_CHANGES
+                {
+                    self.mesh_jobs.refresh.wake_near(key);
+                }
                 if queued {
                     self.mesh_jobs.lanes[RESIDENT_MESH_LANE]
                         .ready
