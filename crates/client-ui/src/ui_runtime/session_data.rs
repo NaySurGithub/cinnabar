@@ -2,8 +2,8 @@
 //! what the client already decoded, and rebuilt only when the server resends a source.
 //!
 //! Known gaps, recorded rather than fixed here:
-//! - Smelting: at the 26.30 target `CraftingDataEntry::read` handles entry types 0, 1 and 4–9
-//!   only, so furnace recipes never arrive in CraftingData.
+//! - Smelting: the vanilla client reads CraftingData entry types 0, 1 and 4–9 only, so furnace
+//!   recipes never arrive in CraftingData.
 //! - Brewing: the decoder skips CraftingData's potion and container-change vectors
 //!   (`protocol` `recipes/grammar.rs`).
 //! - A recipe with a Molang, complex alias, deferred or int-id ingredient is dropped whole by the
