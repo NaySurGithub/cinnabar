@@ -394,6 +394,8 @@ class Smoke:
             self.adb('shell', 'am', 'start', '-W', '-a', 'android.intent.action.MAIN',
                      '-c', 'android.intent.category.LAUNCHER', '-f', '0x10200000',
                      '-n', self.launcher_component, timeout=30)
+            self.prepare()  # The launcher revalidates carriers before resuming the existing game.
+            time.sleep(3)
             if self.args.auth_cancel is not None:
                 self.click_observed_tap(self.args.auth_cancel, 'auth-cancel', 'sign-in', 'Close')
             else:
