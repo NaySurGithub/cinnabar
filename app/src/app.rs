@@ -68,7 +68,7 @@ use crate::{
             NetworkConfig, NetworkHandle, ResourcePackAdmissionState, prepare_actor_render_frame,
             publish_actor_render_frame, receive_network_events, spawn_network,
         },
-        publication::{PublicationController, begin_publication_frame},
+        publication::{PublicationController, configure_publication_frame_systems},
         shutdown::{exit_on_fatal_runtime_error, exit_on_window_close_requested},
         telemetry::{
             AcceptanceRuntimeConfig, frame_limited_winit_settings, publish_runtime_stage_profile,
@@ -315,6 +315,7 @@ pub(crate) fn configure_acceptance_finish_system(app: &mut App) {
 }
 
 pub(crate) fn configure_client_runtime_frame_systems(app: &mut App) {
+    configure_publication_frame_systems(app);
     app.add_observer(apply_added_chunk_visibility)
         .add_observer(remove_chunk_visibility)
         .configure_sets(
@@ -326,13 +327,6 @@ pub(crate) fn configure_client_runtime_frame_systems(app: &mut App) {
             )
                 .chain()
                 .after(FlyCameraUpdateSet),
-        )
-        .add_systems(
-            Update,
-            begin_publication_frame
-                .before(receive_network_events)
-                .before(drive_world_stream)
-                .before(ChunkRenderApplySet),
         )
         .add_systems(
             Update,

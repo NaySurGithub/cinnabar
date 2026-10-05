@@ -25,7 +25,7 @@ use crate::runtime::network::{
 use crate::runtime::phase3_evidence::emit_phase3_evidence;
 use crate::runtime::publication::{
     PublicationController, PublicationFrameWork, adaptive_publication_diagnostic_line,
-    begin_publication_frame,
+    begin_publication_frame, configure_publication_backlog_sampling,
 };
 use crate::runtime::shutdown::finish_acceptance_run;
 use crate::runtime::telemetry::send_player_auth_inputs;
@@ -41,6 +41,9 @@ use crate::session::recover_session_failure;
 use crate::survival_mining::produce_survival_mining;
 use crate::ui_runtime::presentation::{prepare_ui_runtime, publish_ui_runtime};
 use chunk_pipeline::{PublicationServiceConfig, WorldMeshChange};
+
+#[path = "publication/backlog_tests.rs"]
+mod backlog_tests;
 
 #[test]
 fn production_client_systems_are_members_of_the_behavioral_sets() {
@@ -701,6 +704,7 @@ fn production_pipeline_presents_exact_6951_manifest_with_known_air_within_sixtee
             Update,
             drive_unified_publication_fixture.before(ChunkRenderApplySet),
         );
+    configure_publication_backlog_sampling(&mut app);
 
     let target = app
         .world_mut()

@@ -1,11 +1,44 @@
 use std::time::Duration;
 
 use bevy::{
-    prelude::{Res, ResMut, Resource, Time},
+    prelude::{App, IntoScheduleConfigs, Res, ResMut, Resource, Time, Update},
     time::Real,
 };
 use chunk_pipeline::{PublicationAllowance, PublicationServiceConfig};
-use render::ChunkUploadBudget;
+use render::{ChunkRenderApplySet, ChunkRenderQueue, ChunkUploadBudget};
+
+pub(crate) fn configure_publication_frame_systems(app: &mut App) {
+    app.add_systems(
+        Update,
+        begin_publication_frame
+            .before(super::network::receive_network_events)
+            .before(super::world::drive_world_stream)
+            .before(ChunkRenderApplySet),
+    );
+    configure_publication_backlog_sampling(app);
+}
+
+pub(crate) fn configure_publication_backlog_sampling(app: &mut App) {
+    app.add_systems(
+        Update,
+        sample_publication_backlog
+            .after(ChunkRenderApplySet)
+            .before(super::telemetry::record_metrics),
+    );
+}
+
+fn sample_publication_backlog(
+    controller: Option<ResMut<PublicationController>>,
+    queue: Option<Res<ChunkRenderQueue>>,
+) {
+    let Some((mut controller, queue)) = controller.zip(queue) else {
+        return;
+    };
+    // Newly handed-off work has now had its scheduled application opportunity.
+    // Only the residual queue is evidence of pressure for the following frame.
+    controller.diagnostics.last_work.upload_queue_items = queue.retained_len();
+    controller.diagnostics.last_work.upload_queue_bytes = queue.pending_bytes();
+}
 
 const NANOS_PER_SECOND: u128 = 1_000_000_000;
 const RECOVERY_STREAK_FRAMES: u32 = 120;
