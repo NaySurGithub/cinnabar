@@ -394,7 +394,10 @@ class Smoke:
             self.adb('shell', 'am', 'start', '-W', '-a', 'android.intent.action.MAIN',
                      '-c', 'android.intent.category.LAUNCHER', '-f', '0x10200000',
                      '-n', self.launcher_component, timeout=30)
-            self.click_text('Cancel', 'auth-cancel')
+            if self.args.auth_cancel is not None:
+                self.click_observed_tap(self.args.auth_cancel, 'auth-cancel', 'sign-in', 'Close')
+            else:
+                self.click_text('Cancel', 'auth-cancel')
             end = min(self.deadline - 15, time.monotonic() + 20)
             while time.monotonic() < end:
                 services = self.adb('shell', 'dumpsys', 'activity', 'services', self.package).stdout
@@ -477,6 +480,8 @@ def main():
                         help='optional observed saved-server Play tap x,y@WIDTHxHEIGHT; size checked before tapping')
     parser.add_argument('--auth-start', type=observed_tap, default='',
                         help='optional observed Sign In tap x,y@WIDTHxHEIGHT; size checked before tapping')
+    parser.add_argument('--auth-cancel', type=observed_tap, default='',
+                        help='optional observed sign-in close tap x,y@WIDTHxHEIGHT; size checked before tapping')
     parser.add_argument('--seconds', type=int, default=1200)
     args = parser.parse_args()
     if not 120 <= args.seconds <= 1200:

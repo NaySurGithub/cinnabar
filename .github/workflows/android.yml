@@ -65,6 +65,11 @@ on:
         required: false
         default: ''
         type: string
+      auth_cancel:
+        description: 'Optional observed sign-in close tap x,y@WIDTHxHEIGHT for emulator smoke'
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
@@ -169,3 +174,4 @@ jobs:
       home_play: ${{ inputs.home_play }}
       server_play: ${{ inputs.server_play }}
       auth_start: ${{ inputs.auth_start }}
+      auth_cancel: ${{ inputs.auth_cancel }}

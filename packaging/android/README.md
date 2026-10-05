@@ -39,7 +39,8 @@ with `apk_run` set to its Actions run ID. The optional `server` input attempts a
 that address. The smoke artifact includes frames, private logs and crash reports; no account tokens
 are supplied, so servers requiring Microsoft sign-in may reject the attempt.
 If OCR cannot read the menu font, `auth_start` accepts an observed Sign In tap as
-`x,y@WIDTHxHEIGHT`; the frame dimensions are verified before tapping.
+`x,y@WIDTHxHEIGHT`; `auth_cancel` accepts the observed close × in the sign-in dialog.
+The frame dimensions are verified before either tap.
 With no server specified, the smoke starts Microsoft device-code sign-in, backgrounds the Activity
 past the cached-app freeze delay, checks that the helper continues consuming CPU, then returns and
 cancels sign-in. It checks that the foreground service stops; it never approves the device code.
