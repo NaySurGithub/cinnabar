@@ -2175,3 +2175,9 @@ Agent cross-reference index: for each file, the vanilla symbols and addresses it
 
 ## crates/sim/src/simulator/water.rs
 - `sample_liquid_submersion`: `ActorMobilityUtils::isUnderLiquid` with MaterialType Any.
+
+## Player animation queries
+- `crates/client-world/src/actor_animation/query.rs`: `query.approx_eq`, client 1.26.50.26, artifact 6, RVA 0x25157d0. Requires two or more operands; compares evaluated floats to the first operand with exact equality and rejects NaN.
+- `crates/client-world/src/actor_store/lifecycle/interpolation.rs` and `actor_animation/query.rs`: `query.is_local_player`, client 1.26.50.26, artifact 6, RVA 0x2503770. Reads client-local actor ownership, independently of first-person view.
+- `crates/client-world/src/actor_animation/query.rs`: `query.has_armor_slot`, client 1.26.50.26, artifact 6, RVA 0x25027f0. One armor slot argument; reports whether the slot has armor.
+- `query.is_on_fire` uses the same actor fire state retained by `actor_store/fire.rs`; the registration spelling appears in the current client fire-overlay expression.
