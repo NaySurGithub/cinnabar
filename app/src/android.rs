@@ -1,6 +1,7 @@
 //! Native Android host and private storage; desktop entry points are unchanged.
 
 pub(crate) mod archive;
+mod bootstrap;
 pub(crate) mod bridge;
 
 use std::{path::PathBuf, sync::OnceLock};

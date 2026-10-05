@@ -24,6 +24,7 @@ public final class BootstrapActivity extends Activity {
     }
 
     private void beginSetup() {
+        if (isDestroyed() || isFinishing()) return;
         consent.set(0);
         showProgress("Preparing @PRODUCT_NAME@");
         Thread worker = new Thread(() -> prepareNative(), "resource-setup");
@@ -33,7 +34,7 @@ public final class BootstrapActivity extends Activity {
 
     public void requestConsent(String title, String body) {
         runOnUiThread(() -> {
-            if (isFinishing()) { consent.set(-1); return; }
+            if (isDestroyed() || isFinishing()) { consent.set(-1); return; }
             if (progress != null) progress.dismiss();
             new AlertDialog.Builder(this).setTitle(title).setMessage(body)
                     .setPositiveButton("Accept and download", (dialog, which) -> consent.set(1))
@@ -46,7 +47,7 @@ public final class BootstrapActivity extends Activity {
 
     public void showProgress(String message) {
         runOnUiThread(() -> {
-            if (isFinishing()) return;
+            if (isDestroyed() || isFinishing()) return;
             if (progress == null || !progress.isShowing()) {
                 progress = new ProgressDialog(this);
                 progress.setTitle("@PRODUCT_NAME@");
@@ -79,8 +80,8 @@ public final class BootstrapActivity extends Activity {
 
     public void setupComplete(boolean ready, String error) {
         runOnUiThread(() -> {
+            if (isDestroyed() || isFinishing()) return;
             if (progress != null) progress.dismiss();
-            if (isFinishing()) return;
             if (ready) {
                 startActivity(new Intent(this, @ACTIVITY@.class));
                 finish();

@@ -1,14 +1,6 @@
 //! JNI calls stay off Android's main thread; Java posts UI operations to that thread.
 
-use std::{
-    cell::Cell,
-    ffi::c_void,
-    path::PathBuf,
-    sync::{
-        Mutex, OnceLock,
-        atomic::{AtomicBool, Ordering},
-    },
-};
+use std::{cell::Cell, ffi::c_void, path::PathBuf, sync::OnceLock};
 
 use anyhow::{Context, Result, bail};
 use jni::{
@@ -17,12 +9,14 @@ use jni::{
     sys::{JNI_ERR, JNI_VERSION_1_6, jint},
 };
 
-use super::Paths;
+use super::{
+    Paths,
+    bootstrap::{Attempt, Coordinator},
+};
 
 static PATHS: OnceLock<Paths> = OnceLock::new();
 static BOOTSTRAP_VM: OnceLock<JavaVM> = OnceLock::new();
-static BOOTSTRAP_ACTIVITY: Mutex<Option<GlobalRef>> = Mutex::new(None);
-pub(crate) static CANCEL: AtomicBool = AtomicBool::new(false);
+static BOOTSTRAP: Coordinator<GlobalRef> = Coordinator::new();
 thread_local! { static IN_BOOTSTRAP: Cell<bool> = const { Cell::new(false) }; }
 
 pub(super) fn paths() -> Result<Paths> {
@@ -38,10 +32,7 @@ pub(super) fn paths() -> Result<Paths> {
 pub(crate) fn jni_call<T>(
     call: impl FnOnce(&mut JNIEnv<'_>, &JObject<'_>) -> Result<T>,
 ) -> Result<T> {
-    let bootstrap = BOOTSTRAP_ACTIVITY
-        .lock()
-        .map_err(|_| anyhow::anyhow!("bootstrap Activity lock poisoned"))?
-        .clone();
+    let bootstrap = BOOTSTRAP.owner();
     if let Some(activity) =
         bootstrap.filter(|_| IN_BOOTSTRAP.get() || bevy::android::ANDROID_APP.get().is_none())
     {
@@ -152,15 +143,10 @@ fn initialise(env: &mut JNIEnv<'_>, activity: &JObject<'_>) -> Result<()> {
             .map_err(|_| anyhow::anyhow!("Android paths already configured"))?;
     }
     let _ = BOOTSTRAP_VM.set(env.get_java_vm()?);
-    *BOOTSTRAP_ACTIVITY
-        .lock()
-        .map_err(|_| anyhow::anyhow!("bootstrap Activity lock poisoned"))? =
-        Some(env.new_global_ref(activity)?);
-    CANCEL.store(false, Ordering::Relaxed);
     Ok(())
 }
 
-fn resources() -> Result<()> {
+fn resources(attempt: &Attempt<'_, GlobalRef>) -> Result<()> {
     let archive = jni_call(|env, activity| {
         let name = JObject::from(env.new_string(super::runtime().resource_archive)?);
         let value = JString::from(
@@ -175,11 +161,8 @@ fn resources() -> Result<()> {
         Ok(PathBuf::from(String::from(env.get_string(&value)?)))
     })?;
     let paths = paths()?;
-    let staged = paths.resources_dir.with_extension("staging");
-    if staged.exists() {
-        std::fs::remove_dir_all(&staged)?;
-    }
-    super::archive::extract(&archive, &staged, &CANCEL)?;
+    let staged = attempt.fresh_staging(&paths.resources_dir)?;
+    super::archive::extract(&archive, &staged, BOOTSTRAP.cancellation())?;
     let _ = std::fs::remove_dir_all(&paths.resources_dir);
     std::fs::rename(&staged, &paths.resources_dir)?;
     let _ = std::fs::remove_file(archive);
@@ -194,14 +177,29 @@ fn resources() -> Result<()> {
 }
 
 extern "system" fn prepare_native(mut env: JNIEnv<'_>, activity: JObject<'_>) {
+    let owner = match env.new_global_ref(&activity) {
+        Ok(owner) => owner,
+        Err(error) => {
+            eprintln!("Android bootstrap Activity is unavailable: {error}");
+            return;
+        }
+    };
+    let attempt = BOOTSTRAP.begin(owner, || {
+        eprintln!("Android setup is waiting for the previous attempt");
+    });
     IN_BOOTSTRAP.set(true);
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<bool> {
+        if env.call_method(&activity, "isDestroyed", "()Z", &[])?.z()?
+            || env.call_method(&activity, "isFinishing", "()Z", &[])?.z()?
+        {
+            return Ok(false);
+        }
         initialise(&mut env, &activity)?;
-        resources()?;
+        resources(&attempt)?;
         let _ = rayon::ThreadPoolBuilder::new()
             .num_threads(2)
             .build_global();
-        crate::first_run::android::bootstrap(&CANCEL)
+        crate::first_run::android::bootstrap(BOOTSTRAP.cancellation())
     }))
     .unwrap_or_else(|_| {
         Err(anyhow::anyhow!(
@@ -216,24 +214,30 @@ extern "system" fn prepare_native(mut env: JNIEnv<'_>, activity: JObject<'_>) {
             (false, message)
         }
     };
-    let _ = jni_call(|env, activity| {
+    if env.exception_check().unwrap_or(false) {
+        let _ = env.exception_clear();
+    }
+    let _ = (|| -> Result<()> {
         let message = JObject::from(env.new_string(message)?);
         env.call_method(
-            activity,
+            &activity,
             "setupComplete",
             "(ZLjava/lang/String;)V",
             &[JValue::Bool(u8::from(ready)), JValue::Object(&message)],
         )?;
         Ok(())
-    });
-    if let Ok(mut activity) = BOOTSTRAP_ACTIVITY.lock() {
-        *activity = None;
+    })();
+    if env.exception_check().unwrap_or(false) {
+        let _ = env.exception_clear();
     }
     IN_BOOTSTRAP.set(false);
 }
 
-extern "system" fn cancel_native(_: JNIEnv<'_>, _: JObject<'_>) {
-    CANCEL.store(true, Ordering::Relaxed);
+extern "system" fn cancel_native(env: JNIEnv<'_>, activity: JObject<'_>) {
+    BOOTSTRAP.cancel(|owner| {
+        env.is_same_object(owner.as_obj(), &activity)
+            .unwrap_or(false)
+    });
 }
 
 /// Registered by class name from the runtime manifest, avoiding package-specific JNI symbols.

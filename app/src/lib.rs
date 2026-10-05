@@ -1,5 +1,8 @@
 #[cfg(target_os = "android")]
 pub mod android;
+#[cfg(all(test, not(target_os = "android")))]
+#[path = "android/bootstrap.rs"]
+mod android_bootstrap;
 #[cfg(any(target_os = "android", test))]
 mod android_keyboard;
 mod android_pointer;
