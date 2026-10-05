@@ -1,3 +1,11 @@
+## Flower-pot floor and lily-pad atlas tint
+
+- Flower pots now add the dirt surface four pixels above the block base, below the rim.
+- The pot body remains provisional fallback geometry; full current-version visual parity is incomplete.
+- Literal lily-pad atlas tint survives raster-only resource-pack replacement. A higher catalog can replace or clear it.
+- The current vanilla pack supplies a fixed green atlas multiplier, rather than biome tint.
+- Regression tests reproduce the missing floor and ignored pack tint. Installed Windows visual acceptance is pending.
+
 ## Java-style Tab player list
 
 - User-requested HUD extension: hold Tab for the authoritative online roster.
@@ -19,6 +27,15 @@
 - Forward movement requests normal sprint; sneak, hunger and other restrictions still apply.
 - Auth-input sprint flags remain derived from the completed physics state.
 - Windows official install: Keyboard & Mouse rendered at a 1280×720 client area; label and toggle are legible, aligned and unclipped. Enabled preference persisted during user interaction. Live user movement acceptance remains pending.
+
+## Unfilled sub-chunk slots light as air
+
+- Probable cause of reported dark corners on distant stepped terrain: a requested sub-chunk
+  whose retries ended without data stayed unknown, so the column below lost its sky light.
+- Vanilla leaves such a slot empty and lights it as air; the slot is now known air, and a
+  column settled this way no longer blocks its neighbours' first light.
+- Streaming terrace regressions cover both. Incomplete live visual acceptance: a rendered
+  far-terrain frame is pending, as is a check against the open Lifeboat zero-skylight trace.
 
 # Rust Bedrock Client (Bevy + Go Core) — Master Implementation Plan
 
@@ -85,7 +102,32 @@ The user requests latest-dev integration, no further tests and direct publicatio
 to dev. The final cadence change and integration have no new test-green claim.
 All local test services started for this feature are stopped.
 
-2026-10-04 Lifeboat skylight investigation (incomplete): the supplied session
+2026-10-04 Lifeboat server forms (compatibility acceptance passed): creation-body
+values, ordered button roles, trailing-close predicates, relative references and
+evaluated grid capacities now follow the native contracts. Descriptions and
+action/header controls render; eight minigame cards fit with the sidebar and
+without extra scroll rows. All 487 JSON-UI tests and the installed server-pack
+layout test pass. A fresh optimized macOS/Metal frame confirms the selector;
+the user tested Lifeboat and accepted the complete result for direct publication.
+See [the form evidence](docs/evidence/lifeboat-forms.md). Broader UI typography and
+performance parity remain open.
+
+2026-10-04 Lifeboat session palette repair (compatibility acceptance passed): a fresh
+join reproduces gray terrain and blocked movement with coherent carriers. The
+remote palette must omit vanilla data-driven definitions absent from StartGame;
+the full carrier admitted 98 extra types and shifted wire air by 1,181 states.
+Session admission now maps wire IDs to stable carrier IDs and converts outgoing
+block interactions back to wire IDs. Inventory, falling-block visuals and block
+sounds resolve retained wire identities at their consumers. Regression coverage
+includes partial/full admission, custom insertion, session replacement and raw
+descriptor preservation. See [the session evidence](docs/evidence/lifeboat-offline.md).
+The optimized macOS/Metal client passed a 300-second lobby run with walking,
+strafing and jumping. A second join opened and answered the Navigator menu,
+completed `/transfer sm3`, walked/jumped in Survival Mode and opened its book
+menu. Neither run disconnected or reported decode errors.
+This does not close broader native timing or rendering parity gates.
+
+2026-10-04 Lifeboat skylight investigation (historical, superseded for this session): the supplied session
 trace confirms zero solved sky light but does not identify the blocked input.
 Offline chunk-pipeline fixtures already produce sky light 15 when inline upper
 slots are omitted, both over empty space and over opaque terrain. Limited and
@@ -4518,10 +4560,10 @@ correction does not close those broader gates. No live server was used for these
 deadlocked the gate. A session whose server sent no terrain before spawn now releases once received
 work drains. The vanilla zero-terrain completion path is unconfirmed: see the open questions
 in [the join evidence](docs/core-join-startup.md). StartGame's vanilla data-driven
-definitions are no longer server custom blocks: the v2193 palette already holds their states,
-state for state with Dragonfly's. Vanilla tells them apart by the `minecraft` namespace
-(`Util::isVanillaNamespace` in `BlockDefinitionGroup::digestServerBlockProperties`), not by
-`vanilla_block_data`, which every definition carries (server blocks number from 10000). A server
+definitions are retained separately from server custom visuals: the complete carrier holds their
+states, but remote sessions admit them only when StartGame supplies their definitions.
+The namespace distinguishes vanilla definitions from server custom blocks; the presence of
+`vanilla_block_data` alone does not. A server
 block's own item (no components, no item version) stacks to `Item`'s default 64.
 
 ---

@@ -50,7 +50,7 @@ pub struct FormEngine {
     /// Where texture paths draw from, including the on-demand server atlas.
     pub(super) textures: TextureSet,
     /// The atlas page images last handed to the dynamic pages.
-    pub(super) server_pages: Vec<render::UiTexturePage>,
+    pub(super) server_pages: Vec<render_model::UiTexturePage>,
     /// The runtime pack last applied, compared by identity.
     server_source: Option<Arc<ServerUiPack>>,
     /// The last form's bound tree and laid-out output, reused while unchanged.
@@ -107,6 +107,7 @@ pub(super) struct EngineInputs<'a> {
 impl FormEngine {
     pub(super) fn new(assets: Arc<RuntimeUiAssets>, mut catalog: Catalog, first_page: u16) -> Self {
         super::global_resources::extend_catalog(&mut catalog);
+        super::accounts::extend_catalog(&mut catalog);
         let vanilla = Arc::new(catalog);
         let base = Arc::new(hud_renderers::with_java_hud(&vanilla, &Default::default()));
         Self {
@@ -174,7 +175,7 @@ impl FormEngine {
     }
 
     /// The atlas page images when they changed since the last call.
-    pub(super) fn take_server_pages(&mut self) -> Option<&[render::UiTexturePage]> {
+    pub(super) fn take_server_pages(&mut self) -> Option<&[render_model::UiTexturePage]> {
         let atlas = self.textures.atlas_mut();
         if !atlas.take_dirty() {
             return None;

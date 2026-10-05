@@ -28,8 +28,8 @@ const REGISTRY_DIR: &str = "crates/assets/data";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum Action {
-    /// Bundled fetch script under the workspace `scripts/` directory.
-    Script(&'static str),
+    /// Native bounded unpack of the downloaded sample pack into its cache directory.
+    UnpackPack,
     /// `assetc` subcommand plus arguments, relative to the workspace.
     Assetc(Vec<String>),
 }
@@ -52,7 +52,7 @@ struct FontSource {
     font_file: String,
 }
 
-/// Where the fetch script extracts the pinned pack, relative to the workspace.
+/// Where the pinned pack is unpacked, relative to the workspace.
 pub(super) fn cache_dir(root: &Path) -> Result<String> {
     let vanilla: VanillaSource = read_json(&root.join(VANILLA_MANIFEST))?;
     Ok(vanilla.cache_dir)
@@ -104,7 +104,7 @@ pub(super) fn steps(workspace: &Path) -> Result<Vec<Step>> {
     Ok(vec![
         step(
             "Unpacking the Minecraft sample resource pack",
-            Action::Script("fetch-vanilla-assets"),
+            Action::UnpackPack,
             true,
         ),
         step(
@@ -338,15 +338,12 @@ mod tests {
     }
 
     #[test]
-    fn plan_fetches_before_compiling_and_reads_pack_from_manifest() {
+    fn plan_unpacks_before_compiling_and_reads_pack_from_manifest() {
         let dir = workspace();
         let plan = steps(dir.path()).unwrap();
-        assert!(matches!(
-            plan[0].action,
-            Action::Script("fetch-vanilla-assets")
-        ));
+        assert_eq!(plan[0].action, Action::UnpackPack);
         let Action::Assetc(args) = &plan[1].action else {
-            panic!("world compile must follow the fetches");
+            panic!("world compile must follow the unpack");
         };
         assert!(args.contains(&".local/assets/bedrock-samples/v1/full/resource_pack".to_owned()));
     }

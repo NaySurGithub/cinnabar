@@ -50,6 +50,8 @@ mod particle_command;
 mod registry_version;
 #[path = "command/ui_command.rs"]
 mod ui_command;
+#[path = "command/vanilla_pack_command.rs"]
+mod vanilla_pack_command;
 
 #[cfg(test)]
 use crate::cli::Cli;
@@ -422,6 +424,12 @@ pub(crate) fn run(command: Command) -> Result<(), Box<dyn std::error::Error>> {
                 compiled.biomes.rules.len(),
                 out.display()
             );
+        }
+        Command::VanillaPack {
+            source_manifest,
+            accept_eula,
+        } => {
+            vanilla_pack_command::acquire(&source_manifest, &std::env::current_dir()?, accept_eula)?
         }
         Command::AnimationInventory {
             pack,

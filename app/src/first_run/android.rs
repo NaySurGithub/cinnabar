@@ -1,7 +1,5 @@
 //! Android executes the shared preparation plan in-process instead of spawning shell tools.
 
-mod sources;
-
 use std::{
     fs::{self, OpenOptions},
     io::Write,
@@ -125,10 +123,7 @@ fn compile(
             }
             writeln!(log, "{}", step.label)?;
             let result = match &step.action {
-                Action::Script("fetch-vanilla-assets") => sources::unpack_pack(&workspace, cancel),
-                Action::Script(name) => Err(anyhow::anyhow!(
-                    "unsupported Android preparation step {name}"
-                )),
+                Action::UnpackPack => super::download::unpack(&workspace, cancel),
                 Action::Assetc(args) => {
                     let absolute = absolute_arguments(&workspace, args)?;
                     asset_compiler::run_args(absolute).map_err(|error| anyhow::anyhow!("{error}"))

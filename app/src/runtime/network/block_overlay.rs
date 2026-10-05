@@ -75,7 +75,7 @@ pub(super) fn compile_block_overlay(
         .filter(|identifier| !identifier.starts_with("minecraft:"))
         .collect::<HashSet<_>>();
     let mut builder = Builder {
-        catalog: TextureCatalog::new(view),
+        catalog: TextureCatalog::new(view, vanilla_keys),
         geometries: geometry_catalog(view, &wanted),
         overlay: BlockOverlay::default(),
         sources: Vec::new(),
@@ -603,7 +603,7 @@ fn quantize(
 /// Model quad face codes (`1..=6` = down/up/west/east/north/south) by face index.
 const MODEL_FACE_FLAGS: [u32; 6] = [3, 4, 1, 2, 5, 6];
 
-#[cfg(test)]
+#[cfg(all(test, feature = "reports"))]
 mod pack_report;
 #[cfg(test)]
 mod tests;

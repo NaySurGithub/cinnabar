@@ -28,6 +28,7 @@ members = [
     "crates/server-experience",
     "crates/render",
     "crates/render-api",
+    "crates/render-model",
     "crates/inventory",
     "crates/launcher",
     "crates/client-ui",
@@ -48,7 +49,7 @@ members = [
 resolver = "3"
 
 [workspace.package]
-version = "0.1.4"
+version = "0.1.5"
 edition = "2024"
 rust-version = "1.93.1"
 
