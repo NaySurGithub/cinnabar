@@ -137,6 +137,30 @@ impl cinnabar::extension::events::Host for State {
         self.world.pending_cues.push(ModCue { name, values });
         Ok(Ok(()))
     }
+
+    fn poll(&mut self) -> Result<Vec<cinnabar::extension::events::Cue>> {
+        self.cue_polls += 1;
+        if self.cue_polls > MAX_IMPORT_WRITES {
+            bail!("cue poll budget exhausted");
+        }
+        Ok(self.incoming_cues.clone())
+    }
+}
+
+/// Keeps only well-formed cues, up to the per-callback bound.
+pub(super) fn incoming(cues: Vec<ModCue>) -> Vec<cinnabar::extension::events::Cue> {
+    cues.into_iter()
+        .filter(|cue| {
+            cue_name_valid(&cue.name)
+                && cue.values.len() <= MAX_CUE_VALUES
+                && cue.values.iter().all(|value| value.is_finite())
+        })
+        .take(mod_api::MAX_INCOMING_CUES)
+        .map(|cue| cinnabar::extension::events::Cue {
+            name: cue.name,
+            values: cue.values,
+        })
+        .collect()
 }
 
 /// Rejects malformed host frames before granting a guest any access to them.

@@ -33,6 +33,10 @@ const ENTITIES_ENV: &str = "CINNABAR_MOD_ENTITIES";
 #[cfg(feature = "local-mods")]
 const COMMANDS_ENV: &str = "CINNABAR_MOD_COMMANDS";
 #[cfg(feature = "local-mods")]
+const RENDER_ENV: &str = "CINNABAR_MOD_RENDER";
+#[cfg(feature = "local-mods")]
+const RENDER_DEPTH_ENV: &str = "CINNABAR_MOD_RENDER_DEPTH";
+#[cfg(feature = "local-mods")]
 const DEMO_KEY: KeyCode = KeyCode::F8;
 #[cfg(feature = "local-mods")]
 const RELOAD_INTERVAL: Duration = Duration::from_millis(500);
@@ -103,6 +107,8 @@ fn configure(app: &mut App, path: Option<&Path>) {
                     .collect()
             })
             .unwrap_or_default(),
+        render: std::env::var(RENDER_ENV).is_ok_and(|value| value == "1"),
+        render_depth: std::env::var(RENDER_DEPTH_ENV).is_ok_and(|value| value == "1"),
     };
     configure_with_grants(app, path, grants);
 }
@@ -147,6 +153,8 @@ fn configure_with_grants(app: &mut App, path: Option<&Path>, grants: ModGrants) 
 #[cfg(feature = "local-mods")]
 fn configure_systems(app: &mut App, watching: bool) {
     app.init_resource::<ModCueFeed>();
+    app.add_plugins(::render::ModRenderPlugin)
+        .add_systems(Update, render::grant_depth_sampling);
     if watching {
         app.add_systems(
             Update,
@@ -197,6 +205,7 @@ fn drive_mod(
         Option<ResMut<crate::camera::CameraSettingsAuthority>>,
         Option<ResMut<ModCueFeed>>,
     ),
+    render_scene: Option<ResMut<::render::ModRenderScene>>,
 ) {
     let (Some(mut extension), Some(mut time_override), Some(mut interaction)) =
         (extension, time_override, interaction)
@@ -225,6 +234,9 @@ fn drive_mod(
     });
     let snapshot = gameplay.snapshot(captured && !absorbed, &extension.grants);
     let mobs = gameplay.mobs(snapshot.as_ref(), &extension.grants);
+    if let Some(feed) = outputs.2.as_ref() {
+        extension.host.deliver_cues(feed.0.clone());
+    }
     let mut controls = std::mem::replace(&mut extension.controls, mod_host::empty_controls());
     controls.gameplay = snapshot.is_some();
     if extension.host.is_active()
@@ -239,6 +251,7 @@ fn drive_mod(
         }
         eprintln!("Cinnabar extension callback failed: {error:#}");
     }
+    render::publish(render_scene, &extension.host);
     if let Some(error) = extension.host.take_settings_error() {
         eprintln!("Cinnabar extension preferences could not be saved: {error}");
     }
@@ -402,3 +415,5 @@ mod gameplay;
 mod input;
 #[cfg(feature = "local-mods")]
 pub(crate) mod interaction;
+#[cfg(feature = "local-mods")]
+mod render;

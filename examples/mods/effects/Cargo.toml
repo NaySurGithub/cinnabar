@@ -1,0 +1,20 @@
+[package]
+name = "effects-mod"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["component"]
+# Exports the standalone component; disable it to embed `Effects` in another mod.
+component = []
+
+[dependencies]
+mod-api = { path = "../../../crates/mod-api" }
+
+[dev-dependencies]
+mod-render = { path = "../../../crates/mod-render" }

@@ -2688,6 +2688,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "effects-mod"
+version = "0.1.6"
+dependencies = [
+ "mod-api",
+ "mod-render",
+]
+
+[[package]]
 name = "either"
 version = "1.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4208,6 +4216,7 @@ version = "0.1.6"
 dependencies = [
  "anyhow",
  "mod-api",
+ "mod-render",
  "serde",
  "serde_json",
  "server-experience",
@@ -4216,6 +4225,15 @@ dependencies = [
  "ui",
  "wasmtime",
  "wit-component",
+]
+
+[[package]]
+name = "mod-render"
+version = "0.1.6"
+dependencies = [
+ "bytemuck",
+ "mod-api",
+ "naga",
 ]
 
 [[package]]
@@ -5541,6 +5559,7 @@ dependencies = [
  "image",
  "meshing",
  "mod-api",
+ "mod-render",
  "naga",
  "naga_oil",
  "pack-compiler",
@@ -5991,7 +6010,7 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "showcase-camera-mod"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "mod-api",
 ]

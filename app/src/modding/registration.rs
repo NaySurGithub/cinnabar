@@ -57,6 +57,8 @@ struct Grants {
     settings: bool,
     entities: bool,
     commands: Vec<String>,
+    render: bool,
+    render_depth: bool,
 }
 
 impl From<&Grants> for ModGrants {
@@ -70,6 +72,8 @@ impl From<&Grants> for ModGrants {
             settings: grants.settings,
             entities: grants.entities,
             commands: grants.commands.clone(),
+            render: grants.render,
+            render_depth: grants.render_depth,
         }
     }
 }
@@ -629,6 +633,9 @@ fn clear_owned_state(world: &mut World) -> Option<ModHost> {
 fn clear_presentation(world: &mut World) {
     if let Some(mut camera) = world.get_resource_mut::<crate::camera::CameraSettingsAuthority>() {
         camera.set_rig(None);
+    }
+    if let Some(mut scene) = world.get_resource_mut::<render::ModRenderScene>() {
+        scene.clear();
     }
     if let Some(mut presentation) = world.get_resource_mut::<UiPresentationRuntime>() {
         presentation.set_mod_panel_open(false);
