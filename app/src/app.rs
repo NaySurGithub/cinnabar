@@ -110,6 +110,7 @@ use diagnostics::metrics::MetricsCollector;
 use crate::acceptance::model_witness::drive_model_witness;
 
 mod render_setup;
+mod runtime_failure;
 use render_setup::render_plugin;
 
 const PHYSICS_REGISTRY_SHA256: &str =
@@ -967,7 +968,7 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
     crate::server_experiences::configure(&mut app);
     configure_acceptance_finish_system(&mut app);
 
-    let exit = app.run();
+    let (exit, fatal_error) = runtime_failure::run(&mut app);
     if let Some(mut network) = app.world_mut().remove_resource::<NetworkHandle>() {
         network.shutdown();
     }
@@ -975,10 +976,11 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
     shutdown_watchdog.complete();
     eprintln!("{SHUTDOWN_COMPLETED} exit_code={}", app_exit_code(&exit));
     if exit.is_error() {
-        if let Some(panic) = crate::lifecycle::panic_message() {
-            bail!("Client runtime failed.\n\nCaptured panic:\n{panic}");
-        }
-        bail!("Bevy app exited after a fatal runtime error");
+        let panic = crate::lifecycle::panic_message();
+        bail!(
+            "{}",
+            runtime_failure::message(fatal_error.as_deref(), panic.as_deref())
+        );
     }
     Ok(())
 }
