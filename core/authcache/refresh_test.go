@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"regexp"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -286,4 +287,43 @@ func skewedServiceJWT(t *testing.T, issuedAt, expiry time.Time) string {
 		t.Fatal(err)
 	}
 	return "MCToken header." + base64.RawURLEncoding.EncodeToString(payload) + ".signature"
+}
+
+// A join keeps using the still-valid token while its early replacement waits on the network.
+func TestEarlyRefreshDoesNotBlockForegroundServiceToken(t *testing.T) {
+	path := filepath.Join(derivedTestDir(t), "derived")
+	oauthToken := testOAuthToken("account-a")
+	writeDerivedState(t, path, oauthToken, time.Now().Add(serviceRefreshLead/2))
+	exchanging, release := make(chan struct{}), make(chan struct{})
+	deps := derivedDeps{
+		discover: func(context.Context) (*service.AuthorizationEnvironment, error) { return testEnvironment(), nil },
+		services: fakeServices(func(context.Context, *service.AuthorizationEnvironment, xsapi.TokenAndSignaturer) (*service.Token, error) {
+			close(exchanging)
+			<-release
+			return &service.Token{AuthorizationHeader: "MCToken replacement", ValidUntil: time.Now().Add(time.Hour)}, nil
+		}),
+	}
+	account := newAccount(context.Background(), path, oauth2.StaticTokenSource(oauthToken), nil, deps)
+	defer account.Close()
+	var released sync.Once
+	defer released.Do(func() { close(release) })
+	refreshed := make(chan error, 1)
+	go func() {
+		_, err := account.refreshServiceAhead(context.Background(), serviceRefreshLead)
+		refreshed <- err
+	}()
+	<-exchanging
+	foreground, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	token, err := account.ServiceToken(foreground)
+	if err != nil || token.AuthorizationHeader != testServiceToken(time.Time{}).AuthorizationHeader {
+		t.Fatalf("foreground token during an early refresh: err=%v", err)
+	}
+	released.Do(func() { close(release) })
+	if err := <-refreshed; err != nil {
+		t.Fatal(err)
+	}
+	if token, err := account.ServiceToken(context.Background()); err != nil || token.AuthorizationHeader != "MCToken replacement" {
+		t.Fatalf("replacement was not installed: err=%v", err)
+	}
 }
