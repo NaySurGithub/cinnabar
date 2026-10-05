@@ -190,6 +190,7 @@ var (
 	startVerifierPreload = proxy.StartVerifierPreload
 	keepAccountFresh     = (*authcache.Account).KeepFresh
 )
+
 type ownedResourcePackCache interface {
 	minecraft.ResourcePackCache
 	Close() error
