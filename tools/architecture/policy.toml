@@ -252,6 +252,12 @@ allowed_dependencies = ["mod-api"]
 forbidden_dependencies = ["bevy", "wgpu", "protocol", "world"]
 
 [[crates]]
+name = "showcase-screen"
+path = "examples/client-parts/showcase-screen"
+allowed_dependencies = ["mod-api"]
+forbidden_dependencies = ["bevy", "wgpu", "protocol", "world"]
+
+[[crates]]
 name = "experience-sdk"
 path = "crates/experience-sdk"
 allowed_dependencies = []

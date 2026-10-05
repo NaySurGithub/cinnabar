@@ -22,6 +22,7 @@ import (
 	"github.com/sandertv/gophertunnel/minecraft/protocol/packet"
 	"github.com/sandertv/gophertunnel/minecraft/resource"
 
+	"github.com/hashimthearab/rust-mcbe/tools/localserver/cinema"
 	"github.com/hashimthearab/rust-mcbe/tools/localserver/extension"
 )
 
@@ -109,6 +110,23 @@ func TestExtensionFlagsGoTogether(t *testing.T) {
 	}
 	s, err := parseSettings(append(base, all...), io.Discard)
 	if err != nil || s.extensionKey != "k" || s.extensionAudience != "127.0.0.1:19132" || s.extensionCXB != "c" {
+		t.Fatalf("settings = %+v, %v", s, err)
+	}
+}
+
+// -extension-media needs the -extension flags and an IPv4 loopback media address.
+func TestExtensionMediaFlags(t *testing.T) {
+	base := []string{"-dir", "d", "-addr", "127.0.0.1:1"}
+	all := []string{"-extension-key", "k", "-extension-audience", "127.0.0.1:19132", "-extension-cxb", "c"}
+	if _, err := parseSettings(append(slices.Clone(base), "-extension-media", "m"), io.Discard); err == nil {
+		t.Fatal("-extension-media accepted without the -extension flags")
+	}
+	media := append(append(slices.Clone(base), all...), "-extension-media", "m")
+	if _, err := parseSettings(append(slices.Clone(media), "-extension-media-addr", "0.0.0.0:19443"), io.Discard); err == nil {
+		t.Fatal("a non-loopback media address was accepted")
+	}
+	s, err := parseSettings(media, io.Discard)
+	if err != nil || s.extensionMedia != "m" || s.extensionMediaAddr != cinema.DefaultAddr {
 		t.Fatalf("settings = %+v, %v", s, err)
 	}
 }

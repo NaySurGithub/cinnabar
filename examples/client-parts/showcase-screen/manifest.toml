@@ -1,0 +1,27 @@
+# Client part of the localserver showcase intro; `scripts/showcase-media.sh` builds the bundle.
+id = "showcase"
+package_version = "1.0.0"
+permissions = ["messaging", "scene", "media"]
+
+[[channels]]
+id = "showcase.screen"
+schema = 1
+direction = "to_client"
+fields = [
+    { type = "integer", min = -3000000000, max = 3000000000 },
+    { type = "integer", min = -3000000000, max = 3000000000 },
+    { type = "integer", min = -3000000000, max = 3000000000 },
+    { type = "integer", min = 1, max = 6400 },
+    { type = "integer", min = 1, max = 6400 },
+    { type = "integer", min = -360, max = 360 },
+    { type = "choice", variants = 3 },
+]
+
+[[channels]]
+id = "showcase.media"
+schema = 1
+direction = "to_server"
+fields = [
+    { type = "choice", variants = 4 },
+    { type = "integer", min = 0, max = 14400000 },
+]

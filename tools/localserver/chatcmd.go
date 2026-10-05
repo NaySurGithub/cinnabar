@@ -9,6 +9,8 @@ import (
 	"github.com/df-mc/dragonfly/server/world"
 	"github.com/go-gl/mathgl/mgl64"
 	"github.com/sandertv/gophertunnel/minecraft/protocol"
+
+	"github.com/hashimthearab/rust-mcbe/tools/localserver/cinema"
 )
 
 const (
@@ -27,6 +29,7 @@ func registerChatCommands() {
 	cmd.Register(cmd.New("speed", "Scales flight and walking speed from the vanilla defaults", nil, speedReset{}, speedSet{}))
 	cmd.Register(cmd.New("fly", "Toggles being allowed to fly", nil, flyToggle{}))
 	cmd.Register(cmd.New("tp", "Teleports to a position", []string{"teleport"}, teleport{}))
+	cmd.Register(cmd.New("intro", "Plays the client part intro video on a screen ahead, or stops it", nil, introPlay{}, introStop{}))
 }
 
 // speedMultiplier clamps m to the accepted range.
@@ -119,4 +122,54 @@ func (t teleport) Run(src cmd.Source, o *cmd.Output, _ *world.Tx) {
 	}
 	p.Teleport(t.Destination)
 	o.Printf("Teleported to %.1f, %.1f, %.1f", t.Destination[0], t.Destination[1], t.Destination[2])
+}
+
+// The /intro screen: centre ahead of and above the caller, 16:9, facing back at them.
+const (
+	introDistance = 12
+	introRise     = 6
+	introWidth    = 24
+	introHeight   = 13.5
+)
+
+type introPlay struct{}
+
+func (introPlay) Run(src cmd.Source, o *cmd.Output, _ *world.Tx) {
+	p, ok := src.(*player.Player)
+	if !ok {
+		o.Error("only players can watch the intro")
+		return
+	}
+	yaw := p.Rotation().Yaw()
+	rad := mgl64.DegToRad(yaw)
+	ahead := mgl64.Vec3{-math.Sin(rad), 0, math.Cos(rad)}
+	screen := cinema.Screen{
+		Pos:    p.Position().Add(ahead.Mul(introDistance)).Add(mgl64.Vec3{0, introRise, 0}),
+		Width:  introWidth,
+		Height: introHeight,
+		Yaw:    yaw + 180,
+	}
+	handle := p.H()
+	cinema.Play(p.UUID(), screen, func(outcome cinema.Outcome) {
+		handle.Do(func(_ *world.Tx, e world.Entity) {
+			if p, ok := e.(*player.Player); ok {
+				p.Messagef("Intro over: %s", outcome)
+			}
+		})
+	})
+	o.Print("Intro started")
+}
+
+type introStop struct {
+	Stop cmd.SubCommand `cmd:"stop"`
+}
+
+func (introStop) Run(src cmd.Source, o *cmd.Output, _ *world.Tx) {
+	p, ok := src.(*player.Player)
+	if !ok {
+		o.Error("only players can stop the intro")
+		return
+	}
+	cinema.Skip(p.UUID())
+	o.Print("Intro stopped")
 }
