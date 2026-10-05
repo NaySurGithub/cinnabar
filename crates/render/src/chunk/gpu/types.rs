@@ -1,7 +1,12 @@
 use crate::chunk::*;
+#[cfg(not(target_os = "android"))]
+use bevy::render::renderer::RenderInstance;
+
+#[cfg(not(target_os = "android"))]
+use crate::present_mode::Dx12PresentModePolicy;
+#[cfg(any(not(target_os = "android"), test))]
 use crate::present_mode::{
-    Dx12PresentModePolicy, PresentModePreference, PresentModeRemedy,
-    resolve_dx12_present_mode_remedy,
+    PresentModePreference, PresentModeRemedy, resolve_dx12_present_mode_remedy,
 };
 
 pub(in crate::chunk) const MODEL_INDEX_COUNT: u32 = 6;
@@ -242,6 +247,7 @@ pub(in crate::chunk) fn surface_present_mode_name(mode: wgpu::PresentMode) -> Op
 pub(in crate::chunk) enum GraphicsMetadataPublicationState {
     #[default]
     Pending,
+    #[cfg(any(not(target_os = "android"), test))]
     AwaitingAutomaticImmediate {
         window: u64,
     },
@@ -249,6 +255,7 @@ pub(in crate::chunk) enum GraphicsMetadataPublicationState {
 }
 
 impl GraphicsMetadataPublicationState {
+    #[cfg(any(not(target_os = "android"), test))]
     fn should_probe(
         &mut self,
         window: u64,
@@ -273,6 +280,7 @@ impl GraphicsMetadataPublicationState {
         }
     }
 
+    #[cfg(any(not(target_os = "android"), test))]
     fn await_automatic_immediate(&mut self, window: u64) {
         *self = Self::AwaitingAutomaticImmediate { window };
     }
@@ -282,6 +290,7 @@ impl GraphicsMetadataPublicationState {
     }
 }
 
+#[cfg(any(not(target_os = "android"), test))]
 fn metadata_requires_automatic_immediate(
     preference: Option<PresentModePreference>,
     backend: wgpu::Backend,
@@ -299,8 +308,10 @@ fn metadata_requires_automatic_immediate(
 #[derive(SystemParam)]
 pub(in crate::chunk) struct GraphicsRuntimeMetadataInputs<'w> {
     windows: Res<'w, ExtractedWindows>,
+    #[cfg(not(target_os = "android"))]
     render_instance: Res<'w, RenderInstance>,
     render_adapter: Res<'w, RenderAdapter>,
+    #[cfg(not(target_os = "android"))]
     policy: Option<Res<'w, Dx12PresentModePolicy>>,
     input: Res<'w, VisibilityDiagnosticsInput>,
     diagnostics: Res<'w, VisibilityDiagnostics>,
@@ -313,8 +324,10 @@ pub(in crate::chunk) fn publish_graphics_runtime_metadata(
 ) {
     let GraphicsRuntimeMetadataInputs {
         windows,
+        #[cfg(not(target_os = "android"))]
         render_instance,
         render_adapter,
+        #[cfg(not(target_os = "android"))]
         policy,
         input,
         diagnostics,
@@ -328,40 +341,57 @@ pub(in crate::chunk) fn publish_graphics_runtime_metadata(
     let Some(window) = windows.windows.get(&window_id) else {
         return;
     };
+    #[cfg(not(target_os = "android"))]
     let preference = policy.as_deref().map(Dx12PresentModePolicy::preference);
-    if !publication.should_probe(window_id.to_bits(), preference, window.present_mode) {
-        return;
+    #[cfg(not(target_os = "android"))]
+    {
+        if !publication.should_probe(window_id.to_bits(), preference, window.present_mode) {
+            return;
+        }
     }
     let Some(requested_present_mode) = window_present_mode_name(window.present_mode) else {
         return;
     };
-    let surface_target = wgpu::SurfaceTargetUnsafe::RawHandle {
-        raw_display_handle: window.handle.get_display_handle(),
-        raw_window_handle: window.handle.get_window_handle(),
-    };
-    // SAFETY: This runs on the main thread where required, and the extracted window owns
-    // valid raw handles for the same window Bevy configures immediately after this system.
-    let Ok(surface) = (unsafe { render_instance.create_surface_unsafe(surface_target) }) else {
-        return;
-    };
-    let capabilities = surface.get_capabilities(&render_adapter);
     let adapter_info = render_adapter.get_info();
-    if metadata_requires_automatic_immediate(
-        preference,
-        adapter_info.backend,
-        &adapter_info.name,
-        &adapter_info.driver,
-        window.present_mode,
-        &capabilities.present_modes,
-    ) {
-        publication.await_automatic_immediate(window_id.to_bits());
-        return;
-    }
-    let Some(effective_present_mode) =
-        resolve_surface_present_mode(window.present_mode, &capabilities.present_modes)
-            .and_then(surface_present_mode_name)
-    else {
-        return;
+    // Bevy already owns the Android native window's Vulkan surface. A second surface
+    // for a capabilities-only probe fails with ERROR_NATIVE_WINDOW_IN_USE_KHR.
+    #[cfg(target_os = "android")]
+    let capabilities = None::<wgpu::SurfaceCapabilities>;
+    #[cfg(not(target_os = "android"))]
+    let capabilities = {
+        let surface_target = wgpu::SurfaceTargetUnsafe::RawHandle {
+            raw_display_handle: window.handle.get_display_handle(),
+            raw_window_handle: window.handle.get_window_handle(),
+        };
+        // SAFETY: This runs on the main thread where required, and the extracted window
+        // owns valid raw handles for the same window Bevy configures after this system.
+        let Ok(surface) = (unsafe { render_instance.create_surface_unsafe(surface_target) }) else {
+            return;
+        };
+        let capabilities = surface.get_capabilities(&render_adapter);
+        if metadata_requires_automatic_immediate(
+            preference,
+            adapter_info.backend,
+            &adapter_info.name,
+            &adapter_info.driver,
+            window.present_mode,
+            &capabilities.present_modes,
+        ) {
+            publication.await_automatic_immediate(window_id.to_bits());
+            return;
+        }
+        Some(capabilities)
+    };
+    let (effective_present_mode, present_mode_proven) = if let Some(capabilities) = capabilities {
+        let Some(effective) =
+            resolve_surface_present_mode(window.present_mode, &capabilities.present_modes)
+                .and_then(surface_present_mode_name)
+        else {
+            return;
+        };
+        (effective, true)
+    } else {
+        ("unavailable", false)
     };
     diagnostics.publish_graphics_adapter(GraphicsAdapterMetadata {
         backend: format!("{:?}", adapter_info.backend),
@@ -370,7 +400,7 @@ pub(in crate::chunk) fn publish_graphics_runtime_metadata(
         driver_info: adapter_metadata_field(adapter_info.driver_info),
         requested_present_mode: requested_present_mode.to_owned(),
         effective_present_mode: effective_present_mode.to_owned(),
-        present_mode_proven: true,
+        present_mode_proven,
     });
     publication.publish();
 }

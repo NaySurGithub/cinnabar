@@ -5311,6 +5311,11 @@ core/local-world server from immutable APK libraries. First-run consent, pinned
 asset acquisition and carrier compilation run before the game window. Private
 storage, browser links, clipboard and soft-keyboard input have Android adapters.
 
+Android graphics diagnostics publish adapter identity and the requested present
+mode without creating a second surface for Bevy's native window. The effective
+present mode remains unavailable and unproven until it can be read from the
+renderer-owned surface. Native join/crash acceptance is pending.
+
 Joystick + Crosshair controls use JSON-UI artwork and the same painted hit bounds.
 Movement, look and action fingers retain independent owners until lift/cancel;
 unclaimed contacts do not imply movement. Short action taps survive a frame
