@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"io"
 	"time"
 
 	"github.com/google/uuid"
+	"golang.org/x/oauth2"
 )
 
 const (
@@ -19,9 +21,29 @@ const (
 // serviceDeviceNamespace scopes the per-account Minecraft service device ID.
 var serviceDeviceNamespace = uuid.MustParse("52194710-c463-4fa4-98a9-334c1b905e01")
 
-// KeepFresh refreshes the service credential in the background shortly before it expires, so a join only
-// mints its key-bound token. It returns when ctx ends or the account closes; failures only delay a retry.
+// CompleteSignIn exchanges the signed-in account's service token and persists it next to the Microsoft
+// token at oauthPath, so a join only mints its key-bound token.
+func CompleteSignIn(ctx context.Context, oauthPath string, oauth oauth2.TokenSource, diagnostics io.Writer) error {
+	return completeSignIn(ctx, oauthPath, oauth, diagnostics, defaultDerivedDeps())
+}
+
+func completeSignIn(ctx context.Context, oauthPath string, oauth oauth2.TokenSource, diagnostics io.Writer, deps derivedDeps) error {
+	account := newAccount(ctx, DerivedCachePath(oauthPath), oauth, diagnostics, deps)
+	if account == nil {
+		return errors.New("authentication: no signed-in account")
+	}
+	defer func() { _ = account.Close() }()
+	_, err := account.ServiceToken(ctx)
+	return err
+}
+
+// KeepFresh refreshes the cached service token shortly before it expires while signed in. It returns
+// when ctx ends or the account closes, and at once when another KeepFresh already serves this account.
 func (s *Account) KeepFresh(ctx context.Context) {
+	if !s.refreshing.CompareAndSwap(false, true) {
+		return
+	}
+	defer s.refreshing.Store(false)
 	retry := refreshRetryMin
 	for {
 		expiry, err := s.refreshServiceAhead(ctx, serviceRefreshLead)

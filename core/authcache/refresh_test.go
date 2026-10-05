@@ -2,6 +2,9 @@ package authcache
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"encoding/json"
 	"path/filepath"
 	"regexp"
@@ -123,4 +126,57 @@ func TestKeepFreshStopsWhenAccountCloses(t *testing.T) {
 	if exchanges.Load() != 0 {
 		t.Fatalf("a fresh token was exchanged %d times", exchanges.Load())
 	}
+}
+
+// Sign-in caches the service token, so a later core's first join performs no service exchange.
+func TestCompletedSignInLeavesAServiceTokenForTheFirstJoin(t *testing.T) {
+	oauthPath := filepath.Join(derivedTestDir(t), "microsoft-token.json")
+	oauthToken := testOAuthToken("account-a")
+	writeDerivedState(t, DerivedCachePath(oauthPath), oauthToken, time.Now().Add(-time.Minute))
+	var exchanges atomic.Int32
+	deps := countingServiceDeps(&exchanges, nil)
+	deps.mint = mintFromService
+	if err := completeSignIn(context.Background(), oauthPath, oauth2.StaticTokenSource(oauthToken), nil, deps); err != nil || exchanges.Load() != 1 {
+		t.Fatalf("sign-in: err=%v exchanges=%d", err, exchanges.Load())
+	}
+	core := newAccount(context.Background(), DerivedCachePath(oauthPath), oauth2.StaticTokenSource(oauthToken), nil, deps)
+	defer core.Close()
+	key, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := core.MultiplayerToken(context.Background(), &key.PublicKey); err != nil || exchanges.Load() != 1 {
+		t.Fatalf("first join: err=%v exchanges=%d, want only the key-bound mint", err, exchanges.Load())
+	}
+}
+
+// A second refresher for the same live account returns at once instead of doubling refreshes.
+func TestKeepFreshRunsOncePerAccount(t *testing.T) {
+	path := filepath.Join(derivedTestDir(t), "derived")
+	oauthToken := testOAuthToken("account-a")
+	writeDerivedState(t, path, oauthToken, time.Now().Add(time.Hour))
+	var exchanges atomic.Int32
+	account := newAccount(context.Background(), path, oauth2.StaticTokenSource(oauthToken), nil, countingServiceDeps(&exchanges, nil))
+	first := make(chan struct{})
+	go func() {
+		defer close(first)
+		account.KeepFresh(context.Background())
+	}()
+	for !account.refreshing.Load() {
+		time.Sleep(time.Millisecond)
+	}
+	second := make(chan struct{})
+	go func() {
+		defer close(second)
+		account.KeepFresh(context.Background())
+	}()
+	select {
+	case <-second:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a second refresher started for the same account")
+	}
+	if err := account.Close(); err != nil {
+		t.Fatal(err)
+	}
+	<-first
 }

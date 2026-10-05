@@ -127,6 +127,7 @@ type Account struct {
 	services    service.TokenSource // native source seeded with service; rebuilt after every restore
 	playfab     *playfab.Client     // logged in on first need; closed only by Close
 	closed      atomic.Bool
+	refreshing  atomic.Bool // one KeepFresh per account
 	persisted   string
 	rejected    map[string]*xsts.Token // XSTS tokens a relying party refused; re-evicted after every reload
 	deps        derivedDeps

@@ -69,7 +69,8 @@ func TestFirstJoinTokenLive(t *testing.T) {
 	defer account.Close()
 	t.Logf("TOKEN_PROFILE stage=account_open duration_ms=%.1f", time.Since(started).Seconds()*1000)
 	if idle, err := time.ParseDuration(os.Getenv("CINNABAR_JOIN_PROFILE_KEEP_WARM")); err == nil {
-		defer keepAuthenticationWarm(ctx, account, slog.New(slog.NewTextHandler(os.Stderr, nil)))()
+		defer StartVerifierPreload(ctx, slog.New(slog.NewTextHandler(os.Stderr, nil)))()
+		go account.KeepFresh(ctx)
 		time.Sleep(idle)
 		t.Logf("TOKEN_PROFILE stage=keep_warm idle_ms=%d", idle.Milliseconds())
 	}
