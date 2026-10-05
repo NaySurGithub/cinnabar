@@ -44,6 +44,7 @@ const PARRY_RETURN_SECONDS: f32 = 0.3;
 const METEOR_MIN_AIR_SECONDS: f32 = 0.25;
 const METEOR_TIMEOUT_SECONDS: f32 = 4.0;
 const FALLING_BLOCKS_PER_SECOND: f32 = -2.0;
+const MAX_QUEUED_COMMANDS: usize = 32;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Mob {
@@ -238,6 +239,16 @@ impl Director {
 
     fn cue(&mut self, name: &'static str, values: Vec<f32>) {
         self.cues.push_back(Cue { name, values });
+    }
+
+    /// Puts host-rejected commands back at the front, oldest dropped past the queue bound.
+    pub fn requeue(&mut self, commands: Vec<String>) {
+        for command in commands.into_iter().rev() {
+            self.commands.push_front(command);
+        }
+        while self.commands.len() > MAX_QUEUED_COMMANDS {
+            self.commands.pop_front();
+        }
     }
 
     fn command(&mut self, text: &str) {

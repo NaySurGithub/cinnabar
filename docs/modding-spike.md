@@ -258,6 +258,25 @@ For live reload, edit `tuning.rs` or `shaders.rs`, rebuild, pack to a sibling fi
 rename it over `/tmp/cinnabar-effects.wasm`. The client swaps the instance within half a
 second. A shader rejected after an edit shows its error as the mod's HUD label.
 
+## Several mods at once
+
+`CINNABAR_MOD_SET=/abs/mods.json` loads up to `mod_api::MAX_LOADED_MODS` components,
+each with its own grants, budgets and trap quarantine:
+
+```json
+{"version": 1, "mods": [
+  {"component": "/abs/showcase-camera.wasm", "grants": {"players": true, "camera": true, "controls": true, "entities": true, "commands": ["ability"]}},
+  {"component": "/abs/effects.wasm", "grants": {"players": true, "controls": true, "entities": true, "render": true}}
+]}
+```
+
+File order is load order, and it settles every conflict: the earliest camera rig,
+rotation, time override and attack reach win; a key reserved by an earlier mod never
+reaches a later one; the first mod with a panel owns it; labels join in order; commands
+and cues keep order. Every mod polls all mods' previous-frame cues, and render output
+merges within the single-mod budgets, earlier mods first. The set replaces
+`CINNABAR_MOD_COMPONENT` and the registration watcher, and each component hot-reloads.
+
 ## Attach a local component to a running client
 
 A `local-mods` build watches `local-mod.json` in `InstallLayout.user_config_root`

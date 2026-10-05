@@ -36,6 +36,8 @@ pub const MAX_CUE_VALUES: usize = 8;
 
 /// Cues delivered to one callback from every loaded local mod.
 pub const MAX_INCOMING_CUES: usize = 64;
+/// Local mods running at once.
+pub const MAX_LOADED_MODS: usize = 4;
 
 /// Render capability budgets, per instance or per committed callback.
 pub const MAX_RENDER_PASSES: usize = 8;

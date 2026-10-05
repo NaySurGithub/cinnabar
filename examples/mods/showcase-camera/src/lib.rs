@@ -58,8 +58,14 @@ impl Guest for ShowcaseCamera {
         if let Some((yaw, pitch)) = output.rotate {
             let _ = gameplay::rotate(yaw, pitch);
         }
-        for command in output.commands {
-            let _ = gameplay::request_command(&command);
+        let mut commands = output.commands.into_iter();
+        while let Some(command) = commands.next() {
+            if gameplay::request_command(&command).is_err() {
+                // Retried in order next frame, so a rate-limited stop is never lost.
+                let rest = std::iter::once(command).chain(commands).collect();
+                DIRECTOR.with(|director| director.borrow_mut().requeue(rest));
+                break;
+            }
         }
         for cue in output.cues {
             let _ = events::emit(cue.name, &cue.values);

@@ -5,7 +5,8 @@ pub mod shader;
 
 use mod_api::{
     MAX_PASS_PARAMS, MAX_PRIMITIVE_COORDINATE, MAX_PRIMITIVE_EXTENT_BLOCKS, MAX_RENDER_BEAMS,
-    MAX_RENDER_BILLBOARDS, MAX_RENDER_DECALS, MAX_RENDER_RIBBONS, MAX_RIBBON_POINTS,
+    MAX_RENDER_BILLBOARDS, MAX_RENDER_DECALS, MAX_RENDER_PASSES, MAX_RENDER_RIBBONS,
+    MAX_RIBBON_POINTS,
 };
 use std::sync::Arc;
 
@@ -164,6 +165,40 @@ pub struct Pass {
 pub struct RenderOutput {
     pub passes: Vec<Pass>,
     pub primitives: Arc<Primitives>,
+}
+
+/// Combines several mods' output in load order within the single-mod budgets: earlier mods
+/// keep a contested pass name and fill each primitive budget first.
+pub fn merge<'a>(outputs: impl IntoIterator<Item = &'a RenderOutput>) -> RenderOutput {
+    let mut passes: Vec<Pass> = Vec::new();
+    let mut primitives = Primitives::default();
+    for output in outputs {
+        for pass in &output.passes {
+            if passes.len() < MAX_RENDER_PASSES && passes.iter().all(|kept| kept.name != pass.name)
+            {
+                passes.push(pass.clone());
+            }
+        }
+        let other = &output.primitives;
+        fill(&mut primitives.decals, &other.decals, MAX_RENDER_DECALS);
+        fill(&mut primitives.ribbons, &other.ribbons, MAX_RENDER_RIBBONS);
+        fill(&mut primitives.beams, &other.beams, MAX_RENDER_BEAMS);
+        fill(
+            &mut primitives.billboards,
+            &other.billboards,
+            MAX_RENDER_BILLBOARDS,
+        );
+    }
+    passes.sort_by(|a, b| a.order.cmp(&b.order).then_with(|| a.name.cmp(&b.name)));
+    RenderOutput {
+        passes,
+        primitives: Arc::new(primitives),
+    }
+}
+
+fn fill<T: Clone>(into: &mut Vec<T>, from: &[T], cap: usize) {
+    let room = cap.saturating_sub(into.len());
+    into.extend(from.iter().take(room).cloned());
 }
 
 /// Valid pass names are short lowercase identifiers.
