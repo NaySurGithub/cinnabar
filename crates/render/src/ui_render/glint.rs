@@ -1,9 +1,9 @@
 //! Settings factors for the existing UI item glint.
 
-use bevy::{prelude::Resource, render::extract_resource::ExtractResource};
+use bevy::prelude::Resource;
 
 /// Normalized accessibility factors, independent of the provisional glint artwork.
-#[derive(Resource, ExtractResource, Clone, Copy, Debug, PartialEq)]
+#[derive(Resource, Clone, Copy, Debug, PartialEq)]
 pub struct UiGlintSettings {
     pub strength: f32,
     pub speed: f32,
@@ -41,3 +41,5 @@ mod tests {
         assert_eq!(settings.animation_seconds(12.0), 0.0);
     }
 }
+
+crate::render_systems::extract_resource!(UiGlintSettings, ExtractUiGlintSettings);

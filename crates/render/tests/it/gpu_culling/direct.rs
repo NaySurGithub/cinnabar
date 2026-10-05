@@ -21,7 +21,9 @@ impl<'a> Occluder<'a> {
         let capacity = (records.len() as u32).next_power_of_two().max(256);
         let occluder = Self {
             gpu,
-            kernels: CullKernels::new(&gpu.device),
+            kernels: CullKernels::new(&bevy::render::renderer::RenderDevice::from(
+                gpu.device.clone(),
+            )),
             storage: OcclusionStorage::new(&gpu.device, capacity),
             slots: records.len() as u32,
         };
@@ -46,9 +48,11 @@ impl<'a> Occluder<'a> {
         self.gpu
             .queue
             .write_buffer(&self.storage.uniform, 0, bytemuck::bytes_of(&uniform));
-        let group = self
-            .kernels
-            .occlusion_bind_group(&self.gpu.device, &self.storage, pyramid);
+        let group = self.kernels.occlusion_bind_group(
+            &bevy::render::renderer::RenderDevice::from(self.gpu.device.clone()),
+            &self.storage,
+            pyramid,
+        );
         self.kernels.encode_occlusion(encoder, &group, self.slots);
     }
 
@@ -807,9 +811,12 @@ fn occlusion_cuts_submitted_terrain_only_while_the_view_holds_still() {
     let target = Target::sized(&gpu, wgpu::TextureFormat::Rgba8Unorm, 1, size);
     let pyramid = HizPyramid::new(&gpu.device, size);
     let depth = target.depth.create_view(&Default::default());
-    let bindings = occluder
-        .kernels
-        .pyramid_bindings(&gpu.device, &depth, false, &pyramid);
+    let bindings = occluder.kernels.pyramid_bindings(
+        &bevy::render::renderer::RenderDevice::from(gpu.device.clone()),
+        &depth,
+        false,
+        &pyramid,
+    );
     let mut history = OcclusionHistory::default();
     for slot in 0..terrain.records.len() as u32 {
         history.assign(slot, 0);

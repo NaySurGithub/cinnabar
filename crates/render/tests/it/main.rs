@@ -5,6 +5,17 @@ mod gpu_snapshot;
 mod material_shader;
 #[path = "../../src/nametag_render/shader.rs"]
 mod nametag_shader;
+#[path = "../../src/render_systems.rs"]
+#[allow(
+    dead_code,
+    unused_imports,
+    unused_macros,
+    reason = "GPU fixtures share application API timers"
+)]
+mod render_systems;
+#[path = "../../src/render_work.rs"]
+#[allow(dead_code, reason = "GPU fixtures share application work wrappers")]
+mod render_work;
 #[path = "../../src/shader_safety.rs"]
 #[allow(dead_code, reason = "shared checked shader constructors")]
 mod shader_safety;

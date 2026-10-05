@@ -45,6 +45,9 @@ impl bevy::render::extract_resource::ExtractResource for ChunkTextureAssets {
     type Source = Self;
 
     fn extract_resource(source: &Self::Source) -> Self {
+        let _render_system_span = crate::render_systems::time(
+            crate::render_systems::System::ChunkTexturesExtractResource,
+        );
         Self {
             assets: Arc::clone(&source.assets),
             revision: source.revision,
@@ -143,6 +146,9 @@ impl bevy::render::extract_resource::ExtractResource for ChunkAnimationClock {
     type Source = Self;
 
     fn extract_resource(source: &Self::Source) -> Self {
+        let _render_system_span = crate::render_systems::time(
+            crate::render_systems::System::ChunkTexturesExtractResource2,
+        );
         *source
     }
 }

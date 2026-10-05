@@ -49,9 +49,10 @@ pub(super) fn render_plugin(
     };
     let adapter_info = adapter.get_info();
     let (device, queue) = bevy::tasks::block_on(adapter.request_device(&descriptor)).unwrap();
+    let device = RenderDevice::from(device);
     Some(RenderPlugin {
         render_creation: RenderCreation::manual(
-            RenderDevice::from(device),
+            device.clone(),
             RenderQueue(Arc::new(WgpuWrapper::new(queue))),
             RenderAdapterInfo(WgpuWrapper::new(adapter_info)),
             RenderAdapter(Arc::new(WgpuWrapper::new(adapter))),

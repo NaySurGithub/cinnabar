@@ -1,4 +1,5 @@
 use crate::chunk::*;
+use crate::render_work::QueueWork as _;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(in crate::chunk) struct GeometryStreamCounts {
@@ -324,6 +325,7 @@ pub(in crate::chunk) fn begin_arena_migration(
     growth: ArenaGrowthPlan,
 ) {
     debug_assert!(arena.migration.is_none());
+    arena.migrations_started += 1;
     arena.migration = Some(ArenaMigration {
         stream,
         buffer: create_storage_buffer(
@@ -373,6 +375,7 @@ pub(in crate::chunk) fn advance_arena_migration(
     } else {
         arena.migration = Some(migration);
     }
+    arena.migration_copy_bytes += slice;
     slice
 }
 
@@ -383,13 +386,13 @@ pub(in crate::chunk) fn write_geometry_stream_words(
     offset_bytes: u64,
     bytes: &[u8],
 ) {
-    render_queue.write_buffer(&arena.geometry_stream_buffer, offset_bytes, bytes);
+    render_queue.tracked_write_buffer(&arena.geometry_stream_buffer, offset_bytes, bytes);
     if let Some(migration) = arena
         .migration
         .as_ref()
         .filter(|migration| migration.stream == ArenaStream::GeometryStreams)
     {
-        render_queue.write_buffer(&migration.buffer, offset_bytes, bytes);
+        render_queue.tracked_write_buffer(&migration.buffer, offset_bytes, bytes);
     }
 }
 
@@ -448,7 +451,7 @@ pub(in crate::chunk) fn write_stream_records<T: bytemuck::Pod>(
 ) {
     for (offset, records) in writes {
         if !records.is_empty() {
-            render_queue.write_buffer(
+            render_queue.tracked_write_buffer(
                 buffer,
                 u64::from(offset) * item_bytes,
                 bytemuck::cast_slice(&records),

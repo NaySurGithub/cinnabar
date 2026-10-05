@@ -32,7 +32,7 @@ fn empty_hand_world() -> World {
     let adapter = RenderAdapter(Arc::new(WgpuWrapper::new(adapter)));
     let mut world = World::new();
     world.insert_resource(PipelineCache::new(device.clone(), adapter.clone(), true));
-    world.insert_resource(device);
+    world.insert_resource(device.clone());
     world.insert_resource(adapter);
     world.insert_resource(RenderQueue(Arc::new(WgpuWrapper::new(queue))));
     world.init_resource::<ViewmodelCompletionGate>();
@@ -232,8 +232,9 @@ fn actual_empty_hand_deactivation_preserves_variants_for_reenable() {
 fn actual_missing_current_view_coverage_revokes_prior_completion() {
     use bevy::{ecs::system::RunSystemOnce, render::renderer::WgpuWrapper};
     let (device, queue) = wgpu::Device::noop(&wgpu::DeviceDescriptor::default());
+    let device = RenderDevice::from(device);
     let mut world = World::new();
-    world.insert_resource(RenderDevice::from(device));
+    world.insert_resource(device.clone());
     world.insert_resource(RenderQueue(std::sync::Arc::new(WgpuWrapper::new(queue))));
     world.init_resource::<HandDrawn>();
     let gate = ViewmodelCompletionGate::default();
@@ -366,8 +367,9 @@ fn both_actual_plugin_orders_install_one_hand_and_one_hud_node() {
         core.add_node(Node3d::MainTransparentPass, EmptyNode);
         core.add_node(Node3d::EndMainPass, EmptyNode);
         graphs.add_sub_graph(Core3d, core);
+        let device = RenderDevice::from(device);
         render_app
-            .insert_resource(RenderDevice::from(device))
+            .insert_resource(device.clone())
             .insert_resource(RenderQueue(std::sync::Arc::new(WgpuWrapper::new(queue))))
             .insert_resource(graphs)
             .add_schedule(Schedule::new(RenderStartup))

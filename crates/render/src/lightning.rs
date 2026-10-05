@@ -39,14 +39,7 @@ pub struct BoltRecord {
 }
 
 /// Bolt ribbons for the render world; rebuilt every frame.
-#[derive(
-    bevy::prelude::Resource,
-    bevy::render::extract_resource::ExtractResource,
-    Clone,
-    Debug,
-    Default,
-    PartialEq,
-)]
+#[derive(bevy::prelude::Resource, Clone, Debug, Default, PartialEq)]
 pub struct LightningScene {
     pub records: Vec<BoltRecord>,
 }
@@ -206,3 +199,5 @@ mod tests {
         }
     }
 }
+
+crate::render_systems::extract_resource!(LightningScene, ExtractLightningScene);

@@ -407,8 +407,9 @@ mod tests {
         use bevy::render::renderer::{RenderDevice, RenderQueue, WgpuWrapper};
         use render_model::ActorRigVertex;
         let (device, queue) = wgpu::Device::noop(&wgpu::DeviceDescriptor::default());
+        let device = RenderDevice::from(device);
         let (device, queue) = (
-            RenderDevice::from(device),
+            device.clone(),
             RenderQueue(Arc::new(WgpuWrapper::new(queue))),
         );
         let first = ActorRigVertexSegments::from_vertices(vec![ActorRigVertex::default(); 64]);

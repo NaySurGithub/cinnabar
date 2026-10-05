@@ -280,6 +280,34 @@ impl CloudGeometryDiagnostic {
         )
     }
 
+    /// Reuses texture occupancy when only the admitted cloud window geometry changes.
+    pub(crate) fn with_viewport_records(
+        &self,
+        records: &[ViewportCloudQuad],
+    ) -> Result<Self, CloudGeometryDiagnosticError> {
+        let quad_count = u32::try_from(records.len())
+            .map_err(|_| CloudGeometryDiagnosticError::QuadCountOverflow)?;
+        let quad_bytes = records
+            .len()
+            .checked_mul(size_of::<ViewportCloudQuad>())
+            .and_then(|bytes| u32::try_from(bytes).ok())
+            .ok_or(CloudGeometryDiagnosticError::QuadByteOverflow)?;
+        Self::try_new_with_layout(
+            self.config,
+            self.asset_identity_sha256,
+            self.occupied_texels,
+            quad_count,
+            quad_bytes,
+            1,
+            self.texture_period_milliblocks,
+            self.underside_y_milliblocks,
+            self.top_y_milliblocks,
+            size_of::<ViewportCloudQuad>() as u32,
+            MAX_VIEWPORT_CLOUD_BYTES,
+            MAX_VIEWPORT_CLOUD_QUADS,
+        )
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn try_new_with_layout(
         config: CloudRenderConfig,

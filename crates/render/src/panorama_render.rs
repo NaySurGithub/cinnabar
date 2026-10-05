@@ -4,6 +4,7 @@
 //! It is opaque and draws in the main opaque pass: world passes queue nothing
 //! while it shows, so the menu's scene is one pass and FXAA is off.
 use crate::panorama::PanoramaScene;
+use crate::render_work::{DeviceWork as _, QueueWork as _};
 use bevy::{
     anti_alias::fxaa::Fxaa,
     asset::{load_internal_asset, uuid_handle},
@@ -68,6 +69,7 @@ impl Plugin for PanoramaRenderPlugin {
 struct Installed;
 
 fn install(app: &mut App) {
+    crate::pipeline_warmup::register::<PanoramaPipeline>(app);
     app.init_resource::<PanoramaScene>();
     if !app.world().contains_resource::<Installed>() {
         app.insert_resource(Installed)
@@ -104,6 +106,9 @@ fn install(app: &mut App) {
 
 /// FXAA only smooths 3D edges; with no world under the UI it would only soften the panorama.
 fn sync_scene_antialiasing(scene: Res<PanoramaScene>, mut cameras: Query<&mut Fxaa>) {
+    let _render_system_span = crate::render_systems::time(
+        crate::render_systems::System::PanoramaRenderSyncSceneAntialiasing,
+    );
     let enabled = scene.game_visible();
     for mut fxaa in &mut cameras {
         if fxaa.enabled != enabled {
@@ -129,7 +134,7 @@ fn texture_array(
     side: u32,
     pixels: &[u8],
 ) -> (Texture, TextureView) {
-    let texture = device.create_texture_with_data(
+    let texture = device.tracked_create_texture_with_data(
         queue,
         &TextureDescriptor {
             label: Some("menu panorama faces"),
@@ -159,7 +164,7 @@ fn texture_array(
 fn init_gpu(mut commands: Commands, device: Res<RenderDevice>, queue: Res<RenderQueue>) {
     let (texture, texture_view) = texture_array(&device, &queue, 1, &[0; 24]);
     commands.insert_resource(PanoramaGpu {
-        uniform: device.create_buffer_with_data(&BufferInitDescriptor {
+        uniform: device.tracked_create_buffer_with_data(&BufferInitDescriptor {
             label: Some("menu panorama view"),
             contents: bytemuck::bytes_of(&PanoramaUniform::default()),
             usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
@@ -188,6 +193,8 @@ fn prepare_panorama(
     queue: Res<RenderQueue>,
     mut gpu: ResMut<PanoramaGpu>,
 ) {
+    let _render_system_span =
+        crate::render_systems::time(crate::render_systems::System::PanoramaRenderPreparePanorama);
     if gpu.faces_revision != Some(scene.faces_revision) {
         let (texture, view) = match &scene.faces {
             Some(faces) => texture_array(&device, &queue, faces.side(), faces.layer_major()),
@@ -203,7 +210,7 @@ fn prepare_panorama(
         return;
     };
     gpu.visible = true;
-    queue.write_buffer(
+    queue.tracked_write_buffer(
         &gpu.uniform,
         0,
         bytemuck::cast_slice(&view.shader_uniform()),
@@ -301,6 +308,7 @@ impl Specializer<RenderPipeline> for PanoramaPipelineSpecializer {
         key: Self::Key,
         descriptor: &mut RenderPipelineDescriptor,
     ) -> Result<Canonical<Self::Key>, BevyError> {
+        crate::render_work::specialization();
         descriptor.multisample.count = key.msaa.samples();
         descriptor.fragment.as_mut().unwrap().targets[0]
             .as_mut()
@@ -320,10 +328,12 @@ fn prepare_bind_group(
     pipeline: Res<PanoramaPipeline>,
     mut gpu: ResMut<PanoramaGpu>,
 ) {
+    let _render_system_span =
+        crate::render_systems::time(crate::render_systems::System::PanoramaRenderPrepareBindGroup);
     if gpu.bind_group.is_some() {
         return;
     }
-    gpu.bind_group = Some(device.create_bind_group(
+    gpu.bind_group = Some(device.tracked_create_bind_group(
         "menu panorama bind group",
         &pipeline_cache.get_bind_group_layout(&pipeline.bind_group_layout),
         &[
@@ -352,6 +362,8 @@ fn queue_panorama(
     views: Query<(Entity, &MainEntity, &ExtractedView, &Msaa)>,
     mut next_tick: Local<Tick>,
 ) {
+    let _render_system_span =
+        crate::render_systems::time(crate::render_systems::System::PanoramaRenderQueuePanorama);
     if scene.view.is_none() || scene.faces.is_none() {
         return;
     }
@@ -555,5 +567,27 @@ mod review_tests {
             }));
         app.update();
         assert!(!enabled(&app));
+    }
+}
+
+impl crate::pipeline_warmup::PrewarmPipelines for PanoramaPipeline {
+    const PROFILE: crate::render_systems::System =
+        crate::render_systems::System::WarmupPanoramaPipeline;
+
+    /// Warms every built-in mode through the same cache used by drawing.
+    fn prewarm(
+        &mut self,
+        cache: &PipelineCache,
+        view: crate::pipeline_warmup::WarmView,
+        ids: &mut crate::pipeline_warmup::WarmupIds,
+    ) -> Result<(), BevyError> {
+        ids.push(self.variants.specialize(
+            cache,
+            PanoramaPipelineKey {
+                msaa: view.msaa,
+                hdr: view.hdr,
+            },
+        )?);
+        Ok(())
     }
 }

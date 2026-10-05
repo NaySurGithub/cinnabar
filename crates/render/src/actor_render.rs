@@ -1,3 +1,4 @@
+use crate::render_work::{DeviceWork as _, QueueWork as _};
 use std::mem::size_of;
 mod artwork;
 mod pipeline;
@@ -68,6 +69,7 @@ impl Plugin for ActorRenderPlugin {
 struct ActorRenderInstalled;
 
 fn install_actor_render(app: &mut App) {
+    crate::pipeline_warmup::register::<ActorPipeline>(app);
     app.init_resource::<ActorRenderFrame>()
         .init_resource::<ActorPresentationGate>()
         .init_resource::<ActorRuntimeWitness>();
@@ -144,18 +146,17 @@ struct ActorGpu {
     manifest: std::sync::Arc<[crate::actor::ActorDrawManifestEntry]>,
 }
 
-/// Whether every player-page instance samples a resident skin slot.
+/// Whether every player-page instance samples a resident skin slot; empty frames retain residency.
 fn player_skins_resident(frame: &ActorRenderFrame) -> bool {
-    !frame.rig.instances.is_empty()
-        && frame
-            .rig
-            .instances
-            .iter()
-            .enumerate()
-            .all(|(index, instance)| {
-                frame.instance_pages.get(index).copied().unwrap_or(0) != 0
-                    || frame.skins.resident(instance.texture_layer).is_some()
-            })
+    frame
+        .rig
+        .instances
+        .iter()
+        .enumerate()
+        .all(|(index, instance)| {
+            frame.instance_pages.get(index).copied().unwrap_or(0) != 0
+                || frame.skins.resident(instance.texture_layer).is_some()
+        })
 }
 
 fn init_actor_gpu(mut commands: Commands, render_device: Res<RenderDevice>) {
@@ -171,27 +172,29 @@ fn init_actor_gpu(mut commands: Commands, render_device: Res<RenderDevice>) {
     });
     commands.insert_resource(ActorGpu {
         artwork: GpuArtwork::default(),
-        player_material: render_device.create_buffer_with_data(&BufferInitDescriptor {
+        player_material: render_device.tracked_create_buffer_with_data(&BufferInitDescriptor {
             label: Some("unchanged player material class"),
             contents: bytemuck::cast_slice(&[0u32; 4]),
             usage: BufferUsages::UNIFORM,
         }),
-        neutral_material: render_device.create_buffer_with_data(&BufferInitDescriptor {
+        neutral_material: render_device.tracked_create_buffer_with_data(&BufferInitDescriptor {
             label: Some("neutral binary-alpha material class"),
             contents: bytemuck::cast_slice(&[1u32, 0, 0, 0]),
             usage: BufferUsages::UNIFORM,
         }),
-        color_mask_material: render_device.create_buffer_with_data(&BufferInitDescriptor {
+        color_mask_material: render_device.tracked_create_buffer_with_data(&BufferInitDescriptor {
             label: Some("native actor color-mask material"),
             // The shader consumes the second word as a Boolean, not a duplicated class ID.
             contents: bytemuck::cast_slice(&[0u32, 1, 0, 0]),
             usage: BufferUsages::UNIFORM,
         }),
-        multitexture_material: render_device.create_buffer_with_data(&BufferInitDescriptor {
-            label: Some("native actor three-sampler material"),
-            contents: bytemuck::cast_slice(&[0u32, 0, 1, 0]),
-            usage: BufferUsages::UNIFORM,
-        }),
+        multitexture_material: render_device.tracked_create_buffer_with_data(
+            &BufferInitDescriptor {
+                label: Some("native actor three-sampler material"),
+                contents: bytemuck::cast_slice(&[0u32, 0, 1, 0]),
+                usage: BufferUsages::UNIFORM,
+            },
+        ),
         spans: Vec::new(),
         artwork_identity: [0; 32],
         artwork_current: false,
@@ -237,6 +240,9 @@ fn prepare_actor_resources(
     gate: Res<ActorPresentationGate>,
     tracker: Res<ActorDrawTracker>,
 ) {
+    let _render_system_span = crate::render_systems::time(
+        crate::render_systems::System::ActorRenderPrepareActorResources,
+    );
     let rig = &frame.rig;
     let artwork_valid = gpu
         .artwork
@@ -270,7 +276,7 @@ fn prepare_actor_resources(
             &rig.geometry_vertices,
         );
         gpu.geometry_span_buffer = (!rig.geometry_spans.is_empty()).then(|| {
-            render_device.create_buffer_with_data(&BufferInitDescriptor {
+            render_device.tracked_create_buffer_with_data(&BufferInitDescriptor {
                 label: Some("shared actor rig geometry spans"),
                 contents: bytemuck::cast_slice::<ActorRigGeometrySpan, u8>(&rig.geometry_spans),
                 usage: BufferUsages::STORAGE,
@@ -306,17 +312,17 @@ fn prepare_actor_resources(
             tracker.clear();
         }
         if structurally_valid {
-            render_queue.write_buffer(
+            render_queue.tracked_write_buffer(
                 &gpu.instance_buffer,
                 0,
                 bytemuck::cast_slice::<ActorGpuInstance, u8>(&rig.instances),
             );
-            render_queue.write_buffer(
+            render_queue.tracked_write_buffer(
                 &gpu.previous_bone_buffer,
                 0,
                 bytemuck::cast_slice::<[[f32; 4]; 3], u8>(&rig.previous_bones),
             );
-            render_queue.write_buffer(
+            render_queue.tracked_write_buffer(
                 &gpu.current_bone_buffer,
                 0,
                 bytemuck::cast_slice::<[[f32; 4]; 3], u8>(&rig.current_bones),
@@ -376,6 +382,9 @@ fn prepare_actor_bind_group(
     view_uniforms: Res<ViewUniforms>,
     mut gpu: ResMut<ActorGpu>,
 ) {
+    let _render_system_span = crate::render_systems::time(
+        crate::render_systems::System::ActorRenderPrepareActorBindGroup,
+    );
     let Some(view_binding) = view_uniforms.uniforms.binding() else {
         gpu.bind_group = None;
         return;
@@ -407,7 +416,7 @@ fn prepare_actor_bind_group(
         .pages
         .iter()
         .map(|page| {
-            render_device.create_bind_group(
+            render_device.tracked_create_bind_group(
                 "neutral actor page bind group",
                 &pipeline_cache.get_bind_group_layout(&pipeline.bind_group_layout),
                 &[
@@ -469,7 +478,7 @@ fn prepare_actor_bind_group(
             )
         })
         .collect();
-    gpu.bind_group = Some(render_device.create_bind_group(
+    gpu.bind_group = Some(render_device.tracked_create_bind_group(
         "instanced standard actor bind group",
         &pipeline_cache.get_bind_group_layout(&pipeline.bind_group_layout),
         &[
@@ -555,6 +564,8 @@ fn queue_actors(
     mut next_tick: Local<Tick>,
     mut next_draw_generation: Local<u64>,
 ) {
+    let _render_system_span =
+        crate::render_systems::time(crate::render_systems::System::ActorRenderQueueActors);
     params.draw_tracker.clear();
     let view_count = params.views.iter().count();
     if params.gpu.instance_count == 0 || params.gpu.bind_group.is_none() {
@@ -717,6 +728,9 @@ fn submit_actor_presented_frame(
     gate: Res<ActorPresentationGate>,
     witness: Res<ActorRuntimeWitness>,
 ) {
+    let _render_system_span = crate::render_systems::time(
+        crate::render_systems::System::ActorRenderSubmitActorPresentedFrame,
+    );
     let Some(draw) = tracker.take_drawn() else {
         witness.observe_submit(ActorSubmitWitness {
             drawn_frame: false,
@@ -724,7 +738,7 @@ fn submit_actor_presented_frame(
             reserved: false,
             acknowledged: false,
         });
-        if let Err(error) = render_device.poll(PollType::Poll) {
+        if let Err(error) = render_device.tracked_poll(PollType::Poll) {
             bevy::log::warn!(
                 ?error,
                 "could not nonblockingly poll actor presentation fence"

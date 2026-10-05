@@ -3,7 +3,6 @@ use std::sync::Arc;
 use bevy::{
     math::{Mat4, Vec3, Vec4},
     prelude::Resource,
-    render::extract_resource::ExtractResource,
 };
 use render_api::SkinRgba8;
 use render_model::{
@@ -101,7 +100,7 @@ pub struct ActorRenderInstance {
     pub skin_layer: u32,
 }
 
-#[derive(Debug, Clone, Resource, ExtractResource)]
+#[derive(Debug, Clone, Resource)]
 pub struct ActorRenderFrame {
     pub instances: Arc<[ActorRenderInstance]>,
     pub skins: Arc<ActorSkinResidency>,
@@ -678,3 +677,5 @@ fn normalize_skin(skin: Option<&ActorSkinPixels>) -> SkinRgba8 {
 #[cfg(test)]
 #[path = "actor/tests.rs"]
 mod tests;
+
+crate::render_systems::extract_resource!(ActorRenderFrame, ExtractActorRenderFrame);

@@ -1,5 +1,6 @@
 //! Draws [`NametagScene`] in the transparent 3D phase: a see-through pass over everything and
 //! a depth-tested pass, as vanilla's `name_tag` and `name_tag_depth_tested` materials do.
+use crate::render_work::{DeviceWork as _, QueueWork as _};
 use std::{ops::Range, sync::Arc};
 
 use bevy::{
@@ -12,7 +13,7 @@ use bevy::{
     prelude::*,
     render::{
         Render, RenderApp, RenderStartup, RenderSystems,
-        extract_resource::{ExtractResource, ExtractResourcePlugin},
+        extract_resource::ExtractResourcePlugin,
         render_phase::{
             AddRenderCommand, DrawFunctions, PhaseItem, PhaseItemExtraIndex, RenderCommand,
             RenderCommandResult, SetItemPipeline, TrackedRenderPass, ViewSortedRenderPhases,
@@ -40,7 +41,7 @@ use render_model::{
 };
 
 /// Main-world holder of this frame's [`NametagScene`], cloned into the render world.
-#[derive(Resource, ExtractResource, Clone, Debug, Default, Deref, DerefMut)]
+#[derive(Resource, Clone, Debug, Default, Deref, DerefMut)]
 pub struct NametagSceneResource(pub NametagScene);
 
 const NAMETAG_SHADER_HANDLE: Handle<Shader> = uuid_handle!("5d1f0c8e-2a47-4b93-9e6c-1f7a3b8d4c20");
@@ -83,6 +84,7 @@ fn phase_batch_range(index: usize) -> Range<u32> {
 }
 
 pub(crate) fn install_nametag_render(app: &mut App) {
+    crate::pipeline_warmup::register::<NametagPipeline>(app);
     app.init_resource::<NametagSceneResource>()
         .add_plugins(ExtractResourcePlugin::<NametagSceneResource>::default());
     load_internal_asset!(
@@ -121,7 +123,7 @@ struct NametagGpu {
 }
 
 fn init_nametag_gpu(mut commands: Commands, render_device: Res<RenderDevice>) {
-    let record_buffer = render_device.create_buffer_with_data(&BufferInitDescriptor {
+    let record_buffer = render_device.tracked_create_buffer_with_data(&BufferInitDescriptor {
         label: Some("nametag records"),
         contents: &vec![0_u8; MAX_NAMETAG_RECORDS * RECORD_BYTES],
         usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
@@ -170,11 +172,13 @@ fn prepare_nametags(
     render_queue: Res<RenderQueue>,
     mut gpu: ResMut<NametagGpu>,
 ) {
+    let _render_system_span =
+        crate::render_systems::time(crate::render_systems::System::NametagRenderPrepareNametags);
     let total = scene.records.len().min(MAX_NAMETAG_RECORDS);
     gpu.total = total as u32;
     gpu.batches = record_batches(&scene.records[..total], scene.see_through.min(total));
     if total > 0 {
-        render_queue.write_buffer(
+        render_queue.tracked_write_buffer(
             &gpu.record_buffer,
             0,
             bytemuck::cast_slice::<NametagRecord, u8>(&scene.records[..total]),
@@ -185,7 +189,7 @@ fn prepare_nametags(
     }
     for rectangle in NametagAtlasRect::updates(&scene.atlas, &gpu.atlas) {
         let [x, y, width, height] = rectangle.cell;
-        render_queue.write_texture(
+        render_queue.tracked_write_texture(
             bevy::render::render_resource::TexelCopyTextureInfo {
                 texture: &gpu.atlas_texture,
                 mip_level: 0,
@@ -310,6 +314,7 @@ impl Specializer<RenderPipeline> for NametagPipelineSpecializer {
         key: Self::Key,
         descriptor: &mut RenderPipelineDescriptor,
     ) -> Result<Canonical<Self::Key>, BevyError> {
+        crate::render_work::specialization();
         descriptor.multisample.count = key.msaa.samples();
         descriptor.fragment.as_mut().unwrap().targets[0]
             .as_mut()
@@ -350,6 +355,9 @@ fn prepare_nametag_bind_group(
     view_uniforms: Res<ViewUniforms>,
     mut gpu: ResMut<NametagGpu>,
 ) {
+    let _render_system_span = crate::render_systems::time(
+        crate::render_systems::System::NametagRenderPrepareNametagBindGroup,
+    );
     let Some(view_binding) = view_uniforms.uniforms.binding() else {
         gpu.bind_group = None;
         return;
@@ -361,7 +369,7 @@ fn prepare_nametag_bind_group(
     if gpu.bind_group.is_some() && gpu.view_buffer_id == Some(view_buffer.id()) {
         return;
     }
-    let bind_group = render_device.create_bind_group(
+    let bind_group = render_device.tracked_create_bind_group(
         "nametag bind group",
         &pipeline_cache.get_bind_group_layout(&pipeline.bind_group_layout),
         &[
@@ -395,6 +403,8 @@ fn queue_nametags(
     draw_functions: Res<DrawFunctions<Transparent3d>>,
     views: Query<(Entity, &MainEntity, &ExtractedView, &Msaa)>,
 ) {
+    let _render_system_span =
+        crate::render_systems::time(crate::render_systems::System::NametagRenderQueueNametags);
     if gpu.total == 0 {
         return;
     }
@@ -666,3 +676,33 @@ mod tests {
         assert!(record.world_corners([f32::MAX; 3]).is_none());
     }
 }
+
+impl crate::pipeline_warmup::PrewarmPipelines for NametagPipeline {
+    const PROFILE: crate::render_systems::System =
+        crate::render_systems::System::WarmupNametagPipeline;
+
+    /// Warms every built-in mode through the same cache used by drawing.
+    fn prewarm(
+        &mut self,
+        cache: &PipelineCache,
+        view: crate::pipeline_warmup::WarmView,
+        ids: &mut crate::pipeline_warmup::WarmupIds,
+    ) -> Result<(), BevyError> {
+        for depth_tested in [false, true] {
+            for text in [false, true] {
+                ids.push(self.variants.specialize(
+                    cache,
+                    NametagPipelineKey {
+                        msaa: view.msaa,
+                        hdr: view.hdr,
+                        depth_tested,
+                        text,
+                    },
+                )?);
+            }
+        }
+        Ok(())
+    }
+}
+
+crate::render_systems::extract_resource!(NametagSceneResource, ExtractNametagSceneResource);

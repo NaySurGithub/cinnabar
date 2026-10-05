@@ -141,6 +141,8 @@ fn bits_of(set: &BTreeSet<usize>, slots: usize) -> Vec<u32> {
 
 struct Culler<'a> {
     gpu: &'a Gpu,
+    render_device: bevy::render::renderer::RenderDevice,
+    render_queue: bevy::render::renderer::RenderQueue,
     kernels: CullKernels,
     storage: CullStorage,
     slots: u32,
@@ -153,9 +155,15 @@ impl<'a> Culler<'a> {
             .write_buffer(&storage.records, 0, bytemuck::cast_slice(records));
         gpu.queue
             .write_buffer(&storage.enabled, 0, bytemuck::cast_slice(enabled));
+        let render_device = bevy::render::renderer::RenderDevice::from(gpu.device.clone());
+        let render_queue = bevy::render::renderer::RenderQueue(std::sync::Arc::new(
+            bevy::render::renderer::WgpuWrapper::new(gpu.queue.clone()),
+        ));
         Self {
             gpu,
-            kernels: CullKernels::new(&gpu.device),
+            kernels: CullKernels::new(&render_device),
+            render_device,
+            render_queue,
             storage,
             slots: records.len() as u32,
         }
@@ -186,10 +194,11 @@ impl<'a> Culler<'a> {
         pyramid: Option<&HizPyramid>,
     ) {
         let uniform = CullViewUniform::new(input, phase, self.slots, self.storage.capacity);
-        self.storage.write_uniform(&self.gpu.queue, phase, &uniform);
+        self.storage
+            .write_uniform(&self.render_queue, phase, &uniform);
         let groups = self
             .kernels
-            .bind_groups(&self.gpu.device, &self.storage, pyramid);
+            .bind_groups(&self.render_device, &self.storage, pyramid);
         self.kernels
             .encode_cull(encoder, &groups[phase as usize], self.slots);
     }
@@ -484,7 +493,12 @@ impl Target {
         let size = self.depth.size();
         let pyramid = HizPyramid::new(&gpu.device, [size.width, size.height]);
         let depth = self.depth.create_view(&Default::default());
-        let bindings = kernels.pyramid_bindings(&gpu.device, &depth, self.samples > 1, &pyramid);
+        let bindings = kernels.pyramid_bindings(
+            &bevy::render::renderer::RenderDevice::from(gpu.device.clone()),
+            &depth,
+            self.samples > 1,
+            &pyramid,
+        );
         kernels.encode_pyramid(encoder, &pyramid, &bindings);
         pyramid
     }

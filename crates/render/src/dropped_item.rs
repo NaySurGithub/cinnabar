@@ -1,5 +1,5 @@
 //! Dropped-item scene data: extruded sprite meshes drawn as world-space instances.
-use bevy::{prelude::Resource, render::extract_resource::ExtractResource};
+use bevy::prelude::Resource;
 use render_model::{DroppedItemBlock, DroppedItemCube, DroppedItemSprite};
 use std::sync::Arc;
 
@@ -63,7 +63,7 @@ pub struct TerrainItemInstance {
 }
 
 /// The frame's dropped items. `models_revision` must change whenever `models` changes.
-#[derive(Clone, Debug, Default, Resource, ExtractResource)]
+#[derive(Clone, Debug, Default, Resource)]
 pub struct DroppedItemScene {
     pub(crate) models_revision: u64,
     pub(crate) models: Arc<[DroppedItemModel]>,
@@ -184,3 +184,5 @@ mod tests {
         assert_eq!([rows[0][3], rows[1][3], rows[2][3]], [1.0, 2.0, 3.0]);
     }
 }
+
+crate::render_systems::extract_resource!(DroppedItemScene, ExtractDroppedItemScene);

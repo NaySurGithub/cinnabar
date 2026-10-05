@@ -1,4 +1,5 @@
 use crate::lightmap::LightmapInputs;
+use crate::render_work::{DeviceWork as _, QueueWork as _};
 use bevy::{
     asset::{load_internal_asset, uuid_handle},
     ecs::{
@@ -8,7 +9,7 @@ use bevy::{
     prelude::*,
     render::{
         Render, RenderApp, RenderSystems,
-        extract_resource::{ExtractResource, ExtractResourcePlugin},
+        extract_resource::ExtractResourcePlugin,
         render_phase::{PhaseItem, RenderCommand, RenderCommandResult, TrackedRenderPass},
         render_resource::*,
         renderer::{RenderDevice, RenderQueue},
@@ -16,7 +17,7 @@ use bevy::{
 };
 
 /// Shared classic lightmap inputs, published with the current environment frame.
-#[derive(Resource, ExtractResource, Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
 pub struct WorldLighting(pub LightmapInputs);
 
 #[derive(Resource)]
@@ -96,9 +97,11 @@ fn prepare(
     gpu: Option<ResMut<LightmapGpu>>,
     atmosphere: Option<Res<crate::atmosphere_render::AtmosphereGpu>>,
 ) {
+    let _render_system_span =
+        crate::render_systems::time(crate::render_systems::System::LightingPrepare);
     if let Some(mut gpu) = gpu {
         if gpu.inputs != input.0 {
-            queue.write_buffer(&gpu.buffer, 0, bytemuck::cast_slice(&input.0.build()));
+            queue.tracked_write_buffer(&gpu.buffer, 0, bytemuck::cast_slice(&input.0.build()));
             gpu.inputs = input.0;
         }
         if let Some(atmosphere) = atmosphere.as_deref()
@@ -109,13 +112,13 @@ fn prepare(
         }
         return;
     }
-    let buffer = device.create_buffer_with_data(&BufferInitDescriptor {
+    let buffer = device.tracked_create_buffer_with_data(&BufferInitDescriptor {
         label: Some("world RGB lightmap"),
         contents: bytemuck::cast_slice(&input.0.build()),
         usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
     });
     let atmosphere = atmosphere.map(|gpu| gpu.buffer.clone()).unwrap_or_else(|| {
-        device.create_buffer_with_data(&BufferInitDescriptor {
+        device.tracked_create_buffer_with_data(&BufferInitDescriptor {
             label: Some("fallback world atmosphere"),
             contents: bytemuck::bytes_of(&crate::AtmosphereFrame::default()),
             usage: BufferUsages::UNIFORM,
@@ -137,7 +140,7 @@ fn bind_group(
     light: &Buffer,
     atmosphere: &Buffer,
 ) -> BindGroup {
-    device.create_bind_group(
+    device.tracked_create_bind_group(
         "world lighting and fog",
         &cache.get_bind_group_layout(&layout()),
         &[
@@ -170,3 +173,5 @@ impl<P: PhaseItem> RenderCommand<P> for SetWorldLightmap {
         RenderCommandResult::Success
     }
 }
+
+crate::render_systems::extract_resource!(WorldLighting, ExtractWorldLighting);

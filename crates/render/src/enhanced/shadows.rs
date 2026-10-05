@@ -1,5 +1,6 @@
 //! Own depth-only cascade pass for the vertex-pulled terrain arena.
 
+use crate::render_work::PipelineWork as _;
 use bevy::{
     ecs::query::QueryItem,
     prelude::*,
@@ -36,7 +37,7 @@ impl FromWorld for EnhancedShadowPipelines {
         let (layout, cube, model) = crate::chunk::enhanced::shadow_sources(world);
         let cache = world.resource::<PipelineCache>();
         let queue = |shader: Handle<bevy::shader::Shader>, label: &'static str| {
-            cache.queue_render_pipeline(RenderPipelineDescriptor {
+            cache.tracked_queue_render_pipeline(RenderPipelineDescriptor {
                 label: Some(label.into()),
                 layout: vec![
                     layout.clone(),
@@ -96,6 +97,8 @@ impl ViewNode for EnhancedShadowNode {
         (entity, settings, view_offset): QueryItem<Self::ViewQuery>,
         world: &World,
     ) -> Result<(), NodeRunError> {
+        let _render_system_span =
+            crate::render_systems::time(crate::render_systems::System::EnhancedShadowsRun);
         if !super::ENHANCED_RENDERING_ENABLED || !settings.shadows {
             return Ok(());
         }
@@ -146,6 +149,22 @@ impl ViewNode for EnhancedShadowNode {
             drop(pass);
             span.end(context.command_encoder());
         }
+        Ok(())
+    }
+}
+
+impl crate::pipeline_warmup::PrewarmPipelines for EnhancedShadowPipelines {
+    const PROFILE: crate::render_systems::System =
+        crate::render_systems::System::WarmupEnhancedShadowPipelines;
+
+    /// Includes the fixed enhanced passes in the same loading readiness gate.
+    fn prewarm(
+        &mut self,
+        _cache: &PipelineCache,
+        _view: crate::pipeline_warmup::WarmView,
+        ids: &mut crate::pipeline_warmup::WarmupIds,
+    ) -> Result<(), BevyError> {
+        ids.extend([self.cube, self.model]);
         Ok(())
     }
 }

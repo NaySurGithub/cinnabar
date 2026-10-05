@@ -1,3 +1,4 @@
+use crate::render_work::{DeviceWork as _, QueueWork as _};
 use std::{
     mem::size_of,
     sync::{Arc, Weak},
@@ -11,7 +12,7 @@ use bevy::{
     prelude::*,
     render::{
         Render, RenderApp, RenderStartup, RenderSystems,
-        extract_resource::{ExtractResource, ExtractResourcePlugin},
+        extract_resource::ExtractResourcePlugin,
         render_resource::{
             AddressMode, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingType,
             BlendComponent, BlendFactor, BlendOperation, BlendState, Buffer, BufferBindingType,
@@ -62,7 +63,7 @@ use render_model::{
 use render_model::{UiRenderReject, UiScissor};
 
 /// Main-world holder of the published [`UiRenderScene`], cloned into the render world.
-#[derive(Resource, ExtractResource, Clone, Debug, Default, Deref, DerefMut)]
+#[derive(Resource, Clone, Debug, Default, Deref, DerefMut)]
 pub struct UiRenderSceneResource(pub UiRenderScene);
 
 /// The [`UiRenderStats`] handle both worlds share.
@@ -88,6 +89,8 @@ impl Plugin for UiRenderPlugin {
 struct UiRenderInstalled;
 
 fn install_ui_render(app: &mut App) {
+    crate::pipeline_warmup::register::<UiPipeline>(app);
+    crate::pipeline_warmup::register::<composite::UiCompositePipeline>(app);
     app.init_resource::<UiRenderSceneResource>()
         .init_resource::<UiGlintSettings>()
         .init_resource::<UiRenderStatsResource>();
@@ -172,7 +175,7 @@ pub(crate) struct UiGpu {
 }
 
 fn init_ui_gpu(mut commands: Commands, render_device: Res<RenderDevice>, tick: SystemChangeTick) {
-    let viewport_buffer = render_device.create_buffer_with_data(&BufferInitDescriptor {
+    let viewport_buffer = render_device.tracked_create_buffer_with_data(&BufferInitDescriptor {
         label: Some("shared UI viewport uniform"),
         contents: bytemuck::bytes_of(&UiViewportUniform {
             viewport_size: [1.0, 1.0],
@@ -233,6 +236,8 @@ pub(crate) fn prepare_ui_resources(
     tick: SystemChangeTick,
     (coverage, glint): (Option<Res<UiHandCoverage>>, Option<Res<UiGlintSettings>>),
 ) {
+    let _render_system_span =
+        crate::render_systems::time(crate::render_systems::System::UiRenderPrepareUiResources);
     let same_device = &gpu.device == render_device.wgpu_device();
     let device_valid =
         gpu.device_observation
@@ -269,7 +274,7 @@ pub(crate) fn prepare_ui_resources(
             .animation_seconds(gpu.started.elapsed().as_secs_f32()),
         glint_strength: glint.as_deref().copied().unwrap_or_default().strength,
     };
-    render_queue.write_buffer(&gpu.viewport_buffer, 0, bytemuck::bytes_of(&viewport));
+    render_queue.tracked_write_buffer(&gpu.viewport_buffer, 0, bytemuck::bytes_of(&viewport));
     if let Some(previous) = gpu.last_admitted_revision {
         let reason = if input.revision < previous {
             Some(UiRenderRejectReason::StaleRevision {
@@ -351,7 +356,7 @@ pub(crate) fn prepare_ui_resources(
     if let Some(buffer) = gpu.vertex_buffer.as_ref()
         && !upload.vertices.is_empty()
     {
-        render_queue.write_buffer(
+        render_queue.tracked_write_buffer(
             buffer,
             (upload.vertices.start * size_of::<UiRenderVertex>()) as u64,
             bytemuck::cast_slice(&input.vertices[upload.vertices.clone()]),
@@ -360,7 +365,7 @@ pub(crate) fn prepare_ui_resources(
     if let Some(buffer) = gpu.index_buffer.as_ref()
         && !upload.indices.is_empty()
     {
-        render_queue.write_buffer(
+        render_queue.tracked_write_buffer(
             buffer,
             (upload.indices.start * size_of::<u32>()) as u64,
             bytemuck::cast_slice(&input.indices[upload.indices.clone()]),
@@ -736,3 +741,5 @@ impl Default for UiRenderHarness {
 #[cfg(test)]
 #[path = "ui_render/retained_tests.rs"]
 mod retained_tests;
+
+crate::render_systems::extract_resource!(UiRenderSceneResource, ExtractUiRenderSceneResource);

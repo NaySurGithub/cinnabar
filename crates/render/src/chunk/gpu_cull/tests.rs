@@ -424,3 +424,38 @@ fn gpu_cull_cpu_stage_bench() {
         median(streaming),
     );
 }
+
+/// Cull pipelines are created once; dispatches only upload their bounded view records.
+#[test]
+fn cull_work_counts_creation_bindings_and_uniforms_without_recompiling() {
+    use bevy::render::renderer::WgpuWrapper;
+    use kernels::{CullKernels, CullStorage};
+    use model::CullViewUniform;
+
+    let (device, queue) = wgpu::Device::noop(&wgpu::DeviceDescriptor::default());
+    let device = RenderDevice::from(device);
+    let queue = RenderQueue(std::sync::Arc::new(WgpuWrapper::new(queue)));
+    let kernels = CullKernels::new(&device);
+    let created = crate::render_work::snapshot();
+    assert_eq!(created.shader_modules_created, 2);
+    assert_eq!(created.compute_pipelines_created, 7);
+    let storage = CullStorage::new(device.wgpu_device(), 1, false);
+    let groups = kernels.bind_groups(&device, &storage, None);
+    assert_eq!(crate::render_work::snapshot().bind_groups_created, 2);
+
+    let before = crate::render_work::snapshot();
+    for _ in 0..2 {
+        let mut encoder = device.create_command_encoder(&Default::default());
+        storage.write_uniform(&queue, CullPhase::Early, &CullViewUniform::default());
+        kernels.encode_cull(&mut encoder, &groups[0], 1);
+        drop(encoder.finish());
+    }
+    let work = crate::render_work::snapshot().delta_since(before);
+    assert_eq!(work.compute_pipelines_created, 0);
+    assert_eq!(work.shader_modules_created, 0);
+    assert_eq!(work.bind_groups_created, 0);
+    assert_eq!(
+        work.buffer_upload_bytes,
+        (2 * std::mem::size_of::<CullViewUniform>()) as u64
+    );
+}

@@ -178,7 +178,7 @@ fn review_render_fairness_overflow_keeps_unchanged_uploads_discoverable() {
     let device = RenderDevice::from(device);
     let mut app = App::new();
     app.insert_resource(ChunkGpuArena::new(&device))
-        .insert_resource(device)
+        .insert_resource(device.clone())
         .insert_resource(RenderQueue(Arc::new(WgpuWrapper::new(queue))))
         .insert_resource(ChunkTextureAssets::default())
         .insert_resource(ChunkUploadBudget::new(0, 0))
@@ -209,10 +209,11 @@ fn review_render_retained_liquid_snapshot_resolves_updated_active_generation() {
     let (device, queue) = wgpu::Device::noop(&wgpu::DeviceDescriptor::default());
     let assets = ChunkTextureAssets::default();
     let identity = assets.identity();
+    let device = RenderDevice::from(device);
     let candidate = PreparedResourceGeometry::build(
         &[water(ChunkBiomeTintIdentity::default())],
         assets,
-        RenderDevice::from(device),
+        device.clone(),
         RenderQueue(Arc::new(WgpuWrapper::new(queue))),
         Some(ResourceView {
             entity: Entity::PLACEHOLDER,

@@ -38,6 +38,8 @@ pub(in crate::chunk) fn queue_chunks(
     mut next_tick: Local<Tick>,
     mut unsupported_reported: Local<bool>,
 ) {
+    let _render_system_span =
+        crate::render_systems::time(crate::render_systems::System::ChunkDrawQueueChunks);
     let _timer = probes
         .profiler
         .as_deref()
@@ -551,6 +553,8 @@ pub(in crate::chunk) fn queue_transparent_chunks(
     mut mixed: ResMut<crate::chunk::transparent::mixed::MixedTerrainRuntime>,
     profiler: Option<Res<RuntimeStageProfiler>>,
 ) {
+    let _render_system_span =
+        crate::render_systems::time(crate::render_systems::System::ChunkDrawQueueTransparentChunks);
     use crate::chunk::transparent::mixed::DrawMixedTerrainCommands;
     mixed.begin_frame();
     let _timer = profiler

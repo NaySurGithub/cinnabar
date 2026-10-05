@@ -3,6 +3,8 @@
 //! so its depth holds only static, fully opaque geometry; a pyramid of it tests every resident
 //! slot, and the bits come back asynchronously for later frames to skip what stays occluded.
 
+use crate::render_work::DeviceWork as _;
+use crate::render_work::QueueWork as _;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicU8, Ordering},
@@ -204,7 +206,7 @@ pub(in crate::chunk) struct DirectOcclusion {
 impl DirectOcclusion {
     fn new(device: &RenderDevice) -> Self {
         Self {
-            kernels: CullKernels::new(device.wgpu_device()),
+            kernels: CullKernels::new(device),
             storage: None,
             readbacks: Vec::new(),
             table: CullSlots::default(),
@@ -362,6 +364,9 @@ pub(super) fn prepare_direct_occlusion(
     queue: Res<RenderQueue>,
     profiler: Option<Res<RuntimeStageProfiler>>,
 ) {
+    let _render_system_span = crate::render_systems::time(
+        crate::render_systems::System::ChunkGpuCullDirectPrepareDirectOcclusion,
+    );
     let _timer = profiler
         .as_deref()
         .map(|profiler| profiler.time(RuntimeStage::IndirectPreparation));
@@ -381,7 +386,7 @@ pub(super) fn prepare_direct_occlusion(
         &mut hidden,
     );
     occlusion.upload(&device, &queue);
-    let _ = device.poll(PollType::Poll);
+    let _ = device.tracked_poll(PollType::Poll);
     occlusion.apply_verdicts();
 
     let Some(queued) = frame.view else {
@@ -438,17 +443,15 @@ pub(super) fn prepare_direct_occlusion(
             prepared.pyramid.mip_count(),
         );
         let uniform = CullViewUniform::new(&input, CullPhase::Late, slots, storage.capacity);
-        queue.write_buffer(&storage.uniform, 0, bytemuck::bytes_of(&uniform));
+        queue.tracked_write_buffer(&storage.uniform, 0, bytemuck::bytes_of(&uniform));
         if occlusion
             .bind_group
             .as_ref()
             .is_none_or(|(_, depth)| *depth != prepared.depth)
         {
-            let group = occlusion.kernels.occlusion_bind_group(
-                device.wgpu_device(),
-                storage,
-                &prepared.pyramid,
-            );
+            let group = occlusion
+                .kernels
+                .occlusion_bind_group(&device, storage, &prepared.pyramid);
             occlusion.bind_group = Some((group, prepared.depth));
         }
         let tag = VerdictTag {
@@ -475,6 +478,9 @@ pub(super) fn prepare_direct_occlusion(
 
 /// Maps the verdict the terrain pass copied out; a frame that never encoded it frees the slot.
 pub(super) fn submit_direct_occlusion(mut occlusion: ResMut<DirectOcclusion>) {
+    let _render_system_span = crate::render_systems::time(
+        crate::render_systems::System::ChunkGpuCullDirectSubmitDirectOcclusion,
+    );
     let occlusion = &mut *occlusion;
     let Some(plan) = occlusion.plan.take() else {
         return;
@@ -510,6 +516,9 @@ pub(super) fn view_basis(view: &ExtractedView) -> OcclusionBasis {
 }
 
 pub(super) fn reset_direct_occlusion_frame(mut frame: ResMut<DirectOcclusionFrame>) {
+    let _render_system_span = crate::render_systems::time(
+        crate::render_systems::System::ChunkGpuCullDirectResetDirectOcclusionFrame,
+    );
     frame.clear();
 }
 
@@ -556,6 +565,8 @@ impl ViewNode for TerrainPassNode {
         ),
         world: &'w World,
     ) -> Result<(), NodeRunError> {
+        let _render_system_span =
+            crate::render_systems::time(crate::render_systems::System::ChunkGpuCullDirectRun);
         let view_entity = graph.view_entity();
         let occlusion = world.resource::<DirectOcclusion>();
         let Some(plan) = occlusion

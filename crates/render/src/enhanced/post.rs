@@ -1,6 +1,7 @@
 //! Enhanced post chain node: light shafts and the graded HDR
 //! composite. Runs before the hand and UI so neither is tonemapped.
 
+use crate::render_work::{DeviceWork as _, PipelineWork as _};
 use bevy::{
     core_pipeline::FullscreenShader,
     ecs::query::QueryItem,
@@ -38,7 +39,7 @@ impl FromWorld for EnhancedPostPipelines {
         let vertex = world.resource::<FullscreenShader>().to_vertex_state();
         let cache = world.resource::<PipelineCache>();
         let queue = |label: &'static str, entry: &'static str, blend: Option<BlendState>| {
-            cache.queue_render_pipeline(RenderPipelineDescriptor {
+            cache.tracked_queue_render_pipeline(RenderPipelineDescriptor {
                 label: Some(label.into()),
                 layout: vec![enhanced_post_layout()],
                 vertex: vertex.clone(),
@@ -78,7 +79,7 @@ fn post_bind_group(
     gpu: &EnhancedGpu,
     inputs: PostInputs,
 ) -> BindGroup {
-    device.create_bind_group(
+    device.tracked_create_bind_group(
         "enhanced post bind group",
         &cache.get_bind_group_layout(&enhanced_post_layout()),
         &[
@@ -168,6 +169,8 @@ impl ViewNode for EnhancedPostNode {
         (target, depth, _settings): QueryItem<Self::ViewQuery>,
         world: &World,
     ) -> Result<(), NodeRunError> {
+        let _render_system_span =
+            crate::render_systems::time(crate::render_systems::System::EnhancedPostRun);
         if !super::ENHANCED_RENDERING_ENABLED {
             return Ok(());
         }
@@ -237,6 +240,22 @@ impl ViewNode for EnhancedPostNode {
             composite,
             &group,
         );
+        Ok(())
+    }
+}
+
+impl crate::pipeline_warmup::PrewarmPipelines for EnhancedPostPipelines {
+    const PROFILE: crate::render_systems::System =
+        crate::render_systems::System::WarmupEnhancedPostPipelines;
+
+    /// Includes the fixed enhanced passes in the same loading readiness gate.
+    fn prewarm(
+        &mut self,
+        _cache: &PipelineCache,
+        _view: crate::pipeline_warmup::WarmView,
+        ids: &mut crate::pipeline_warmup::WarmupIds,
+    ) -> Result<(), BevyError> {
+        ids.extend([self.shafts, self.composite]);
         Ok(())
     }
 }

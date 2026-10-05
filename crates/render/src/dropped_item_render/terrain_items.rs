@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use bevy::{prelude::*, render::extract_resource::ExtractResource};
+use bevy::prelude::*;
 use world::SubChunkKey;
 
 use crate::dropped_item::{DroppedItemScene, TerrainItemInstance};
@@ -9,7 +9,7 @@ use crate::dropped_item::{DroppedItemScene, TerrainItemInstance};
 pub(crate) struct TerrainItemSessionSet;
 
 /// Successful zero-byte changes applied in the main world before extraction.
-#[derive(Resource, Default, Clone, ExtractResource)]
+#[derive(Resource, Default, Clone)]
 pub(crate) struct ImmediateTerrainMeshPublications(pub(crate) Vec<(SubChunkKey, u64)>);
 
 #[derive(Resource, Default)]
@@ -51,6 +51,9 @@ pub(super) fn begin_frame(
     immediate: Option<Res<ImmediateTerrainMeshPublications>>,
     mut ledger: ResMut<TerrainItemMeshGenerations>,
 ) {
+    let _render_system_span = crate::render_systems::time(
+        crate::render_systems::System::DroppedItemRenderTerrainItemsBeginFrame,
+    );
     if ledger.session_id != scene.terrain_session_id {
         ledger.generations.clear();
         ledger.session_id = scene.terrain_session_id;
@@ -76,3 +79,8 @@ pub(super) fn begin_frame(
         }
     }
 }
+
+crate::render_systems::extract_resource!(
+    ImmediateTerrainMeshPublications,
+    ExtractImmediateTerrainMeshPublications
+);

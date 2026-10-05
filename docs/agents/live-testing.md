@@ -130,6 +130,32 @@ graph execution, queue submission and presentation. A large interval with
 small main work warrants checking the render stages and OS scheduling before
 changing gameplay. `render_frame` is render-world time excluding drawable acquisition.
 
+Render attribution also names extraction, asset/mesh preparation, queueing, phase sorting,
+resource preparation/collection/flush, bind-group preparation and cleanup. `cpu_*` stages
+measure render-graph recording even when GPU timestamps are unavailable. The render submission
+span includes stock pipeline-cache processing and graph execution. Surface spans still include schedule overhead.
+
+Slow lines include the latest completed `render_frame_id` and `render_systems`: the twelve
+largest completed Cinnabar render-system/node spans, each with milliseconds and call count.
+These wall spans can overlap. Extraction can complete on another thread; attribution follows
+completion, not a claim that the overlapping main frame caused the work.
+The nested `gpu_api_*` spans measure our uploads, resource creation and polling calls.
+They include driver waits and thread descheduling, overlap their caller, and do not prove
+that the driver consumed that duration of CPU time.
+
+Work counters live at Cinnabar's call sites, with stock Bevy dependencies. They count new-key
+specializer callbacks, directly queued descriptors, our bind groups, buffer/texture upload
+payload bytes, chunk arena migrations/copied bytes, and readback polls versus waits. They do
+not count internal Bevy uploads, bind groups or native pipeline compilation. Direct pipeline
+and shader creation fields are explicitly `own_*`. A cache hit does not add a specialization;
+different keys that produce the same descriptor still count as separate specialization work.
+
+Optional traces retain a `render_work` instant for every completed render frame, including
+fast frames, with the same counters and largest system spans. Trace capacity is preallocated
+only when requested; check `truncated` and keep diagnostic captures separate from qualification
+measurements. Stock Bevy keeps pipeline processing private; the submission span includes it and is not a
+precise native compilation measurement.
+
 GPU timing uses timestamp queries when the adapter supports them, read back
 asynchronously, so `gpu_*` stages describe a frame a few frames older than the
 window they appear in. `gpu_frame` spans the first to last timestamp; node stages

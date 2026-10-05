@@ -20,6 +20,8 @@ impl ViewNode for UiWorldNode {
         view: QueryItem<Self::ViewQuery>,
         world: &World,
     ) -> Result<(), NodeRunError> {
+        let _render_system_span =
+            crate::render_systems::time(crate::render_systems::System::UiRenderWorldRun);
         draw_ui_view(graph, context, view, world)
     }
 }

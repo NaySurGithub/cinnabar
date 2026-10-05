@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use bevy::{prelude::Resource, render::extract_resource::ExtractResource};
+use bevy::prelude::Resource;
 
 use crate::celestial::unit;
 
@@ -446,7 +446,7 @@ pub trait ColumnSampler {
 }
 
 /// Decoded weather sheet and End sky, when the optional carrier is present.
-#[derive(Resource, ExtractResource, Clone, Default)]
+#[derive(Resource, Clone, Default)]
 pub struct WeatherTextureAssets {
     textures: Option<Arc<assets::WeatherTextures>>,
     identity: [u8; 32],
@@ -473,7 +473,7 @@ impl WeatherTextureAssets {
 }
 
 /// Precipitation state consumed by the render world.
-#[derive(Resource, ExtractResource, Clone, Debug, Default, PartialEq)]
+#[derive(Resource, Clone, Debug, Default, PartialEq)]
 pub struct PrecipitationScene {
     pub layers: Vec<PrecipitationLayerRecord>,
     pub forward_offset: [f32; 3],
@@ -661,3 +661,6 @@ pub struct RainSplashQueue {
 
 #[cfg(test)]
 mod tests;
+
+crate::render_systems::extract_resource!(WeatherTextureAssets, ExtractWeatherTextureAssets);
+crate::render_systems::extract_resource!(PrecipitationScene, ExtractPrecipitationScene);

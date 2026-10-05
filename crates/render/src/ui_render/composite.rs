@@ -15,9 +15,10 @@ use bevy::{
         camera::ExtractedCamera,
         render_graph::{NodeRunError, RenderGraph, RenderGraphContext, ViewNode, ViewNodeRunner},
         render_resource::{
-            BindGroup, BindGroupEntries, BindGroupLayout, Extent3d, LoadOp, Operations,
-            RenderPassColorAttachment, RenderPassDescriptor, StoreOp, Texture, TextureDescriptor,
-            TextureDimension, TextureUsages, TextureView, TextureViewDescriptor,
+            BindGroup, BindGroupEntries, BindGroupLayout, BindGroupLayoutId, Extent3d, LoadOp,
+            Operations, RenderPassColorAttachment, RenderPassDescriptor, StoreOp, Texture,
+            TextureDescriptor, TextureDimension, TextureUsages, TextureView, TextureViewDescriptor,
+            TextureViewId,
         },
         renderer::RenderContext,
     },
@@ -52,6 +53,7 @@ pub(crate) struct UiLayerTexture {
     pub(crate) view: TextureView,
     /// The drawn content and whether it encoded any batch.
     held: Arc<Mutex<Option<(UiLayerContent, bool)>>>,
+    bindings: Arc<Mutex<CompositeBindings>>,
     /// Set when the frame's final layer is left for [`UiPresentNode`] to composite.
     present: AtomicBool,
     /// The sole writer of its output with no blend, so the composite can replace the blit.
@@ -59,6 +61,37 @@ pub(crate) struct UiLayerTexture {
 }
 
 impl UiLayerTexture {
+    /// Reuses both scene ping-pong bindings while keeping replaced targets bounded.
+    fn composite_bind_group(
+        &self,
+        device: &RenderDevice,
+        source: &TextureView,
+        layout: &BindGroupLayout,
+    ) -> BindGroup {
+        let key = (layout.id(), self.view.id(), source.id());
+        let mut bindings = self.bindings.lock().expect("UI composite bindings lock");
+        if let Some(binding) = bindings
+            .slots
+            .iter()
+            .flatten()
+            .find(|binding| binding.key == key)
+        {
+            return binding.group.clone();
+        }
+        let group = device.tracked_create_bind_group(
+            "UI composite bind group",
+            layout,
+            &BindGroupEntries::sequential((&self.view, source)),
+        );
+        let next = bindings.next;
+        bindings.slots[next] = Some(CompositeBinding {
+            key,
+            group: group.clone(),
+        });
+        bindings.next = (next + 1) % bindings.slots.len();
+        group
+    }
+
     /// Whether the layer already holds `content`, and if so whether that drew anything.
     pub(crate) fn holds(&self, content: &UiLayerContent) -> Option<bool> {
         let held = self.held.lock().expect("UI layer content lock");
@@ -82,16 +115,30 @@ impl UiLayerTexture {
             texture,
             view,
             held: Arc::default(),
+            bindings: Arc::default(),
             present: AtomicBool::new(false),
             direct_output: false,
         }
     }
 }
 
+struct CompositeBinding {
+    key: (BindGroupLayoutId, TextureViewId, TextureViewId),
+    group: BindGroup,
+}
+
+/// A view has two scene textures; retired target bindings must not accumulate after resize.
+#[derive(Default)]
+struct CompositeBindings {
+    slots: [Option<CompositeBinding>; 2],
+    next: usize,
+}
+
 struct RetainedLayer {
     texture: Texture,
     view: TextureView,
     held: Arc<Mutex<Option<(UiLayerContent, bool)>>>,
+    bindings: Arc<Mutex<CompositeBindings>>,
 }
 
 /// Per-view layers kept across frames, unlike the frame-scoped texture cache.
@@ -111,6 +158,9 @@ pub(crate) fn prepare_ui_layers(
     device: Res<RenderDevice>,
     views: Query<(Entity, &ViewTarget, Option<&ExtractedCamera>)>,
 ) {
+    let _render_system_span = crate::render_systems::time(
+        crate::render_systems::System::UiRenderCompositePrepareUiLayers,
+    );
     if store.device.as_ref() != Some(device.wgpu_device()) {
         store.views.clear();
         store.device = Some(device.wgpu_device().clone());
@@ -149,6 +199,7 @@ pub(crate) fn prepare_ui_layers(
             texture: layer.texture.clone(),
             view: layer.view.clone(),
             held: Arc::clone(&layer.held),
+            bindings: Arc::clone(&layer.bindings),
             present: AtomicBool::new(false),
             direct_output: unblended && writers[&target.out_texture().id()] == 1,
         });
@@ -171,6 +222,7 @@ fn retained_layer(device: &RenderDevice, size: Extent3d) -> RetainedLayer {
         texture,
         view,
         held: Arc::default(),
+        bindings: Arc::default(),
     }
 }
 
@@ -196,6 +248,7 @@ impl Specializer<RenderPipeline> for UiCompositeSpecializer {
         key: Self::Key,
         descriptor: &mut RenderPipelineDescriptor,
     ) -> Result<Canonical<Self::Key>, BevyError> {
+        crate::render_work::specialization();
         let target = descriptor.fragment.as_mut().unwrap().targets[0]
             .as_mut()
             .unwrap();
@@ -255,6 +308,24 @@ impl UiCompositePipeline {
     }
 }
 
+impl crate::pipeline_warmup::PrewarmPipelines for UiCompositePipeline {
+    const PROFILE: crate::render_systems::System =
+        crate::render_systems::System::WarmupUiCompositePipeline;
+
+    /// Warms both offscreen composition and the surface's actual output format.
+    fn prewarm(
+        &mut self,
+        cache: &PipelineCache,
+        view: crate::pipeline_warmup::WarmView,
+        ids: &mut crate::pipeline_warmup::WarmupIds,
+    ) -> Result<(), BevyError> {
+        for format in [view.main_format, view.output_format] {
+            ids.push(self.variants.specialize(cache, UiCompositeKey { format })?);
+        }
+        Ok(())
+    }
+}
+
 /// A view's composite pipelines into its main texture and into its output.
 #[derive(Clone, Copy)]
 pub(crate) struct CompositePipelines {
@@ -266,7 +337,7 @@ pub(crate) struct CompositePipelines {
 pub(crate) fn composite(
     context: &mut RenderContext,
     target: &ViewTarget,
-    layer: &TextureView,
+    layer: &UiLayerTexture,
     pipeline: &RenderPipeline,
     layout: &BindGroupLayout,
 ) {
@@ -280,29 +351,18 @@ pub(crate) fn composite(
             store: StoreOp::Store,
         },
     };
-    encode_composite(
-        context,
-        [layer, write.source],
-        destination,
-        None,
-        pipeline,
-        layout,
-    );
+    let bind_group = layer.composite_bind_group(context.render_device(), write.source, layout);
+    encode_composite(context, bind_group, destination, None, pipeline);
 }
 
+/// Records the composite with a retained binding for the source texture pair.
 fn encode_composite(
     context: &mut RenderContext,
-    sources: [&TextureView; 2],
+    bind_group: BindGroup,
     destination: RenderPassColorAttachment,
     scissor: Option<(UVec2, UVec2)>,
     pipeline: &RenderPipeline,
-    layout: &BindGroupLayout,
 ) {
-    let bind_group: BindGroup = context.render_device().create_bind_group(
-        "UI composite bind group",
-        layout,
-        &BindGroupEntries::sequential((sources[0], sources[1])),
-    );
     let attachments = [Some(destination)];
     let mut pass = context.begin_tracked_render_pass(RenderPassDescriptor {
         label: Some("gamma-space UI composite"),
@@ -337,6 +397,8 @@ impl ViewNode for UiPresentNode {
         (blit, layer): QueryItem<'w, '_, Self::ViewQuery>,
         world: &'w World,
     ) -> Result<(), NodeRunError> {
+        let _render_system_span =
+            crate::render_systems::time(crate::render_systems::System::UiRenderCompositeRun);
         let (target, _, camera) = blit;
         let pending = layer.filter(|layer| layer.present.load(Ordering::Relaxed));
         let pipelines = world
@@ -368,22 +430,30 @@ impl ViewNode for UiPresentNode {
             let scissor = camera
                 .and_then(|camera| camera.viewport.as_ref())
                 .map(|viewport| (viewport.physical_position, viewport.physical_size));
+            let bind_group = layer.composite_bind_group(
+                context.render_device(),
+                target.main_texture_view(),
+                &layout,
+            );
             encode_composite(
                 context,
-                [&layer.view, target.main_texture_view()],
+                bind_group,
                 target.out_texture_color_attachment(clear),
                 scissor,
                 pipeline,
-                &layout,
             );
             return Ok(());
         }
         if let Some(pipeline) = cache.get_render_pipeline(pipelines.main) {
-            composite(context, target, &layer.view, pipeline, &layout);
+            composite(context, target, layer, pipeline, &layout);
         }
         self.0.run(graph, context, blit, world)
     }
 }
+
+#[cfg(test)]
+#[path = "composite_tests.rs"]
+mod tests;
 
 /// Swaps the output blit for [`UiPresentNode`], keeping every installed edge.
 pub(crate) fn install_present_node(world: &mut World) {

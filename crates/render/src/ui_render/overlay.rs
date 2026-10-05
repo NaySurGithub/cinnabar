@@ -120,6 +120,8 @@ impl<N: ViewNode, const POST: bool> ViewNode for GradeStage<N, POST> {
     type ViewQuery = (Has<crate::EnhancedRendering>, N::ViewQuery);
 
     fn update(&mut self, world: &mut World) {
+        let _render_system_span =
+            crate::render_systems::time(crate::render_systems::System::UiRenderOverlayUpdate);
         self.0.update(world);
     }
 
@@ -130,6 +132,8 @@ impl<N: ViewNode, const POST: bool> ViewNode for GradeStage<N, POST> {
         (after_grade, view): QueryItem<'w, '_, Self::ViewQuery>,
         world: &'w World,
     ) -> Result<(), NodeRunError> {
+        let _render_system_span =
+            crate::render_systems::time(crate::render_systems::System::UiRenderOverlayRun);
         if (render_model::ENHANCED_RENDERING_ENABLED && after_grade) != POST {
             return Ok(());
         }
@@ -191,6 +195,8 @@ pub(super) fn queue_ui_overlay(
     mut model_depths: ResMut<super::model_depth::UiModelDepths>,
     coverage: Option<Res<UiHandCoverage>>,
 ) {
+    let _render_system_span =
+        crate::render_systems::time(crate::render_systems::System::UiRenderOverlayQueueUiOverlay);
     // Always clear the previous render-frame coverage, including empty UI and
     // unchanged accepted revisions, before any preparation/queue early return.
     if let Some(coverage) = coverage {
@@ -424,6 +430,8 @@ impl ViewNode for UiOverlayNode {
         (target, main, camera, resolution_override, layer): QueryItem<Self::ViewQuery>,
         world: &World,
     ) -> Result<(), NodeRunError> {
+        let _render_system_span =
+            crate::render_systems::time(crate::render_systems::System::UiRenderOverlayRun2);
         crate::screen_overlay_render::draw_before_hud(
             graph.view_entity(),
             target,
@@ -543,7 +551,7 @@ impl ViewNode for UiOverlayNode {
                     super::composite::composite(
                         context,
                         target,
-                        &layer.view,
+                        layer,
                         composite_pipeline,
                         &composite_layout,
                     );

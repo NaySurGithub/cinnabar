@@ -1,6 +1,7 @@
 //! Retained GPU storage for immutable geometry pages.
 
 use crate::actor::ActorRigVertexSegments;
+use crate::render_work::QueueWork as _;
 use bevy::render::{
     render_resource::{Buffer, BufferDescriptor, BufferUsages, CommandEncoderDescriptor},
     renderer::{RenderDevice, RenderQueue},
@@ -135,7 +136,7 @@ impl SegmentedVertexBuffer {
             .as_ref()
             .expect("nonempty pages allocate a buffer");
         for index in plan.writes {
-            queue.write_buffer(
+            queue.tracked_write_buffer(
                 buffer,
                 (vertices.offsets[index] * stride) as u64,
                 bytemuck::cast_slice::<ActorRigVertex, u8>(&vertices.segments[index]),

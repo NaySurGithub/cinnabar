@@ -2,6 +2,7 @@
 //! the world's own transparent geometry.
 
 use super::ModRenderScene;
+use crate::render_work::{DeviceWork as _, QueueWork as _};
 use bevy::{
     asset::{load_internal_asset, uuid_handle},
     core_pipeline::core_3d::{CORE_3D_DEPTH_FORMAT, Transparent3d},
@@ -38,6 +39,7 @@ const VERTEX_BYTES: u64 = std::mem::size_of::<ModVertex>() as u64;
 pub(crate) const PRIMITIVE_DISTANCE: f32 = f32::MAX / 2.0;
 
 pub(super) fn install(app: &mut App) {
+    crate::pipeline_warmup::register::<PrimitivePipeline>(app);
     load_internal_asset!(
         app,
         PRIMITIVE_SHADER,
@@ -106,6 +108,8 @@ fn prepare(
     queue: Res<RenderQueue>,
     mut gpu: ResMut<PrimitiveGpu>,
 ) {
+    let _render_system_span =
+        crate::render_systems::time(crate::render_systems::System::ModRenderPrimitivesPrepare);
     let Some(scene) = scene else { return };
     let needed = scene.vertex_count() as u64;
     let grew = needed > gpu.capacity;
@@ -125,10 +129,10 @@ fn prepare(
         grew,
     );
     if guest_changed && !scene.vertices.is_empty() {
-        queue.write_buffer(&gpu.vertices, 0, bytemuck::cast_slice(&scene.vertices));
+        queue.tracked_write_buffer(&gpu.vertices, 0, bytemuck::cast_slice(&scene.vertices));
     }
     if marker_changed && !scene.marker_vertices.is_empty() {
-        queue.write_buffer(
+        queue.tracked_write_buffer(
             &gpu.vertices,
             scene.vertices.len() as u64 * VERTEX_BYTES,
             bytemuck::cast_slice(&scene.marker_vertices),
@@ -143,7 +147,7 @@ fn prepare(
     gpu.vertex_count = needed.min(gpu.capacity) as u32;
     if gpu.vertex_count > 0 {
         let frame = [time.elapsed_secs_wrapped(), time.delta_secs(), 0.0, 0.0];
-        queue.write_buffer(&gpu.frame, 0, bytemuck::cast_slice(&frame));
+        queue.tracked_write_buffer(&gpu.frame, 0, bytemuck::cast_slice(&frame));
     }
 }
 
@@ -283,6 +287,7 @@ impl Specializer<RenderPipeline> for PrimitiveSpecializer {
         key: Self::Key,
         descriptor: &mut RenderPipelineDescriptor,
     ) -> Result<Canonical<Self::Key>, BevyError> {
+        crate::render_work::specialization();
         descriptor.multisample.count = key.msaa.samples();
         descriptor.fragment.as_mut().unwrap().targets[0]
             .as_mut()
@@ -313,6 +318,9 @@ fn prepare_bind_group(
     view_uniforms: Res<ViewUniforms>,
     mut gpu: ResMut<PrimitiveGpu>,
 ) {
+    let _render_system_span = crate::render_systems::time(
+        crate::render_systems::System::ModRenderPrimitivesPrepareBindGroup,
+    );
     let Some(view_binding) = view_uniforms.uniforms.binding() else {
         gpu.bind_group = None;
         return;
@@ -324,7 +332,7 @@ fn prepare_bind_group(
     if gpu.bind_group.is_some() && gpu.view_buffer_id == Some(view_buffer.id()) {
         return;
     }
-    gpu.bind_group = Some(device.create_bind_group(
+    gpu.bind_group = Some(device.tracked_create_bind_group(
         "mod primitive bind group",
         &cache.get_bind_group_layout(&pipeline.layout),
         &[
@@ -353,6 +361,8 @@ pub(crate) fn queue(
     draw_functions: Res<DrawFunctions<Transparent3d>>,
     views: Query<(Entity, &MainEntity, &ExtractedView, &Msaa)>,
 ) {
+    let _render_system_span =
+        crate::render_systems::time(crate::render_systems::System::ModRenderPrimitivesQueue);
     // Queue precedes the upload, so this frame's scene decides; the draw reads the upload.
     if scene.is_none_or(|scene| scene.vertex_count() == 0) {
         return;
@@ -430,5 +440,27 @@ impl<P: PhaseItem> RenderCommand<P> for DrawPrimitives {
         }
         pass.draw(0..count, 0..1);
         RenderCommandResult::Success
+    }
+}
+
+impl crate::pipeline_warmup::PrewarmPipelines for PrimitivePipeline {
+    const PROFILE: crate::render_systems::System =
+        crate::render_systems::System::WarmupPrimitivePipeline;
+
+    /// Warms every built-in mode through the same cache used by drawing.
+    fn prewarm(
+        &mut self,
+        cache: &PipelineCache,
+        view: crate::pipeline_warmup::WarmView,
+        ids: &mut crate::pipeline_warmup::WarmupIds,
+    ) -> Result<(), BevyError> {
+        ids.push(self.variants.specialize(
+            cache,
+            PrimitiveKey {
+                msaa: view.msaa,
+                hdr: view.hdr,
+            },
+        )?);
+        Ok(())
     }
 }

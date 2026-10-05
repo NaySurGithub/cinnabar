@@ -44,6 +44,8 @@ pub(in crate::chunk) fn prepare_gpu_chunks(
     mut fairness: ResMut<GpuUpdateFairness>,
     profiler: Option<Res<RuntimeStageProfiler>>,
 ) {
+    let _render_system_span =
+        crate::render_systems::time(crate::render_systems::System::ChunkGpuUploadPrepareGpuChunks);
     let ChunkUploadPublication {
         acknowledgements,
         gpu_removals,

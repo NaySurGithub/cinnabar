@@ -1,3 +1,4 @@
+use crate::render_work::{DeviceWork as _, PipelineWork as _, QueueWork as _};
 use crate::ui_render::DeviceObservation;
 use crate::viewmodel::{
     HandVertex, ViewmodelCompletionGate, ViewmodelScene, ViewmodelToken, hand_projection,
@@ -40,6 +41,7 @@ impl Plugin for ViewmodelRenderPlugin {
     }
 }
 fn install(app: &mut App) {
+    crate::pipeline_warmup::register::<HandGpu>(app);
     app.init_resource::<ViewmodelScene>()
         .init_resource::<ViewmodelCompletionGate>();
     let Some(render_app) = app.get_sub_app(RenderApp) else {
@@ -209,6 +211,8 @@ struct PrepareViewmodel<'w, 's> {
 }
 
 fn prepare(params: PrepareViewmodel) {
+    let _render_system_span =
+        crate::render_systems::time(crate::render_systems::System::ViewmodelRenderPrepare);
     let PrepareViewmodel {
         scene,
         background,
@@ -295,11 +299,13 @@ fn prepare(params: PrepareViewmodel) {
     }
     if gpu.geometry != Some(token.geometry) {
         gpu.vertices = None;
-        gpu.vertices = Some(device.create_buffer_with_data(&BufferInitDescriptor {
-            label: Some("validated neutral arm and sleeve"),
-            contents: bytemuck::cast_slice(&frame.geometry.vertices),
-            usage: BufferUsages::VERTEX,
-        }));
+        gpu.vertices = Some(
+            device.tracked_create_buffer_with_data(&BufferInitDescriptor {
+                label: Some("validated neutral arm and sleeve"),
+                contents: bytemuck::cast_slice(&frame.geometry.vertices),
+                usage: BufferUsages::VERTEX,
+            }),
+        );
         gpu.geometry = Some(token.geometry);
         gpu.vertex_count = frame.geometry.vertices.len() as u32;
     }
@@ -310,7 +316,7 @@ fn prepare(params: PrepareViewmodel) {
     {
         gpu.bind_group = None;
         gpu.skin = None;
-        let texture = device.create_texture_with_data(
+        let texture = device.tracked_create_texture_with_data(
             &queue,
             &TextureDescriptor {
                 label: Some("validated neutral hand skin"),
@@ -367,13 +373,13 @@ fn prepare(params: PrepareViewmodel) {
             samples: token.samples,
         });
     }
-    queue.write_buffer(
+    queue.tracked_write_buffer(
         &gpu.projection,
         0,
         bytemuck::cast_slice(&hand_projection(token.viewport).to_cols_array()),
     );
     if gpu.bind_group.is_none() {
-        gpu.bind_group = Some(device.create_bind_group(
+        gpu.bind_group = Some(device.tracked_create_bind_group(
             "neutral hand binding",
             &cache.get_bind_group_layout(&gpu.layout),
             &[
@@ -396,7 +402,7 @@ fn prepare(params: PrepareViewmodel) {
     let layout = &gpu.layout;
     gpu.pipeline =
         memoized_hand_pipeline(&mut gpu.pipeline_variants, token.samples, token.hdr, || {
-            cache.queue_render_pipeline(specialized_hand_pipeline(
+            cache.tracked_queue_render_pipeline(specialized_hand_pipeline(
                 layout.clone(),
                 token.samples,
                 token.hdr,
@@ -551,6 +557,8 @@ fn submit_completion(
     gate: Res<ViewmodelCompletionGate>,
     gpu: Res<HandGpu>,
 ) {
+    let _render_system_span =
+        crate::render_systems::time(crate::render_systems::System::ViewmodelRenderSubmitCompletion);
     let token = drawn.0.lock().expect("hand drawn lock").take();
     if token.is_none()
         && let Some(expected) = gpu.token
@@ -581,11 +589,40 @@ fn submit_completion(
             token.or(gpu.token),
         );
     }
-    if let Err(error) = device.poll(PollType::Poll) {
+    if let Err(error) = device.tracked_poll(PollType::Poll) {
         ViewmodelCompletionGate::observe_stage(4, 4, token);
         if let Some(token) = token {
             gate.reject(token);
         }
         bevy::log::warn!(?error, "hand completion polling failed");
+    }
+}
+
+impl crate::pipeline_warmup::PrewarmPipelines for HandGpu {
+    const PROFILE: crate::render_systems::System = crate::render_systems::System::WarmupHandGpu;
+
+    /// Warms every built-in mode through the same cache used by drawing.
+    fn prewarm(
+        &mut self,
+        cache: &PipelineCache,
+        view: crate::pipeline_warmup::WarmView,
+        ids: &mut crate::pipeline_warmup::WarmupIds,
+    ) -> Result<(), BevyError> {
+        let layout = self.layout.clone();
+        let id = memoized_hand_pipeline(
+            &mut self.pipeline_variants,
+            view.msaa.samples(),
+            view.hdr,
+            || {
+                cache.tracked_queue_render_pipeline(specialized_hand_pipeline(
+                    layout,
+                    view.msaa.samples(),
+                    view.hdr,
+                ))
+            },
+        )
+        .ok_or_else(|| BevyError::from("unsupported hand pipeline sample count"))?;
+        ids.push(id);
+        Ok(())
     }
 }

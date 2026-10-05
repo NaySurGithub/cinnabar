@@ -48,7 +48,7 @@ pub(crate) fn app() -> (App, RetainedViewEntity) {
     let adapter = RenderAdapter(Arc::new(WgpuWrapper::new(adapter)));
     let mut app = App::new();
     app.insert_resource(PipelineCache::new(device.clone(), adapter, false))
-        .insert_resource(device)
+        .insert_resource(device.clone())
         .insert_resource(RenderQueue(Arc::new(WgpuWrapper::new(queue))))
         .init_resource::<DrawFunctions<Transparent3d>>()
         .init_resource::<ViewSortedRenderPhases<Transparent3d>>();

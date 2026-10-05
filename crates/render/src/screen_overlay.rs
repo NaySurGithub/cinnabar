@@ -2,10 +2,7 @@
 
 use std::sync::Arc;
 
-use bevy::{
-    prelude::{Mat4, Resource},
-    render::extract_resource::ExtractResource,
-};
+use bevy::prelude::{Mat4, Resource};
 
 pub const MAX_SCREEN_OVERLAY_LAYERS: usize = 8;
 /// Both overlay textures are square RGBA8 of this side.
@@ -51,7 +48,7 @@ impl ScreenOverlayTextures {
 }
 
 /// The frame's overlay stack, back to front. `textures_revision` must change whenever `textures` does.
-#[derive(Clone, Debug, Default, Resource, ExtractResource)]
+#[derive(Clone, Debug, Default, Resource)]
 pub struct ScreenOverlayScene {
     pub(crate) layers: Vec<ScreenOverlayLayer>,
     pub(crate) clock_seconds: f32,
@@ -158,3 +155,5 @@ mod tests {
         assert_eq!(scene.textures_revision, 1);
     }
 }
+
+crate::render_systems::extract_resource!(ScreenOverlayScene, ExtractScreenOverlayScene);

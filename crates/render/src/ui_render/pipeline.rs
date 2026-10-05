@@ -18,6 +18,62 @@ pub(super) struct UiPipelineKey {
     pub(super) isolated_depth: bool,
 }
 
+impl crate::pipeline_warmup::PrewarmPipelines for UiPipeline {
+    const PROFILE: crate::render_systems::System = crate::render_systems::System::WarmupUiPipeline;
+
+    /// Includes HUD, isolated item models and every projected-text depth mode.
+    fn prewarm(
+        &mut self,
+        cache: &PipelineCache,
+        view: crate::pipeline_warmup::WarmView,
+        ids: &mut crate::pipeline_warmup::WarmupIds,
+    ) -> Result<(), BevyError> {
+        let hud = UiPipelineKey {
+            msaa: view.msaa,
+            hdr: view.hdr,
+            invert_blend: false,
+            layer: true,
+            depth_test: false,
+            depth_write: false,
+            isolated_depth: false,
+        };
+        ids.push(self.variants.specialize(cache, hud)?);
+        ids.push(self.variants.specialize(
+            cache,
+            UiPipelineKey {
+                msaa: Msaa::Off,
+                invert_blend: true,
+                layer: false,
+                ..hud
+            },
+        )?);
+        for depth_test in [false, true] {
+            for depth_write in [false, true] {
+                for isolated_depth in [false, true] {
+                    let alpha = UiPipelineKey {
+                        depth_test,
+                        depth_write,
+                        isolated_depth,
+                        layer: isolated_depth,
+                        ..hud
+                    };
+                    ids.push(self.variants.specialize(cache, alpha)?);
+                    ids.push(self.variants.specialize(
+                        cache,
+                        UiPipelineKey {
+                            msaa: if isolated_depth { Msaa::Off } else { view.msaa },
+                            invert_blend: true,
+                            layer: false,
+                            ..alpha
+                        },
+                    )?);
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 impl Specializer<RenderPipeline> for UiPipelineSpecializer {
     type Key = UiPipelineKey;
 
@@ -26,6 +82,7 @@ impl Specializer<RenderPipeline> for UiPipelineSpecializer {
         key: Self::Key,
         descriptor: &mut RenderPipelineDescriptor,
     ) -> Result<Canonical<Self::Key>, BevyError> {
+        crate::render_work::specialization();
         descriptor.multisample.count = if key.layer { 1 } else { key.msaa.samples() };
         descriptor.fragment.as_mut().unwrap().entry_point = Some(
             if !key.layer && !key.invert_blend {

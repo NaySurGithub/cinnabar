@@ -1,5 +1,6 @@
 //! Per-frame preparation: record sync, uploads, the depth pyramid and the cull uniforms.
 
+use crate::render_work::QueueWork as _;
 use bevy::{
     camera::{MainPassResolutionOverride, primitives::Frustum},
     render::{
@@ -48,7 +49,7 @@ pub(in crate::chunk) struct GpuCull {
 impl GpuCull {
     pub(super) fn new(device: &RenderDevice) -> Self {
         Self {
-            kernels: CullKernels::new(device.wgpu_device()),
+            kernels: CullKernels::new(device),
             storage: None,
             args: None,
             draw_counts: None,
@@ -84,6 +85,9 @@ pub(super) fn extract_hidden_chunks(
         >,
     >,
 ) {
+    let _render_system_span = crate::render_systems::time(
+        crate::render_systems::System::ChunkGpuCullPrepareExtractHiddenChunks,
+    );
     for (entity, visibility) in &chunks {
         let changed = if visibility.get() {
             hidden.hidden.remove(&entity)
@@ -121,6 +125,9 @@ pub(super) fn prepare_gpu_cull(
     queue: Res<RenderQueue>,
     profiler: Option<Res<RuntimeStageProfiler>>,
 ) {
+    let _render_system_span = crate::render_systems::time(
+        crate::render_systems::System::ChunkGpuCullPreparePrepareGpuCull,
+    );
     let _timer = profiler
         .as_deref()
         .map(|profiler| profiler.time(RuntimeStage::IndirectPreparation));
@@ -176,7 +183,7 @@ pub(super) fn prepare_gpu_cull(
     let pyramid_id = cull.pyramid.as_ref().map(|prepared| prepared.depth);
     if cull.bind_groups.is_none() || cull.bound_pyramid != pyramid_id {
         cull.bind_groups = Some(cull.kernels.bind_groups(
-            device.wgpu_device(),
+            &device,
             storage,
             cull.pyramid.as_ref().map(|prepared| &prepared.pyramid),
         ));
@@ -207,7 +214,11 @@ fn upload_records(cull: &mut GpuCull, device: &RenderDevice, queue: &RenderQueue
         let enabled = cull.table.enabled();
         let words = enabled.len().min((storage.capacity as usize).div_ceil(32));
         if words != 0 {
-            queue.write_buffer(&storage.enabled, 0, bytemuck::cast_slice(&enabled[..words]));
+            queue.tracked_write_buffer(
+                &storage.enabled,
+                0,
+                bytemuck::cast_slice(&enabled[..words]),
+            );
         }
     }
 }
@@ -237,7 +248,7 @@ pub(super) fn write_dirty_records(
     let source = table.records();
     for run in dirty.chunk_by(|left, right| left + 1 == *right) {
         let (first, last) = (run[0] as usize, run[run.len() - 1] as usize);
-        queue.write_buffer(
+        queue.tracked_write_buffer(
             records,
             first as u64 * record_bytes,
             bytemuck::cast_slice(&source[first..=last]),
@@ -270,8 +281,7 @@ pub(super) fn prepare_pyramid(
         .map(|prepared| prepared.pyramid)
         .filter(|pyramid| pyramid.depth_size == depth_size)
         .unwrap_or_else(|| HizPyramid::new(device.wgpu_device(), depth_size));
-    let bindings =
-        kernels.pyramid_bindings(device.wgpu_device(), view, msaa.samples() > 1, &pyramid);
+    let bindings = kernels.pyramid_bindings(device, view, msaa.samples() > 1, &pyramid);
     *prepared = Some(PreparedPyramid {
         pyramid,
         depth: view.id(),

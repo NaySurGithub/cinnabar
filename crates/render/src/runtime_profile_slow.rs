@@ -156,6 +156,7 @@ struct FrameWindow {
     counts: SlowFrameCounts,
     /// GPU frames over budget since the last line; each was counted on arrival.
     gpu_pending: bool,
+    render_work: crate::runtime_profile_render::RenderWorkFrame,
 }
 
 impl Default for FrameWindow {
@@ -171,6 +172,7 @@ impl Default for FrameWindow {
             sequence: 0,
             counts: SlowFrameCounts::default(),
             gpu_pending: false,
+            render_work: Default::default(),
         }
     }
 }
@@ -208,6 +210,14 @@ impl SlowFrameRecorder {
             _ => {}
         }
         None
+    }
+
+    /// Keeps the latest completed render frame distinct from the overlapping main window.
+    pub(super) fn record_render_work(&self, work: crate::runtime_profile_render::RenderWorkFrame) {
+        self.frame
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .render_work = work;
     }
 
     pub(super) fn set_interval(&self, interval: Duration) {
@@ -294,12 +304,12 @@ impl FrameWindow {
             let window = delta(totals, self.baseline);
             let suppressed = std::mem::take(&mut self.suppressed);
             (event, Some(format!(
-                "RUST_MCBE_SLOW_FRAME frame={} refresh_hz={:.2} threshold_ms={:.2} frame_ms={:.3} main_ms={:.3} between_updates_ms={:.3} violations={} focused={} occluded={} suppressed={} slow_frames={} hitches={} hard_hitches={} main_stages={} window_stages={} scope=overlapping",
+                "RUST_MCBE_SLOW_FRAME frame={} refresh_hz={:.2} threshold_ms={:.2} frame_ms={:.3} main_ms={:.3} between_updates_ms={:.3} violations={} focused={} occluded={} suppressed={} slow_frames={} hitches={} hard_hitches={} main_stages={} window_stages={} {} scope=overlapping",
                 self.sequence, 1.0 / budgets.interval.as_secs_f64(), budgets.slow.as_secs_f64() * 1e3,
                 interval.as_secs_f64() * 1e3, main.as_secs_f64() * 1e3,
                 interval.saturating_sub(main).as_secs_f64() * 1e3, reason_list(reasons),
                 self.focused, self.occluded, suppressed, self.counts.slow, self.counts.hitches,
-                self.counts.hard_hitches, stage_fields(stages), stage_fields(window),
+                self.counts.hard_hitches, stage_fields(stages), stage_fields(window), self.render_work,
             )))
         });
         self.sequence += 1;

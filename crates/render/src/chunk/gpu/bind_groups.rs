@@ -1,5 +1,6 @@
 use super::resource_geometry::PreparedResourceGeometry;
 use crate::chunk::*;
+use crate::render_work::{DeviceWork as _, QueueWork as _};
 
 #[cfg(test)]
 mod water_tint_tests;
@@ -135,6 +136,9 @@ pub(in crate::chunk) fn prepare_chunk_biome_tints(
     source: Res<ChunkBiomeTints>,
     mut gpu: ResMut<ChunkGpuBiomeTints>,
 ) {
+    let _render_system_span = crate::render_systems::time(
+        crate::render_systems::System::ChunkGpuBindGroupsPrepareChunkBiomeTints,
+    );
     let identity = source.resource_identity();
     if !biome_tint_gpu_buffer_needs_rebuild(
         gpu.prepared.as_ref().map(|prepared| prepared.identity),
@@ -143,7 +147,7 @@ pub(in crate::chunk) fn prepare_chunk_biome_tints(
         return;
     }
     let entries = prepare_biome_tint_entries(source.entries());
-    let buffer = render_device.create_buffer_with_data(&BufferInitDescriptor {
+    let buffer = render_device.tracked_create_buffer_with_data(&BufferInitDescriptor {
         label: Some("packed chunk biome tints"),
         contents: bytemuck::cast_slice(&entries),
         usage: BufferUsages::STORAGE,
@@ -174,7 +178,7 @@ pub(in crate::chunk) fn init_chunk_gpu_animation_clock(
     mut commands: Commands,
     render_device: Res<RenderDevice>,
 ) {
-    let buffer = render_device.create_buffer_with_data(&BufferInitDescriptor {
+    let buffer = render_device.tracked_create_buffer_with_data(&BufferInitDescriptor {
         label: Some("global chunk animation clock"),
         contents: bytemuck::bytes_of(&ChunkAnimationClock::default()),
         usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
@@ -187,7 +191,10 @@ pub(in crate::chunk) fn prepare_chunk_animation_clock(
     gpu_clock: Res<ChunkGpuAnimationClock>,
     render_queue: Res<RenderQueue>,
 ) {
-    render_queue.write_buffer(&gpu_clock.buffer, 0, bytemuck::bytes_of(&*clock));
+    let _render_system_span = crate::render_systems::time(
+        crate::render_systems::System::ChunkGpuBindGroupsPrepareChunkAnimationClock,
+    );
+    render_queue.tracked_write_buffer(&gpu_clock.buffer, 0, bytemuck::bytes_of(&*clock));
 }
 
 type PreparedReplacement = (
@@ -231,6 +238,9 @@ pub(in crate::chunk) fn prepare_chunk_texture_assets(
     mut stats: ResMut<ChunkTextureUploadStats>,
     reload: Res<ChunkTextureReload>,
 ) {
+    let _render_system_span = crate::render_systems::time(
+        crate::render_systems::System::ChunkGpuBindGroupsPrepareChunkTextureAssets,
+    );
     let identity = assets.identity();
     let completed = gpu_assets.pending.as_ref().and_then(|pending| {
         match pending
@@ -451,7 +461,7 @@ fn build_chunk_texture_assets(
             return None;
         }
     }
-    let material_buffer = render_device.create_buffer_with_data(&BufferInitDescriptor {
+    let material_buffer = render_device.tracked_create_buffer_with_data(&BufferInitDescriptor {
         label: Some("global chunk materials"),
         contents: bytemuck::cast_slice(&material_words),
         usage: BufferUsages::STORAGE,
@@ -463,7 +473,7 @@ fn build_chunk_texture_assets(
         flags: 0,
         uv_scale: 1.0,
     }];
-    let animation_buffer = render_device.create_buffer_with_data(&BufferInitDescriptor {
+    let animation_buffer = render_device.tracked_create_buffer_with_data(&BufferInitDescriptor {
         label: Some("global chunk animations"),
         contents: if animation_words.is_empty() {
             bytemuck::cast_slice(&animation_sentinel)
@@ -473,20 +483,22 @@ fn build_chunk_texture_assets(
         usage: BufferUsages::STORAGE,
     });
     let animation_frame_sentinel = [TextureRef::DIAGNOSTIC.raw()];
-    let animation_frame_buffer = render_device.create_buffer_with_data(&BufferInitDescriptor {
-        label: Some("global chunk animation frames"),
-        contents: bytemuck::cast_slice(if animation_frame_words.is_empty() {
-            &animation_frame_sentinel
-        } else {
-            &animation_frame_words
-        }),
-        usage: BufferUsages::STORAGE,
-    });
-    let model_template_buffer = render_device.create_buffer_with_data(&BufferInitDescriptor {
-        label: Some("global chunk model templates"),
-        contents: bytemuck::cast_slice(&model_template_words),
-        usage: BufferUsages::STORAGE,
-    });
+    let animation_frame_buffer =
+        render_device.tracked_create_buffer_with_data(&BufferInitDescriptor {
+            label: Some("global chunk animation frames"),
+            contents: bytemuck::cast_slice(if animation_frame_words.is_empty() {
+                &animation_frame_sentinel
+            } else {
+                &animation_frame_words
+            }),
+            usage: BufferUsages::STORAGE,
+        });
+    let model_template_buffer =
+        render_device.tracked_create_buffer_with_data(&BufferInitDescriptor {
+            label: Some("global chunk model templates"),
+            contents: bytemuck::cast_slice(&model_template_words),
+            usage: BufferUsages::STORAGE,
+        });
     let (texture_0, view_0, padded_0) = upload_texture_page(
         render_device,
         render_queue,
@@ -626,7 +638,7 @@ pub(in crate::chunk) fn upload_texture_page(
     for (mip, plan) in texture_array.mips.iter().zip(upload_plans) {
         let staging = padded_mip_bytes(mip.rgba8.as_ref(), texture_array.layers, plan);
         padded_upload_bytes = padded_upload_bytes.saturating_add(staging.len() as u64);
-        render_queue.write_texture(
+        render_queue.tracked_write_texture(
             TexelCopyTextureInfo {
                 texture: &texture,
                 mip_level: plan.mip_level,
@@ -697,6 +709,9 @@ pub(in crate::chunk) fn prepare_chunk_bind_group(
     atmosphere: Res<AtmosphereGpu>,
     mut arena: ResMut<ChunkGpuArena>,
 ) {
+    let _render_system_span = crate::render_systems::time(
+        crate::render_systems::System::ChunkGpuBindGroupsPrepareChunkBindGroup,
+    );
     let Some(texture_assets) = texture_assets.prepared.as_ref() else {
         arena.bind_group = None;
         arena.bind_group_buffers = None;
@@ -747,7 +762,7 @@ pub(in crate::chunk) fn prepare_chunk_bind_group(
         arena.bind_group_buffers = None;
         return;
     };
-    let bind_group = render_device.create_bind_group(
+    let bind_group = render_device.tracked_create_bind_group(
         "shared packed chunk bind group",
         &pipeline_cache.get_bind_group_layout(&pipeline.bind_group_layout),
         &[

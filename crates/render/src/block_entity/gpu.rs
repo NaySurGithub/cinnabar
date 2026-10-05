@@ -1,6 +1,7 @@
 //! Atlas-backed model, portal and overlay passes with separate vertex lists.
 //! Models and portal planes draw in the opaque phase; overlays draw afterward.
 
+use crate::render_work::{DeviceWork as _, QueueWork as _};
 use std::mem::size_of;
 
 use bevy::{
@@ -68,6 +69,7 @@ impl Plugin for BlockEntityRenderPlugin {
 struct BlockEntityRenderInstalled;
 
 fn install(app: &mut App) {
+    crate::pipeline_warmup::register::<BlockEntityPipeline>(app);
     app.init_resource::<BlockEntityFrame>()
         .init_resource::<BlockSelectionFrame>()
         .init_resource::<BlockEntityScene>()
@@ -151,7 +153,7 @@ impl VertexList {
             self.bind_group = None;
         }
         if let Some(buffer) = &self.buffer {
-            render_queue.write_buffer(buffer, 0, bytemuck::cast_slice(vertices));
+            render_queue.tracked_write_buffer(buffer, 0, bytemuck::cast_slice(vertices));
         }
     }
 }
@@ -217,6 +219,8 @@ fn prepare_resources(
     render_queue: Res<RenderQueue>,
     mut gpu: ResMut<BlockEntityGpu>,
 ) {
+    let _render_system_span =
+        crate::render_systems::time(crate::render_systems::System::BlockEntityGpuPrepareResources);
     let atmosphere = atmosphere.as_deref().copied().unwrap_or_default();
     let [red, green, blue] = atmosphere.fog_color();
     let portal_parameters = [
@@ -225,7 +229,7 @@ fn prepare_resources(
         [red, green, blue, atmosphere.fog_start()],
         [atmosphere.fog_end(), 0.0, 0.0, 0.0],
     ];
-    render_queue.write_buffer(
+    render_queue.tracked_write_buffer(
         &gpu.portal_uniform,
         0,
         bytemuck::cast_slice(&portal_parameters),
@@ -346,7 +350,7 @@ fn write_rows(
     if rows == 0 {
         return;
     }
-    render_queue.write_texture(
+    render_queue.tracked_write_texture(
         TexelCopyTextureInfo {
             texture,
             mip_level: 0,
@@ -491,6 +495,7 @@ impl Specializer<RenderPipeline> for BlockEntitySpecializer {
         key: Self::Key,
         descriptor: &mut RenderPipelineDescriptor,
     ) -> Result<Canonical<Self::Key>, BevyError> {
+        crate::render_work::specialization();
         descriptor.multisample.count = key.msaa.samples();
         descriptor.primitive.cull_mode =
             matches!(key.mode, PipelineMode::Portal | PipelineMode::Additive)
@@ -563,6 +568,8 @@ fn prepare_bind_groups(
     view_uniforms: Res<ViewUniforms>,
     mut gpu: ResMut<BlockEntityGpu>,
 ) {
+    let _render_system_span =
+        crate::render_systems::time(crate::render_systems::System::BlockEntityGpuPrepareBindGroups);
     let Some(view_binding) = view_uniforms.uniforms.binding() else {
         gpu.solid.bind_group = None;
         gpu.overlay.bind_group = None;
@@ -613,7 +620,7 @@ fn prepare_bind_groups(
         let (Some(buffer), None) = (list.buffer.as_ref(), list.bind_group.as_ref()) else {
             continue;
         };
-        list.bind_group = Some(render_device.create_bind_group(
+        list.bind_group = Some(render_device.tracked_create_bind_group(
             label,
             &layout,
             &[
@@ -651,6 +658,8 @@ fn queue_solid(
     views: Query<(Entity, &MainEntity, &ExtractedView, &Msaa)>,
     mut next_tick: Local<Tick>,
 ) {
+    let _render_system_span =
+        crate::render_systems::time(crate::render_systems::System::BlockEntityGpuQueueSolid);
     if gpu.solid.count == 0 && gpu.portal.count == 0 {
         return;
     }
@@ -715,6 +724,8 @@ fn queue_overlay(
     draw_functions: Res<DrawFunctions<Transparent3d>>,
     views: Query<(Entity, &MainEntity, &ExtractedView, &Msaa)>,
 ) {
+    let _render_system_span =
+        crate::render_systems::time(crate::render_systems::System::BlockEntityGpuQueueOverlay);
     let draw_function = draw_functions.read().id::<DrawOverlayCommands>();
     queue_blended(
         &gpu.overlay,
@@ -735,6 +746,8 @@ fn queue_crack(
     draw_functions: Res<DrawFunctions<Transparent3d>>,
     views: Query<(Entity, &MainEntity, &ExtractedView, &Msaa)>,
 ) {
+    let _render_system_span =
+        crate::render_systems::time(crate::render_systems::System::BlockEntityGpuQueueCrack);
     let draw_function = draw_functions.read().id::<DrawCrackCommands>();
     queue_blended(
         &gpu.crack,
@@ -755,6 +768,8 @@ fn queue_additive(
     draw_functions: Res<DrawFunctions<Transparent3d>>,
     views: Query<(Entity, &MainEntity, &ExtractedView, &Msaa)>,
 ) {
+    let _render_system_span =
+        crate::render_systems::time(crate::render_systems::System::BlockEntityGpuQueueAdditive);
     let draw_function = draw_functions.read().id::<DrawAdditiveCommands>();
     queue_blended(
         &gpu.additive,
@@ -776,6 +791,8 @@ fn queue_blended(
     mut phases: ResMut<ViewSortedRenderPhases<Transparent3d>>,
     views: &Query<(Entity, &MainEntity, &ExtractedView, &Msaa)>,
 ) {
+    let _render_system_span =
+        crate::render_systems::time(crate::render_systems::System::BlockEntityGpuQueueBlended);
     if list.count == 0 || list.bind_group.is_none() {
         return;
     }
@@ -881,5 +898,36 @@ mod tests {
         let list = VertexList::new();
         assert_eq!(list.count, 0);
         assert!(list.buffer.is_none() && list.bind_group.is_none());
+    }
+}
+
+impl crate::pipeline_warmup::PrewarmPipelines for BlockEntityPipeline {
+    const PROFILE: crate::render_systems::System =
+        crate::render_systems::System::WarmupBlockEntityPipeline;
+
+    /// Warms every built-in mode through the same cache used by drawing.
+    fn prewarm(
+        &mut self,
+        cache: &PipelineCache,
+        view: crate::pipeline_warmup::WarmView,
+        ids: &mut crate::pipeline_warmup::WarmupIds,
+    ) -> Result<(), BevyError> {
+        for mode in [
+            PipelineMode::Solid,
+            PipelineMode::Overlay,
+            PipelineMode::Crack,
+            PipelineMode::Portal,
+            PipelineMode::Additive,
+        ] {
+            ids.push(self.variants.specialize(
+                cache,
+                BlockEntityPipelineKey {
+                    msaa: view.msaa,
+                    hdr: view.hdr,
+                    mode,
+                },
+            )?);
+        }
+        Ok(())
     }
 }

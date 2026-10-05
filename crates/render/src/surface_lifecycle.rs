@@ -24,6 +24,9 @@ fn release_orphan_targets<T: Component>(
     mut commands: Commands,
     targets: Query<Entity, (With<T>, Without<ExtractedCamera>)>,
 ) {
+    let _render_system_span = crate::render_systems::time(
+        crate::render_systems::System::SurfaceLifecycleReleaseOrphanTargets,
+    );
     for entity in &targets {
         commands.entity(entity).remove::<T>();
     }

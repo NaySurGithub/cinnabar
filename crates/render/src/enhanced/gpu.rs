@@ -1,6 +1,7 @@
 //! Render-world Enhanced resources: bind group layouts, fallbacks, material
 //! classes, and per-view uniforms, targets and bind groups.
 
+use crate::render_work::{DeviceWork as _, QueueWork as _};
 use std::{collections::HashMap, num::NonZeroU64};
 
 use bevy::{
@@ -267,6 +268,9 @@ pub(crate) fn prepare_enhanced_materials(
     mut gpu: ResMut<EnhancedGpu>,
     views: Query<(), With<EnhancedRendering>>,
 ) {
+    let _render_system_span = crate::render_systems::time(
+        crate::render_systems::System::EnhancedGpuPrepareEnhancedMaterials,
+    );
     let identity = assets.identity();
     if views.is_empty() || gpu.material_identity == Some(identity) {
         return;
@@ -304,7 +308,7 @@ pub(crate) fn prepare_enhanced_materials(
             usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
             view_formats: &[],
         });
-        queue.write_texture(
+        queue.tracked_write_texture(
             TexelCopyTextureInfo {
                 texture: &table,
                 mip_level: 0,
@@ -482,6 +486,8 @@ pub(crate) fn prepare_enhanced_views(
     time: Res<Time>,
     views: Query<(Entity, &ExtractedView, &ViewTarget, &EnhancedRendering)>,
 ) {
+    let _render_system_span =
+        crate::render_systems::time(crate::render_systems::System::EnhancedGpuPrepareEnhancedViews);
     state.0.retain(|entity, _| views.contains(*entity));
     let atmosphere = atmosphere.map(|frame| *frame).unwrap_or_default();
     let seconds = time.elapsed_secs_wrapped();
@@ -496,7 +502,7 @@ pub(crate) fn prepare_enhanced_views(
             .or_insert_with(|| EnhancedViewGpu::new(&device, *settings));
         state.settings = *settings;
         state.cascades = fits.iter().map(|fit| fit.bounds).collect();
-        queue.write_buffer(&state.frame, 0, bytemuck::bytes_of(&frame));
+        queue.tracked_write_buffer(&state.frame, 0, bytemuck::bytes_of(&frame));
         let casters = fits
             .iter()
             .map(|fit| CasterUniformGpu {
@@ -506,7 +512,7 @@ pub(crate) fn prepare_enhanced_views(
                 padding: [Vec4::ZERO; 10],
             })
             .collect::<Vec<_>>();
-        queue.write_buffer(&state.casters, 0, bytemuck::cast_slice(&casters));
+        queue.tracked_write_buffer(&state.casters, 0, bytemuck::cast_slice(&casters));
 
         let resolution = frame.flags.z;
         let cascades = frame.flags.y;
@@ -572,7 +578,7 @@ pub(crate) fn prepare_enhanced_views(
             .scene_depth
             .as_ref()
             .map_or(&gpu.fallback_depth, |texture| &texture.default_view);
-        state.view_bind_group = Some(device.create_bind_group(
+        state.view_bind_group = Some(device.tracked_create_bind_group(
             "enhanced view bind group",
             &view_layout,
             &[
@@ -606,7 +612,7 @@ pub(crate) fn prepare_enhanced_views(
                 },
             ],
         ));
-        state.caster_bind_group = Some(device.create_bind_group(
+        state.caster_bind_group = Some(device.tracked_create_bind_group(
             "enhanced caster bind group",
             &caster_layout,
             &[

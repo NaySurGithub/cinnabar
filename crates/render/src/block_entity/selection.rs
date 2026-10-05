@@ -1,6 +1,6 @@
 //! Selection uses native wire-box geometry or an overlay on the selected model's faces.
 use super::{BlockEntityVertex, CrackShape, crack::FACE_OFFSET};
-use bevy::{math::Vec3, prelude::Resource, render::extract_resource::ExtractResource};
+use bevy::{math::Vec3, prelude::Resource};
 use std::sync::Arc;
 
 const OUTLINE_ANGULAR_WIDTH: f32 = 0.003;
@@ -16,7 +16,7 @@ pub struct BlockSelectionTarget {
     pub shape: CrackShape,
 }
 
-#[derive(Clone, Debug, Default, Resource, ExtractResource)]
+#[derive(Clone, Debug, Default, Resource)]
 pub struct BlockSelectionFrame {
     pub revision: u64,
     pub outline: Arc<[BlockEntityVertex]>,
@@ -182,3 +182,5 @@ pub(super) fn fallback_atlas() -> &'static Arc<super::BlockEntityAtlasImage> {
         })
     })
 }
+
+crate::render_systems::extract_resource!(BlockSelectionFrame, ExtractBlockSelectionFrame);

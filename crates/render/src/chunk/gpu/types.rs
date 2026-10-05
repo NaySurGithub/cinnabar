@@ -319,6 +319,9 @@ pub(in crate::chunk) fn publish_graphics_runtime_metadata(
     inputs: GraphicsRuntimeMetadataInputs,
     mut publication: Local<GraphicsMetadataPublicationState>,
 ) {
+    let _render_system_span = crate::render_systems::time(
+        crate::render_systems::System::ChunkPublishGraphicsRuntimeMetadata,
+    );
     let GraphicsRuntimeMetadataInputs {
         windows,
         render_instance,

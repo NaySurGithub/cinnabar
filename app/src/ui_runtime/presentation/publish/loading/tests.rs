@@ -117,6 +117,7 @@ fn dimension_loading_releases_local_terrain_without_distant_columns_or_a_timeout
                 visible_rendered: 0,
                 cohort: None,
                 render_work_drained: false,
+                pipelines_ready: true,
                 now: Duration::from_millis(200),
             },
         );

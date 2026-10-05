@@ -1,6 +1,7 @@
 //! GPU side of the particle system: atlas upload, instance buffer, and two `Transparent3d`
 //! draws (alpha-blended and additive) over one storage buffer of quads.
 
+use crate::render_work::{DeviceWork as _, QueueWork as _};
 use std::{ops::Range, sync::Arc};
 
 use bevy::{
@@ -13,7 +14,7 @@ use bevy::{
     prelude::*,
     render::{
         Render, RenderApp, RenderStartup, RenderSystems,
-        extract_resource::{ExtractResource, ExtractResourcePlugin},
+        extract_resource::ExtractResourcePlugin,
         render_phase::{
             AddRenderCommand, DrawFunctions, PhaseItem, PhaseItemExtraIndex, RenderCommand,
             RenderCommandResult, SetItemPipeline, TrackedRenderPass, ViewSortedRenderPhases,
@@ -50,7 +51,7 @@ const MIN_CAPACITY: usize = 256;
 pub struct ParticleSimulation(pub ParticleSystem);
 
 /// The frame's particle draw data, extracted to the render world each frame.
-#[derive(Resource, ExtractResource, Clone, Default)]
+#[derive(Resource, Clone, Default)]
 pub struct ParticleGpuFrame {
     base: Option<Arc<[u8]>>,
     patch_seq: u64,
@@ -138,6 +139,7 @@ pub struct ParticleRenderPlugin;
 
 impl Plugin for ParticleRenderPlugin {
     fn build(&self, app: &mut App) {
+        crate::pipeline_warmup::register::<ParticlePipeline>(app);
         crate::lighting::install(app);
         app.init_resource::<ParticleSimulation>()
             .init_resource::<ParticleGpuFrame>()
@@ -218,6 +220,9 @@ fn prepare_particle_resources(
     render_queue: Res<RenderQueue>,
     mut gpu: ResMut<ParticleGpu>,
 ) {
+    let _render_system_span = crate::render_systems::time(
+        crate::render_systems::System::ParticleRenderPrepareParticleResources,
+    );
     if let Some(base) = &frame.base
         && gpu.base.as_ref().is_none_or(|old| !Arc::ptr_eq(old, base))
         && base.len() == (ATLAS_SIDE * ATLAS_SIDE * 4) as usize
@@ -285,8 +290,8 @@ fn prepare_particle_resources(
         gpu.bind_group = None;
     }
     if let Some(buffer) = &gpu.buffer {
-        render_queue.write_buffer(buffer, 0, bytemuck::cast_slice(&frame.blend[..]));
-        render_queue.write_buffer(
+        render_queue.tracked_write_buffer(buffer, 0, bytemuck::cast_slice(&frame.blend[..]));
+        render_queue.tracked_write_buffer(
             buffer,
             blend as u64 * INSTANCE_BYTES,
             bytemuck::cast_slice(&frame.add[..]),
@@ -301,7 +306,7 @@ fn write_rect(
     size: [u32; 2],
     rgba: &[u8],
 ) {
-    queue.write_texture(
+    queue.tracked_write_texture(
         TexelCopyTextureInfo {
             texture,
             mip_level: 0,
@@ -427,6 +432,7 @@ impl Specializer<RenderPipeline> for ParticleSpecializer {
         key: Self::Key,
         descriptor: &mut RenderPipelineDescriptor,
     ) -> Result<Canonical<Self::Key>, BevyError> {
+        crate::render_work::specialization();
         descriptor.multisample.count = key.msaa.samples();
         let target = descriptor.fragment.as_mut().unwrap().targets[0]
             .as_mut()
@@ -463,6 +469,9 @@ fn prepare_particle_bind_group(
     view_uniforms: Res<ViewUniforms>,
     mut gpu: ResMut<ParticleGpu>,
 ) {
+    let _render_system_span = crate::render_systems::time(
+        crate::render_systems::System::ParticleRenderPrepareParticleBindGroup,
+    );
     let (Some(view_binding), Some(view_buffer)) = (
         view_uniforms.uniforms.binding(),
         view_uniforms.uniforms.buffer(),
@@ -483,7 +492,7 @@ fn prepare_particle_bind_group(
     if gpu.bind_group.is_some() && gpu.bound == key {
         return;
     }
-    let bind_group = render_device.create_bind_group(
+    let bind_group = render_device.tracked_create_bind_group(
         "particle bind group",
         &pipeline_cache.get_bind_group_layout(&pipeline.bind_group_layout),
         &[
@@ -517,6 +526,8 @@ fn queue_particles(
     draw_functions: Res<DrawFunctions<Transparent3d>>,
     views: Query<(Entity, &MainEntity, &ExtractedView, &Msaa)>,
 ) {
+    let _render_system_span =
+        crate::render_systems::time(crate::render_systems::System::ParticleRenderQueueParticles);
     if gpu.blend_range.is_empty() && gpu.add_range.is_empty() {
         return;
     }
@@ -622,3 +633,30 @@ impl<P: PhaseItem, const ADDITIVE: bool> RenderCommand<P> for DrawParticleRange<
         RenderCommandResult::Success
     }
 }
+
+impl crate::pipeline_warmup::PrewarmPipelines for ParticlePipeline {
+    const PROFILE: crate::render_systems::System =
+        crate::render_systems::System::WarmupParticlePipeline;
+
+    /// Warms every built-in mode through the same cache used by drawing.
+    fn prewarm(
+        &mut self,
+        cache: &PipelineCache,
+        view: crate::pipeline_warmup::WarmView,
+        ids: &mut crate::pipeline_warmup::WarmupIds,
+    ) -> Result<(), BevyError> {
+        for additive in [false, true] {
+            ids.push(self.variants.specialize(
+                cache,
+                ParticlePipelineKey {
+                    msaa: view.msaa,
+                    hdr: view.hdr,
+                    additive,
+                },
+            )?);
+        }
+        Ok(())
+    }
+}
+
+crate::render_systems::extract_resource!(ParticleGpuFrame, ExtractParticleGpuFrame);

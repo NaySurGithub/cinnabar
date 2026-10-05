@@ -47,10 +47,11 @@ pub fn publication_noop_render_plugin() -> RenderPlugin {
     };
     let (device, queue) = bevy::tasks::block_on(adapter.request_device(&device_descriptor))
         .expect("the NOOP adapter creates a device with its production-visible limits");
+    let device = RenderDevice::from(device);
 
     RenderPlugin {
         render_creation: RenderCreation::manual(
-            RenderDevice::from(device),
+            device.clone(),
             RenderQueue(Arc::new(WgpuWrapper::new(queue))),
             RenderAdapterInfo(WgpuWrapper::new(adapter_info)),
             RenderAdapter(Arc::new(WgpuWrapper::new(adapter))),

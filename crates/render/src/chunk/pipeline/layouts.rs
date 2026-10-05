@@ -165,6 +165,7 @@ impl Specializer<RenderPipeline> for ChunkPipelineSpecializer {
         key: Self::Key,
         descriptor: &mut RenderPipelineDescriptor,
     ) -> Result<Canonical<Self::Key>, BevyError> {
+        crate::render_work::specialization();
         descriptor.multisample.count = key.msaa.samples();
         let native_gamma = !key.hdr
             && key.msaa == Msaa::Off
@@ -491,3 +492,33 @@ mod review_tests {
 #[cfg(test)]
 #[path = "contract_tests.rs"]
 mod contract_tests;
+
+impl crate::pipeline_warmup::PrewarmPipelines for ChunkPipeline {
+    const PROFILE: crate::render_systems::System =
+        crate::render_systems::System::WarmupChunkPipeline;
+
+    /// Warms every built-in mode through the same cache used by drawing.
+    fn prewarm(
+        &mut self,
+        cache: &PipelineCache,
+        view: crate::pipeline_warmup::WarmView,
+        ids: &mut crate::pipeline_warmup::WarmupIds,
+    ) -> Result<(), BevyError> {
+        let key = ChunkPipelineKey {
+            msaa: view.msaa,
+            hdr: view.hdr,
+            enhanced: view.enhanced,
+        };
+        for variants in [
+            &mut self.variants,
+            &mut self.solid_variants,
+            &mut self.model_variants,
+            &mut self.transparent_model_variants,
+            &mut self.liquid_variants,
+            &mut self.depth_liquid_variants,
+        ] {
+            ids.push(variants.specialize(cache, key)?);
+        }
+        Ok(())
+    }
+}

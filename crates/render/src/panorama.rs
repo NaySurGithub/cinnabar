@@ -2,14 +2,14 @@
 
 use std::sync::Arc;
 
-use bevy::{prelude::Resource, render::extract_resource::ExtractResource};
+use bevy::prelude::Resource;
 use render_model::{PanoramaFaces, PanoramaView};
 
 /// The panorama shader, for hosts that draw it outside the Bevy render graph.
 pub const PANORAMA_WGSL: &str = include_str!("panorama.wgsl");
 
 /// The panorama drawn behind the launcher; `view` is `None` while it is hidden.
-#[derive(Clone, Debug, Default, Resource, ExtractResource)]
+#[derive(Clone, Debug, Default, Resource)]
 pub struct PanoramaScene {
     pub(crate) faces: Option<Arc<PanoramaFaces>>,
     pub(crate) faces_revision: u64,
@@ -128,3 +128,5 @@ mod tests {
         assert!(PanoramaFaces::new(u32::MAX, std::array::from_fn(|_| Vec::new())).is_none());
     }
 }
+
+crate::render_systems::extract_resource!(PanoramaScene, ExtractPanoramaScene);

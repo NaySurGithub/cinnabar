@@ -1,6 +1,12 @@
-//! Cull and depth-pyramid compute kernels on raw wgpu, so fixture tests drive the production code.
+//! Cull and depth-pyramid compute kernels shared by rendering and GPU fixture tests.
 
+use crate::render_work::{DeviceWork as _, QueueWork as _};
 use std::{borrow::Cow, num::NonZeroU64};
+
+use bevy::render::{
+    render_resource::BindGroupLayout,
+    renderer::{RenderDevice, RenderQueue},
+};
 
 use super::model::{
     CULL_WORKGROUP, CullPhase, CullViewUniform, FRUSTUM_ABSOLUTE_SLACK, FRUSTUM_RELATIVE_SLACK,
@@ -99,8 +105,9 @@ impl CullStorage {
         }
     }
 
-    pub fn write_uniform(&self, queue: &wgpu::Queue, phase: CullPhase, uniform: &CullViewUniform) {
-        queue.write_buffer(
+    /// Uploads one view record through the queue telemetry boundary.
+    pub fn write_uniform(&self, queue: &RenderQueue, phase: CullPhase, uniform: &CullViewUniform) {
+        queue.tracked_write_buffer(
             &self.uniforms[phase as usize],
             0,
             bytemuck::bytes_of(uniform),
@@ -231,7 +238,7 @@ pub struct PyramidBindings {
 }
 
 pub struct CullKernels {
-    layout: wgpu::BindGroupLayout,
+    layout: BindGroupLayout,
     count: wgpu::ComputePipeline,
     scan: wgpu::ComputePipeline,
     emit: wgpu::ComputePipeline,
@@ -243,7 +250,8 @@ pub struct CullKernels {
 }
 
 impl CullKernels {
-    pub fn new(device: &wgpu::Device) -> Self {
+    /// Creates the fixed cull kernels through the device telemetry boundary.
+    pub fn new(device: &RenderDevice) -> Self {
         let storage = |binding, read_only| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::COMPUTE,
@@ -254,9 +262,9 @@ impl CullKernels {
             },
             count: None,
         };
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("terrain cull layout"),
-            entries: &[
+        let layout = device.create_bind_group_layout(
+            "terrain cull layout",
+            &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::COMPUTE,
@@ -287,14 +295,14 @@ impl CullKernels {
                     count: None,
                 },
             ],
-        });
+        );
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("terrain cull pipeline layout"),
             bind_group_layouts: &[&layout],
             push_constant_ranges: &[],
         });
         let module = |label, source: String| {
-            device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            device.tracked_create_and_validate_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some(label),
                 source: wgpu::ShaderSource::Wgsl(Cow::Owned(source)),
             })
@@ -302,14 +310,15 @@ impl CullKernels {
         let cull = module("terrain cull", cull_shader_source());
         let pyramid = module("terrain hi-z", pyramid_shader_source().to_owned());
         let pipeline = |module, layout: Option<&wgpu::PipelineLayout>, entry: &str| {
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            (*device.tracked_create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some(entry),
                 layout,
                 module,
                 entry_point: Some(entry),
                 compilation_options: Default::default(),
                 cache: None,
-            })
+            }))
+            .clone()
         };
         let blank = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("terrain hi-z placeholder"),
@@ -333,7 +342,7 @@ impl CullKernels {
             seed_multisampled: pipeline(&pyramid, None, "hiz_seed_multisampled"),
             reduce: pipeline(&pyramid, None, "hiz_reduce"),
             occlusion: pipeline(&cull, None, "cull_occlusion"),
-            blank_pyramid: blank.create_view(&Default::default()),
+            blank_pyramid: (*blank.create_view(&Default::default())).clone(),
             layout,
         }
     }
@@ -341,7 +350,7 @@ impl CullKernels {
     /// One bind group per phase; the late one tests `pyramid` when there is one.
     pub fn bind_groups(
         &self,
-        device: &wgpu::Device,
+        device: &RenderDevice,
         storage: &CullStorage,
         pyramid: Option<&HizPyramid>,
     ) -> [wgpu::BindGroup; PHASE_COUNT] {
@@ -372,11 +381,8 @@ impl CullKernels {
                 binding: 8,
                 resource: wgpu::BindingResource::TextureView(hiz),
             });
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("terrain cull bindings"),
-                layout: &self.layout,
-                entries: &entries,
-            })
+            (*device.tracked_create_bind_group("terrain cull bindings", &self.layout, &entries))
+                .clone()
         })
     }
 
@@ -405,7 +411,7 @@ impl CullKernels {
     /// Binds the occlusion kernel to `storage` and the pyramid it tests.
     pub fn occlusion_bind_group(
         &self,
-        device: &wgpu::Device,
+        device: &RenderDevice,
         storage: &OcclusionStorage,
         pyramid: &HizPyramid,
     ) -> wgpu::BindGroup {
@@ -416,11 +422,12 @@ impl CullKernels {
             (9, storage.occluded.as_entire_binding()),
         ]
         .map(|(binding, resource)| wgpu::BindGroupEntry { binding, resource });
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("terrain occlusion bindings"),
-            layout: &self.occlusion.get_bind_group_layout(0),
-            entries: &entries,
-        })
+        (*device.tracked_create_bind_group(
+            "terrain occlusion bindings",
+            &self.occlusion.get_bind_group_layout(0).into(),
+            &entries,
+        ))
+        .clone()
     }
 
     /// Writes the occluded bit of every slot below `slots`.
@@ -443,19 +450,21 @@ impl CullKernels {
         pass.dispatch_workgroups(groups, 1, 1);
     }
 
+    /// Binds the sampled depth target and each reduction level through device telemetry.
     pub fn pyramid_bindings(
         &self,
-        device: &wgpu::Device,
+        device: &RenderDevice,
         depth: &wgpu::TextureView,
         multisampled: bool,
         pyramid: &HizPyramid,
     ) -> PyramidBindings {
         let group = |pipeline: &wgpu::ComputePipeline, entries: &[wgpu::BindGroupEntry]| {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("terrain hi-z bindings"),
-                layout: &pipeline.get_bind_group_layout(0),
+            (*device.tracked_create_bind_group(
+                "terrain hi-z bindings",
+                &pipeline.get_bind_group_layout(0).into(),
                 entries,
-            })
+            ))
+            .clone()
         };
         let seed_pipeline = if multisampled {
             &self.seed_multisampled

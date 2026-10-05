@@ -1,3 +1,4 @@
+use crate::render_work::{DeviceWork as _, QueueWork as _};
 use std::collections::HashMap;
 
 use assets::AtmosphereRole;
@@ -11,18 +12,18 @@ use bevy::{
     prelude::*,
     render::{
         Render, RenderApp, RenderStartup, RenderSystems,
-        extract_resource::{ExtractResource, ExtractResourcePlugin},
+        extract_resource::ExtractResourcePlugin,
         render_phase::{
             AddRenderCommand, DrawFunctions, PhaseItem, PhaseItemExtraIndex, RenderCommand,
             RenderCommandResult, SetItemPipeline, TrackedRenderPass, ViewSortedRenderPhases,
         },
         render_resource::{
             BindGroup, BindGroupEntry, BindGroupLayoutDescriptor, BindGroupLayoutEntry,
-            BindingType, BlendState, Buffer, BufferBindingType, BufferId, BufferInitDescriptor,
-            BufferSize, BufferUsages, Canonical, ColorTargetState, ColorWrites, CompareFunction,
-            DepthStencilState, Face, FragmentState, FrontFace, PipelineCache, PrimitiveState,
-            RenderPipeline, RenderPipelineDescriptor, ShaderStages, ShaderType, Specializer,
-            SpecializerKey, TextureFormat, Variants, VertexState,
+            BindingType, BlendState, Buffer, BufferBindingType, BufferDescriptor, BufferId,
+            BufferInitDescriptor, BufferSize, BufferUsages, Canonical, ColorTargetState,
+            ColorWrites, CompareFunction, DepthStencilState, Face, FragmentState, FrontFace,
+            PipelineCache, PrimitiveState, RenderPipeline, RenderPipelineDescriptor, ShaderStages,
+            ShaderType, Specializer, SpecializerKey, TextureFormat, Variants, VertexState,
         },
         renderer::{RenderDevice, RenderQueue},
         sync_world::MainEntity,
@@ -40,7 +41,7 @@ use meshing::{
 };
 
 /// The user's cloud visibility preference, copied into the render world each frame.
-#[derive(Resource, ExtractResource, Clone, Copy)]
+#[derive(Resource, Clone, Copy)]
 pub struct CloudVisibility(pub bool);
 
 impl Default for CloudVisibility {
@@ -52,6 +53,7 @@ impl Default for CloudVisibility {
 
 const CLOUD_SHADER_HANDLE: Handle<Shader> = uuid_handle!("8dcfe9d0-c182-44cc-ae4c-7e5233b68659");
 pub(crate) fn install_cloud_render(app: &mut App) {
+    crate::pipeline_warmup::register::<CloudPipeline>(app);
     app.init_resource::<CloudVisibility>()
         .add_plugins(ExtractResourcePlugin::<CloudVisibility>::default());
     load_internal_asset!(
@@ -103,13 +105,12 @@ pub(crate) struct CloudViewGpu {
     bind_group: Option<BindGroup>,
     view_buffer_id: Option<BufferId>,
     atmosphere_buffer_id: Option<BufferId>,
-    bound_asset_identity: Option<[u8; 32]>,
 }
 
 fn init_cloud_gpu(mut commands: Commands, render_device: Res<RenderDevice>) {
     commands.insert_resource(CloudGpu {
         views: HashMap::new(),
-        colour_buffer: render_device.create_buffer_with_data(&BufferInitDescriptor {
+        colour_buffer: render_device.tracked_create_buffer_with_data(&BufferInitDescriptor {
             label: Some("native cloud gamma RGBA uniform"),
             contents: bytemuck::cast_slice(&[0.0_f32; 8]),
             usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
@@ -123,9 +124,12 @@ pub(crate) fn prepare_cloud_records(
     requested: Res<AtmosphereTextureAssets>,
     atmosphere: Res<AtmosphereFrame>,
     render_device: Res<RenderDevice>,
+    render_queue: Res<RenderQueue>,
     views: Query<(Entity, &ExtractedView), With<Camera3d>>,
     mut gpu: ResMut<CloudGpu>,
 ) {
+    let _render_system_span =
+        crate::render_systems::time(crate::render_systems::System::CloudRenderPrepareCloudRecords);
     if !atmosphere.sky_kind().has_clouds() {
         gpu.views.clear();
         return;
@@ -162,50 +166,93 @@ pub(crate) fn prepare_cloud_records(
         }) {
             continue;
         }
-        let records = mesh_cloud_viewport(cloud_texture, viewport)
-            .expect("validated MCBEATM2 cloud texture satisfies the finite window contract");
+        let records = {
+            let _span =
+                crate::render_systems::time(crate::render_systems::System::CloudMeshViewport);
+            mesh_cloud_viewport(cloud_texture, viewport)
+                .expect("validated MCBEATM2 cloud texture satisfies the finite window contract")
+        };
         let record_count =
             u32::try_from(records.len()).expect("bounded cloud record count fits u32");
-        let geometry_diagnostic = CloudGeometryDiagnostic::from_viewport_layout(
-            config,
-            identity,
-            cloud_texture,
-            &records,
-            CLOUD_WORLD_PERIOD as u32 * 1_000,
-            (CLOUD_UNDERSIDE_Y * 1_000.0) as i32,
-            (CLOUD_TOP_Y * 1_000.0) as i32,
-        )
-        .expect("validated finite cloud geometry satisfies the diagnostic contract");
-        let record_buffer = (!records.is_empty()).then(|| {
-            render_device.create_buffer_with_data(&BufferInitDescriptor {
-                label: Some("immutable native viewport cloud quad records"),
-                contents: bytemuck::cast_slice::<ViewportCloudQuad, u8>(&records),
-                usage: BufferUsages::STORAGE,
-            })
+        let previous = gpu
+            .views
+            .get(&entity)
+            .filter(|prepared| prepared.prepared_identity == identity)
+            .and_then(|prepared| prepared.geometry_diagnostic.as_ref());
+        let geometry_diagnostic = {
+            let _span =
+                crate::render_systems::time(crate::render_systems::System::CloudGeometryDiagnostic);
+            let diagnostic = if let Some(previous) = previous {
+                previous.with_viewport_records(&records)
+            } else {
+                CloudGeometryDiagnostic::from_viewport_layout(
+                    config,
+                    identity,
+                    cloud_texture,
+                    &records,
+                    CLOUD_WORLD_PERIOD as u32 * 1_000,
+                    (CLOUD_UNDERSIDE_Y * 1_000.0) as i32,
+                    (CLOUD_TOP_Y * 1_000.0) as i32,
+                )
+            }
+            .expect("validated finite cloud geometry satisfies the diagnostic contract");
+            if previous.is_none() {
+                bevy::log::info!("CLOUD_GEOMETRY_EVIDENCE {}", diagnostic.marker_fields());
+            }
+            diagnostic
+        };
+        let prepared = gpu.views.entry(entity).or_insert_with(|| CloudViewGpu {
+            record_buffer: None,
+            record_count: 0,
+            geometry_diagnostic: None,
+            prepared_identity: identity,
+            viewport,
+            bind_group: None,
+            view_buffer_id: None,
+            atmosphere_buffer_id: None,
         });
-        bevy::log::info!(
-            "CLOUD_GEOMETRY_EVIDENCE {}",
-            geometry_diagnostic.marker_fields()
-        );
-        gpu.views.insert(
-            entity,
-            CloudViewGpu {
-                record_buffer,
-                record_count,
-                geometry_diagnostic: Some(geometry_diagnostic),
-                prepared_identity: identity,
-                viewport,
-                bind_group: None,
-                view_buffer_id: None,
-                atmosphere_buffer_id: None,
-                bound_asset_identity: None,
-            },
-        );
+        upload_cloud_records(prepared, &render_device, &render_queue, &records);
+        prepared.record_count = record_count;
+        prepared.geometry_diagnostic = Some(geometry_diagnostic);
+        prepared.prepared_identity = identity;
+        prepared.viewport = viewport;
         #[cfg(test)]
         {
             gpu.upload_count += 1;
         }
     }
+}
+
+/// Keeps the bounded record allocation and its bindings while only the window contents change.
+fn upload_cloud_records(
+    prepared: &mut CloudViewGpu,
+    device: &RenderDevice,
+    queue: &RenderQueue,
+    records: &[ViewportCloudQuad],
+) {
+    let _span = crate::render_systems::time(crate::render_systems::System::CloudUploadRecords);
+    if records.is_empty() {
+        return;
+    }
+    let bytes = bytemuck::cast_slice::<ViewportCloudQuad, u8>(records);
+    if prepared
+        .record_buffer
+        .as_ref()
+        .is_none_or(|buffer| buffer.size() < bytes.len() as u64)
+    {
+        let capacity = records
+            .len()
+            .next_power_of_two()
+            .min(meshing::cloud_viewport::MAX_VIEWPORT_CLOUD_QUADS);
+        prepared.record_buffer = Some(device.create_buffer(&BufferDescriptor {
+            label: Some("retained native viewport cloud quad records"),
+            size: (capacity * size_of::<ViewportCloudQuad>()) as u64,
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        }));
+        prepared.bind_group = None;
+    }
+    queue.tracked_write_buffer(prepared.record_buffer.as_ref().unwrap(), 0, bytes);
 }
 
 fn prepare_cloud_colour(
@@ -214,6 +261,8 @@ fn prepare_cloud_colour(
     gpu: Res<CloudGpu>,
     render_queue: Res<RenderQueue>,
 ) {
+    let _render_system_span =
+        crate::render_systems::time(crate::render_systems::System::CloudRenderPrepareCloudColour);
     let colour = atmosphere.cloud_colour_for_view(*view);
     let native = [
         colour[0],
@@ -225,7 +274,7 @@ fn prepare_cloud_colour(
         CLOUD_TOP_Y,
         CLOUD_WORLD_PERIOD,
     ];
-    render_queue.write_buffer(&gpu.colour_buffer, 0, bytemuck::cast_slice(&native));
+    render_queue.tracked_write_buffer(&gpu.colour_buffer, 0, bytemuck::cast_slice(&native));
 }
 
 struct CloudPipelineSpecializer;
@@ -340,6 +389,7 @@ impl Specializer<RenderPipeline> for CloudPipelineSpecializer {
         key: Self::Key,
         descriptor: &mut RenderPipelineDescriptor,
     ) -> Result<Canonical<Self::Key>, BevyError> {
+        crate::render_work::specialization();
         descriptor.multisample.count = key.msaa.samples();
         descriptor.fragment.as_mut().unwrap().targets[0]
             .as_mut()
@@ -361,6 +411,9 @@ fn prepare_cloud_bind_group(
     atmosphere: Res<AtmosphereGpu>,
     mut gpu: ResMut<CloudGpu>,
 ) {
+    let _render_system_span = crate::render_systems::time(
+        crate::render_systems::System::CloudRenderPrepareCloudBindGroup,
+    );
     let Some(view_binding) = view_uniforms.uniforms.binding() else {
         for prepared in gpu.views.values_mut() {
             prepared.bind_group = None;
@@ -381,15 +434,13 @@ fn prepare_cloud_bind_group(
             prepared.bind_group = None;
             continue;
         };
-        let identity = prepared.prepared_identity;
         if prepared.bind_group.is_some()
             && prepared.view_buffer_id == Some(view_buffer.id())
             && prepared.atmosphere_buffer_id == Some(atmosphere.buffer.id())
-            && prepared.bound_asset_identity == Some(identity)
         {
             continue;
         }
-        prepared.bind_group = Some(render_device.create_bind_group(
+        prepared.bind_group = Some(render_device.tracked_create_bind_group(
             "finite native cloud window bind group",
             &pipeline_cache.get_bind_group_layout(&pipeline.bind_group_layout),
             &[
@@ -413,7 +464,6 @@ fn prepare_cloud_bind_group(
         ));
         prepared.view_buffer_id = Some(view_buffer.id());
         prepared.atmosphere_buffer_id = Some(atmosphere.buffer.id());
-        prepared.bound_asset_identity = Some(identity);
     }
 }
 
@@ -426,6 +476,8 @@ fn queue_clouds(
     draw_functions: Res<DrawFunctions<Transparent3d>>,
     views: Query<(Entity, &MainEntity, &ExtractedView, &Msaa)>,
 ) {
+    let _render_system_span =
+        crate::render_systems::time(crate::render_systems::System::CloudRenderQueueClouds);
     if !visibility.0 || !atmosphere.sky_kind().has_clouds() {
         return;
     }
@@ -554,3 +606,27 @@ mod tests;
 #[cfg(test)]
 #[path = "cloud_pipeline_tests.rs"]
 mod pipeline_tests;
+
+impl crate::pipeline_warmup::PrewarmPipelines for CloudPipeline {
+    const PROFILE: crate::render_systems::System =
+        crate::render_systems::System::WarmupCloudPipeline;
+
+    /// Warms every built-in mode through the same cache used by drawing.
+    fn prewarm(
+        &mut self,
+        cache: &PipelineCache,
+        view: crate::pipeline_warmup::WarmView,
+        ids: &mut crate::pipeline_warmup::WarmupIds,
+    ) -> Result<(), BevyError> {
+        ids.push(self.variants.specialize(
+            cache,
+            CloudPipelineKey {
+                msaa: view.msaa,
+                hdr: view.hdr,
+            },
+        )?);
+        Ok(())
+    }
+}
+
+crate::render_systems::extract_resource!(CloudVisibility, ExtractCloudVisibility);

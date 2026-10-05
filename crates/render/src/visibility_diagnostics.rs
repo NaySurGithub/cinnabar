@@ -6,7 +6,6 @@ use std::sync::{
 use bevy::{
     platform::collections::HashSet,
     prelude::{Entity, Resource},
-    render::extract_resource::ExtractResource,
 };
 use render_model::{
     ExtractedCameraIdentity, GraphicsAdapterMetadata, OpaqueDrawMode, VisibilityDiagnosticSnapshot,
@@ -62,7 +61,7 @@ impl VisibilityKeySet {
     }
 }
 
-#[derive(Resource, ExtractResource, Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Resource, Debug, Clone, Default, PartialEq, Eq)]
 pub struct VisibilityDiagnosticsInput {
     enabled: bool,
     startup_probe_enabled: bool,
@@ -795,3 +794,8 @@ mod tests {
         );
     }
 }
+
+crate::render_systems::extract_resource!(
+    VisibilityDiagnosticsInput,
+    ExtractVisibilityDiagnosticsInput
+);

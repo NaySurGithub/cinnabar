@@ -27,6 +27,8 @@ impl ViewNode for HandRigViewNode {
         (target, msaa): QueryItem<Self::ViewQuery>,
         world: &World,
     ) -> Result<(), NodeRunError> {
+        let _render_system_span =
+            crate::render_systems::time(crate::render_systems::System::HandRigRenderNodeRun);
         let (Some(gpu), Some(cache)) = (
             world.get_resource::<HandRigGpu>(),
             world.get_resource::<PipelineCache>(),

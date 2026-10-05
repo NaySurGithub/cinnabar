@@ -127,16 +127,19 @@ fn pass_pipelines_compile_for_each_view_format_without_blending() {
                 .clone();
             let cache = world.resource::<bevy::render::render_resource::PipelineCache>();
             for format in formats {
-                for _ in 0..1000 {
-                    gpu.ensure_pipeline(&device, cache, &pass, format);
-                    if !matches!(
-                        gpu.pipelines.get(&(1, format)),
-                        Some(passes::PipelineState::Creating(_))
-                    ) {
-                        break;
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(1));
-                }
+                gpu.ensure_pipeline(&device, cache, &pass, format);
+                let state = gpu.pipelines.remove(&(1, format)).unwrap();
+                let state = match state {
+                    passes::PipelineState::Creating(task) => bevy::tasks::block_on(task)
+                        .map_or(passes::PipelineState::Failed, passes::PipelineState::Ready),
+                    other => other,
+                };
+                gpu.pipelines.insert((1, format), state);
+                let warm = crate::render_work::snapshot();
+                gpu.ensure_pipeline(&device, cache, &pass, format);
+                let repeated = crate::render_work::snapshot().delta_since(warm);
+                assert_eq!(repeated.render_pipelines_created, 0);
+                assert_eq!(repeated.shader_modules_created, 0);
                 assert!(gpu.pipeline(1, format).is_some(), "{format:?}");
                 assert!(passes::color_target(format).blend.is_none());
             }

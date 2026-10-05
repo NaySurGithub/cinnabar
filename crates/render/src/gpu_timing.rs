@@ -5,6 +5,8 @@
 //! `TIMESTAMP_QUERY_INSIDE_PASSES` and aggregate profiling is on, since per-draw timestamps
 //! perturb the workload. Adapters without timestamps leave every `gpu_*` stage empty.
 
+use crate::render_work::DeviceWork as _;
+
 pub(crate) mod readback;
 #[cfg(test)]
 mod tests;
@@ -104,10 +106,7 @@ fn timed_nodes() -> Vec<(InternedRenderLabel, RuntimeStage)> {
         (Node3d::Tonemapping.intern(), RuntimeStage::GpuTonemapping),
         (Node3d::Fxaa.intern(), RuntimeStage::GpuFxaa),
     ];
-    // Timestamps written just before presentation make macOS 26 flicker.
-    if !cfg!(target_os = "macos") {
-        nodes.push((Node3d::Upscaling.intern(), RuntimeStage::GpuBlit));
-    }
+    nodes.push((Node3d::Upscaling.intern(), RuntimeStage::GpuBlit));
     #[cfg(feature = "enhanced")]
     nodes.extend(crate::enhanced::graph::timed_nodes());
     nodes
@@ -145,6 +144,8 @@ impl Node for TimedNode {
     }
 
     fn update(&mut self, world: &mut World) {
+        let _render_system_span =
+            crate::render_systems::time(crate::render_systems::System::GpuTimingUpdate);
         self.inner.update(world);
     }
 
@@ -154,8 +155,15 @@ impl Node for TimedNode {
         render_context: &mut RenderContext<'w>,
         world: &'w World,
     ) -> Result<(), NodeRunError> {
+        let _cpu = world
+            .get_resource::<RuntimeStageProfiler>()
+            .and_then(|profiler| {
+                crate::runtime_profile_render::cpu_stage(self.stage)
+                    .map(|stage| profiler.time(stage))
+            });
         let span = world
             .get_resource::<GpuTimestamps>()
+            .filter(|_| !(cfg!(target_os = "macos") && self.stage == RuntimeStage::GpuBlit))
             .and_then(|timestamps| timestamps.open_pass(self.stage));
         if let Some(span) = &span {
             mark(render_context, span.queries, span.begin);
@@ -459,11 +467,13 @@ fn begin_gpu_frame(
     device: Res<RenderDevice>,
     profiler: Res<RuntimeStageProfiler>,
 ) {
+    let _render_system_span =
+        crate::render_systems::time(crate::render_systems::System::GpuTimingBeginGpuFrame);
     let Some(mut timestamps) = timestamps else {
         return;
     };
     // Non-blocking: only fires map callbacks the GPU has already completed.
-    let _ = device.poll(wgpu::PollType::Poll);
+    let _ = device.tracked_poll(wgpu::PollType::Poll);
     timestamps.begin(|frame| profiler.record_gpu_frame(frame));
 }
 
@@ -472,6 +482,8 @@ fn submit_gpu_frame(
     device: Res<RenderDevice>,
     queue: Res<RenderQueue>,
 ) {
+    let _render_system_span =
+        crate::render_systems::time(crate::render_systems::System::GpuTimingSubmitGpuFrame);
     if let Some(mut timestamps) = timestamps {
         timestamps.submit(&device, &queue);
     }

@@ -117,7 +117,7 @@ pub(super) fn binding_world() -> World {
     let adapter = RenderAdapter(Arc::new(WgpuWrapper::new(adapter)));
     let mut world = World::new();
     world.insert_resource(PipelineCache::new(device.clone(), adapter, true));
-    world.insert_resource(device);
+    world.insert_resource(device.clone());
     world.insert_resource(RenderQueue(Arc::new(WgpuWrapper::new(queue))));
     world.init_resource::<UiPipeline>();
     world.init_resource::<UiRenderStatsResource>();

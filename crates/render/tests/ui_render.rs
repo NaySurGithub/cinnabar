@@ -1,6 +1,14 @@
 #[path = "../src/material_shader.rs"]
 #[allow(dead_code, reason = "shared checked shader constructor dependencies")]
 mod material_shader;
+#[path = "../src/pipeline_warmup.rs"]
+mod pipeline_warmup;
+#[path = "../src/render_systems.rs"]
+#[allow(dead_code, reason = "UI fixtures share application instrumentation")]
+mod render_systems;
+#[path = "../src/render_work.rs"]
+#[allow(dead_code, reason = "UI fixtures share application work wrappers")]
+mod render_work;
 #[path = "../src/shader_safety.rs"]
 #[allow(dead_code, reason = "shared checked shader constructors")]
 mod shader_safety;
@@ -474,9 +482,8 @@ fn current_device_loss_or_invalid_scene_withholds_old_prepared_draws() {
         .unwrap();
     assert_eq!(stats.snapshot().accepted_revision, Some(3));
     let (device, queue) = wgpu::Device::noop(&wgpu::DeviceDescriptor::default());
-    render_app
-        .world_mut()
-        .insert_resource(RenderDevice::from(device));
+    let device = RenderDevice::from(device);
+    render_app.world_mut().insert_resource(device.clone());
     render_app
         .world_mut()
         .run_system_once(prepare_ui_resources)
@@ -518,7 +525,7 @@ fn cloned_device_resource_replacement_on_empty_frame_stays_invalid_until_startup
         .insert_resource(UiRenderSceneResource::default());
     let device = render_app.world().resource::<RenderDevice>().clone();
     render_app.world_mut().increment_change_tick();
-    render_app.world_mut().insert_resource(device);
+    render_app.world_mut().insert_resource(device.clone());
     render_app
         .world_mut()
         .run_system_once(prepare_ui_resources)
@@ -757,8 +764,9 @@ fn fixture_draw_list(revision: u64) -> UiRenderInput {
 fn app_with_noop_render_sub_app() -> App {
     let (device, queue) = wgpu::Device::noop(&wgpu::DeviceDescriptor::default());
     let mut render_app = SubApp::new();
+    let device = RenderDevice::from(device);
     render_app
-        .insert_resource(RenderDevice::from(device))
+        .insert_resource(device.clone())
         .insert_resource(RenderQueue(Arc::new(WgpuWrapper::new(queue))))
         .insert_resource(DrawFunctions::<Transparent3d>::default())
         .add_schedule(Schedule::new(RenderStartup))

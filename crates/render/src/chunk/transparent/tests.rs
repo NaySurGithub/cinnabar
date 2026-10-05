@@ -1,4 +1,5 @@
 use super::*;
+use crate::chunk::gpu::arena::plan_chunk_range_update;
 use crate::chunk::transparent::retirement::transparent_view_key_satisfies_witness;
 
 pub(super) fn resident_transparent_allocation(

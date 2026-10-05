@@ -25,6 +25,7 @@ impl FromWorld for ActorPipeline {
 }
 
 impl ActorPipeline {
+    /// Resolves each admitted material variant before the draw queue reads it.
     pub(super) fn prepare_draw_variants(
         &mut self,
         cache: &PipelineCache,
@@ -48,6 +49,7 @@ impl ActorPipeline {
         self.draw_variants.get(&(msaa, hdr, 0)).copied()
     }
 
+    /// Returns the variant prepared for this view and actor material.
     pub(super) fn draw_variant(
         &self,
         msaa: Msaa,
@@ -232,6 +234,7 @@ impl Specializer<RenderPipeline> for ActorPipelineSpecializer {
         key: Self::Key,
         descriptor: &mut RenderPipelineDescriptor,
     ) -> Result<Canonical<Self::Key>, BevyError> {
+        crate::render_work::specialization();
         descriptor.multisample.count = key.msaa.samples();
         if key.material == assets::EntityRenderMaterial::DissolveDepth as u32 {
             descriptor.fragment.as_mut().unwrap().targets[0]
@@ -250,5 +253,33 @@ impl Specializer<RenderPipeline> for ActorPipelineSpecializer {
             TextureFormat::bevy_default()
         };
         Ok(key)
+    }
+}
+
+impl crate::pipeline_warmup::PrewarmPipelines for ActorPipeline {
+    const PROFILE: crate::render_systems::System =
+        crate::render_systems::System::WarmupActorPipeline;
+
+    /// Warms every built-in mode through the same cache used by drawing.
+    fn prewarm(
+        &mut self,
+        cache: &PipelineCache,
+        view: crate::pipeline_warmup::WarmView,
+        ids: &mut crate::pipeline_warmup::WarmupIds,
+    ) -> Result<(), BevyError> {
+        for material in 0..=assets::EntityRenderMaterial::DissolveColor as u32 {
+            let id = self.variants.specialize(
+                cache,
+                ActorPipelineKey {
+                    msaa: view.msaa,
+                    hdr: view.hdr,
+                    material,
+                },
+            )?;
+            self.draw_variants
+                .insert((view.msaa, view.hdr, material), id);
+            ids.push(id);
+        }
+        Ok(())
     }
 }

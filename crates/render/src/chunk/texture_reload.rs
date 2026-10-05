@@ -1,6 +1,6 @@
 //! Coordinates optional atlas preparation before the main world publishes new material IDs.
 use super::{ChunkRenderInstance, ChunkTextureAssetIdentity, ChunkTextureAssets};
-use bevy::{prelude::Resource, render::extract_resource::ExtractResource};
+use bevy::prelude::Resource;
 use std::sync::{Arc, Mutex};
 
 #[derive(Default)]
@@ -12,7 +12,7 @@ struct State {
 }
 
 /// Shared main/render-world mailbox; GPU replacements remain staged until CPU publication.
-#[derive(Resource, Clone, Default, ExtractResource)]
+#[derive(Resource, Clone, Default)]
 pub struct ChunkTextureReload(Arc<Mutex<State>>);
 
 impl ChunkTextureReload {
@@ -146,3 +146,5 @@ impl ChunkTextureReload {
 #[cfg(test)]
 #[path = "texture_reload_tests.rs"]
 mod tests;
+
+crate::render_systems::extract_resource!(ChunkTextureReload, ExtractChunkTextureReload);

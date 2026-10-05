@@ -13,7 +13,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-const TRACE_CAPACITY: usize = 131_072;
+const TRACE_CAPACITY: usize = 1_048_576;
 
 #[derive(Debug)]
 struct TraceEvent {
@@ -29,6 +29,7 @@ enum TraceArgs {
     None,
     Focus { focused: bool, occluded: bool },
     SlowFrame(SlowFrameEvent),
+    RenderWork(crate::runtime_profile_render::RenderWorkFrame),
 }
 
 #[derive(Debug)]
@@ -42,11 +43,16 @@ pub(crate) struct FrameTrace {
 impl FrameTrace {
     /// Preallocates a fixed recording budget; full traces drop subsequent spans.
     pub(crate) fn new(path: PathBuf, epoch: Instant) -> Self {
+        Self::with_capacity(path, epoch, TRACE_CAPACITY)
+    }
+
+    /// Allows bounded-recording tests to exercise overflow without a full capture allocation.
+    fn with_capacity(path: PathBuf, epoch: Instant, capacity: usize) -> Self {
         Self {
             path,
             epoch,
             flushed: AtomicBool::new(false),
-            events: Mutex::new(Vec::with_capacity(TRACE_CAPACITY)),
+            events: Mutex::new(Vec::with_capacity(capacity)),
         }
     }
 
@@ -83,13 +89,24 @@ impl FrameTrace {
         });
     }
 
+    /// Retains every completed render frame's counters, including frames without overruns.
+    pub(crate) fn render_work(&self, work: crate::runtime_profile_render::RenderWorkFrame) {
+        self.push(TraceEvent {
+            name: "render_work",
+            started: self.epoch.elapsed(),
+            elapsed: Duration::ZERO,
+            thread: std::thread::current().id(),
+            args: TraceArgs::RenderWork(work),
+        });
+    }
+
     /// Appends only while the preallocated capacity still has room.
     fn push(&self, event: TraceEvent) {
         let mut events = self
             .events
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if events.len() < TRACE_CAPACITY {
+        if events.len() < events.capacity() {
             events.push(event);
         }
     }
@@ -105,10 +122,11 @@ impl FrameTrace {
         let result = std::fs::File::create(&self.path).and_then(|file| {
             use std::io::Write;
             let mut writer = std::io::BufWriter::new(file);
+            let capacity = events.capacity();
             write!(
                 writer,
-                "{{\"capacity\":{TRACE_CAPACITY},\"truncated\":{},\"traceEvents\":[",
-                events.len() == TRACE_CAPACITY
+                "{{\"capacity\":{capacity},\"truncated\":{},\"traceEvents\":[",
+                events.len() == capacity
             )?;
             let mut threads = Vec::new();
             for (index, event) in events.iter().enumerate() {
@@ -127,6 +145,21 @@ impl FrameTrace {
                     "dur": event.elapsed.as_secs_f64() * 1e6});
                 let args = match &event.args {
                     TraceArgs::None => None,
+                    TraceArgs::RenderWork(frame) => Some(json!({
+                        "render_frame_id": frame.sequence,
+                        "render_pipelines_queued": frame.work.render_pipelines_queued,
+                        "render_pipelines_created": frame.work.render_pipelines_created,
+                        "compute_pipelines_created": frame.work.compute_pipelines_created,
+                        "shader_modules": frame.work.shader_modules_created,
+                        "bind_groups": frame.work.bind_groups_created,
+                        "buffer_upload_bytes": frame.work.buffer_upload_bytes,
+                        "texture_upload_bytes": frame.work.texture_upload_bytes,
+                        "arena_migrations": frame.arena_migrations,
+                        "arena_copy_bytes": frame.arena_copy_bytes,
+                        "readback_polls": frame.work.readback_polls,
+                        "readback_waits": frame.work.readback_waits,
+                        "systems": frame.systems.iter().filter(|sample| sample.calls != 0).map(|sample| json!({"name": sample.name, "ms": sample.nanos as f64 / 1e6, "calls": sample.calls})).collect::<Vec<_>>(),
+                    })),
                     TraceArgs::Focus { focused, occluded } => {
                         Some(json!({"focused": focused, "occluded": occluded}))
                     }
@@ -157,42 +190,6 @@ impl Drop for FrameTrace {
     }
 }
 
-/// Brackets surface preparation to distinguish drawable waits from game work.
-pub(crate) fn install_surface_trace(app: &mut bevy::app::SubApp) {
-    use bevy::prelude::*;
-    use bevy::render::{
-        Render, RenderSystems, renderer::render_system, view::window::prepare_windows,
-    };
-    const SUBMISSION: usize = RuntimeStage::RenderSubmission as usize;
-    const SURFACE: usize = RuntimeStage::SurfacePreparation as usize;
-    const FRAME: usize = RuntimeStage::RenderFrame as usize;
-    app.init_resource::<crate::RuntimeStageSpans>()
-        .add_systems(
-            Render,
-            (
-                crate::begin_stage_span::<SURFACE>.before(prepare_windows),
-                crate::end_stage_span::<SURFACE>.after(prepare_windows),
-            )
-                .in_set(RenderSystems::ManageViews),
-        )
-        // Spans all render-world work; the acquisition wait is subtracted at the end.
-        .add_systems(
-            Render,
-            (
-                crate::begin_stage_span::<FRAME>.before(RenderSystems::ExtractCommands),
-                crate::runtime_profile::end_render_frame_span.in_set(RenderSystems::Cleanup),
-            ),
-        )
-        .add_systems(
-            Render,
-            (
-                crate::begin_stage_span::<SUBMISSION>.before(render_system),
-                crate::end_stage_span::<SUBMISSION>.after(render_system),
-            )
-                .in_set(RenderSystems::Render),
-        );
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -202,7 +199,7 @@ mod tests {
     fn trace_preserves_thread_spans_and_focus_without_growing() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("trace.json");
-        let trace = FrameTrace::new(path.clone(), Instant::now());
+        let trace = FrameTrace::with_capacity(path.clone(), Instant::now(), 16);
         trace.frame(false, false);
         trace.slow_frame(SlowFrameEvent {
             reasons: 0b1001,
@@ -213,10 +210,10 @@ mod tests {
             Instant::now(),
             Duration::from_millis(2),
         );
-        for _ in 0..TRACE_CAPACITY {
+        for _ in 0..16 {
             trace.frame(true, false);
         }
-        assert_eq!(trace.events.lock().unwrap().len(), TRACE_CAPACITY);
+        assert_eq!(trace.events.lock().unwrap().len(), 16);
         drop(trace);
         let saved: serde_json::Value =
             serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();

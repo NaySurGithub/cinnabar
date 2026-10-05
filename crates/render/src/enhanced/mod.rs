@@ -162,6 +162,8 @@ impl Plugin for EnhancedRenderPlugin {
         if !ENHANCED_RENDERING_ENABLED {
             return;
         }
+        crate::pipeline_warmup::register::<EnhancedPostPipelines>(app);
+        crate::pipeline_warmup::register::<EnhancedShadowPipelines>(app);
         load_shader_imports(app);
         load_internal_asset!(
             app,

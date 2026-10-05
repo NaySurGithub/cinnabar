@@ -4,7 +4,8 @@
 use std::collections::VecDeque;
 
 use bevy::{
-    ecs::message::MessageCursor,
+    app::MainScheduleOrder,
+    ecs::{message::MessageCursor, schedule::ScheduleLabel},
     input::{
         ButtonState, InputSystems,
         keyboard::{Key, KeyboardFocusLost, KeyboardInput, NativeKey},
@@ -53,7 +54,12 @@ pub(super) struct Driver {
     focus_cursor: MessageCursor<WindowFocused>,
 }
 
+/// Restores native-facing state after gameplay and before winit's window synchronization.
+#[derive(ScheduleLabel, Debug, Clone, PartialEq, Eq, Hash)]
+struct RestoreHiddenWindow;
+
 pub(super) fn configure(app: &mut App) {
+    configure_hidden_window_restore(app);
     app.init_resource::<Driver>()
         .add_systems(PreUpdate, inject.before(InputSystems))
         .add_systems(
@@ -62,6 +68,28 @@ pub(super) fn configure(app: &mut App) {
                 .after(FlyCameraUpdateSet)
                 .before(LocalPlayerFrameSet::Physics),
         );
+}
+
+/// Runs after all gameplay schedules, before winit can apply changed window or cursor fields.
+fn configure_hidden_window_restore(app: &mut App) {
+    app.add_systems(RestoreHiddenWindow, restore_hidden_window);
+    app.world_mut()
+        .resource_mut::<MainScheduleOrder>()
+        .insert_before(Last, RestoreHiddenWindow);
+}
+
+/// Synthetic focus is only an in-frame input gate; hidden windows never focus or grab natively.
+fn restore_hidden_window(
+    mut windows: Query<(&mut Window, &mut CursorOptions), With<PrimaryWindow>>,
+) {
+    for (mut window, mut cursor) in &mut windows {
+        if !window.visible {
+            window.bypass_change_detection().focused = false;
+            let cursor = cursor.bypass_change_detection();
+            cursor.grab_mode = CursorGrabMode::None;
+            cursor.visible = true;
+        }
+    }
 }
 
 pub(super) fn apply(world: &mut World, command: &InputCommand) -> Result<Value, String> {
@@ -305,8 +333,83 @@ mod tests {
         window::{CursorOptions, PrimaryWindow, WindowFocused},
     };
 
-    use super::{Driver, Physical, inject};
+    use super::{Driver, Physical, configure_hidden_window_restore, inject};
     use crate::camera::DrivenInput;
+    use developer_control::protocol::InputCommand;
+
+    #[test]
+    fn hidden_input_never_reaches_native_focus_or_cursor_sync() {
+        let mut app = App::new();
+        app.add_plugins(InputPlugin)
+            .add_message::<WindowFocused>()
+            .init_resource::<Driver>()
+            .add_systems(PreUpdate, inject.before(bevy::input::InputSystems))
+            .add_systems(Update, consume_input_and_change_window)
+            .add_systems(Last, observe_native_window_state);
+        configure_hidden_window_restore(&mut app);
+        app.world_mut().spawn((
+            Window {
+                visible: false,
+                focused: false,
+                ..default()
+            },
+            CursorOptions::default(),
+            PrimaryWindow,
+        ));
+        super::apply(
+            app.world_mut(),
+            &InputCommand {
+                hold: vec!["KeyW".to_owned()],
+                ..default()
+            },
+        )
+        .unwrap();
+        for _ in 0..3 {
+            app.update();
+        }
+        super::apply(
+            app.world_mut(),
+            &InputCommand {
+                release_control: true,
+                ..default()
+            },
+        )
+        .unwrap();
+        app.update();
+        assert!(
+            !app.world()
+                .resource::<ButtonInput<KeyCode>>()
+                .pressed(KeyCode::KeyW)
+        );
+    }
+
+    /// Simulates gameplay consuming input while an unrelated setting changes native-bound data.
+    fn consume_input_and_change_window(
+        driven: Option<Res<DrivenInput>>,
+        keys: Res<ButtonInput<KeyCode>>,
+        mut windows: Query<(&mut Window, &mut CursorOptions), With<PrimaryWindow>>,
+    ) {
+        if driven.is_none() {
+            return;
+        }
+        let (mut window, mut cursor) = windows.single_mut().unwrap();
+        assert!(window.focused);
+        assert!(keys.pressed(KeyCode::KeyW));
+        assert_eq!(cursor.grab_mode, bevy::window::CursorGrabMode::Locked);
+        window.title.push('.');
+        cursor.visible = false;
+    }
+
+    /// Checks what native synchronization sees, including components marked changed elsewhere.
+    fn observe_native_window_state(windows: Query<(&Window, &CursorOptions), With<PrimaryWindow>>) {
+        let (window, cursor) = windows.single().unwrap();
+        assert!(
+            !window.focused,
+            "synthetic focus reached the native window boundary"
+        );
+        assert_eq!(cursor.grab_mode, bevy::window::CursorGrabMode::None);
+        assert!(cursor.visible);
+    }
 
     #[test]
     fn real_focus_loss_keeps_driven_keys_held() {

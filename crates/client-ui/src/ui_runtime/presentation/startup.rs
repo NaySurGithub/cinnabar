@@ -15,6 +15,8 @@ pub struct StartupReadinessInput {
     pub cohort_target_complete: bool,
     pub stream_work_drained: bool,
     pub render_work_drained: bool,
+    /// All built-in pipelines for the current view have finished compiling.
+    pub pipelines_ready: bool,
     /// A consent decision the player must make before entering the world.
     pub world_entry_held: bool,
 }
@@ -154,6 +156,11 @@ impl StartupPresentationState {
             return true;
         }
 
+        if !input.pipelines_ready {
+            self.readiness_frame_baseline = None;
+            return false;
+        }
+
         let dense_view_ready = input.visible_rendered >= MIN_VISIBLE_TERRAIN_BEFORE_PRESENTATION;
         let bounded_small_or_zero_opaque_view_ready =
             input.cohort_target_complete && input.stream_work_drained && input.render_work_drained;
@@ -231,7 +238,39 @@ mod tests {
             cohort_target_complete: false,
             stream_work_drained: false,
             render_work_drained: false,
+            pipelines_ready: true,
             world_entry_held: false,
+        }
+    }
+
+    #[test]
+    fn every_terrain_readiness_path_waits_for_pipelines_and_a_later_gpu_frame() {
+        for readiness in 0..3 {
+            let mut state = StartupPresentationState::default();
+            let mut input = startup_input(1, 0, 0, 1);
+            input.pipelines_ready = false;
+            match readiness {
+                0 => input.local_terrain_ready = true,
+                1 => input.visible_rendered = MIN_VISIBLE_TERRAIN_BEFORE_PRESENTATION,
+                _ => {
+                    input.cohort_target_complete = true;
+                    input.stream_work_drained = true;
+                    input.render_work_drained = true;
+                }
+            }
+            assert!(!state.observe(input));
+            input.diagnostics_frame_generation = 1;
+            input.snapshot.frame_generation = 1;
+            assert!(!state.observe(input));
+            assert!(state.probe_enabled(true));
+            input.pipelines_ready = true;
+            assert!(
+                !state.observe(input),
+                "a prewarm frame cannot release itself"
+            );
+            input.diagnostics_frame_generation = 2;
+            input.snapshot.frame_generation = 2;
+            assert!(state.observe(input));
         }
     }
 

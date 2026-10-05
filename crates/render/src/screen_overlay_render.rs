@@ -1,4 +1,5 @@
 //! Draws camera effects after first-person geometry and before the JSON-UI HUD.
+use crate::render_work::{DeviceWork as _, QueueWork as _};
 use crate::screen_overlay::{
     MAX_SCREEN_OVERLAY_LAYERS, SCREEN_OVERLAY_TEXTURE_SIDE, ScreenOverlayScene,
 };
@@ -70,6 +71,7 @@ impl Plugin for ScreenOverlayRenderPlugin {
 struct Installed;
 
 fn install(app: &mut App) {
+    crate::pipeline_warmup::register::<OverlayPipeline>(app);
     app.init_resource::<ScreenOverlayScene>();
     let Some(render_app) = app.get_sub_app(RenderApp) else {
         return;
@@ -130,7 +132,7 @@ fn texture_array(
     layers: u32,
     pixels: &[u8],
 ) -> (Texture, TextureView) {
-    let texture = device.create_texture_with_data(
+    let texture = device.tracked_create_texture_with_data(
         queue,
         &TextureDescriptor {
             label: Some("screen overlay textures"),
@@ -162,7 +164,7 @@ fn init_gpu(mut commands: Commands, device: Res<RenderDevice>, queue: Res<Render
     let (fire_texture, fire_view) = texture_array(&device, &queue, 1, 1, &[0; 4]);
     let (portal_texture, portal_texture_view) = texture_array(&device, &queue, 1, 1, &[0; 4]);
     commands.insert_resource(OverlayGpu {
-        uniform: device.create_buffer_with_data(&BufferInitDescriptor {
+        uniform: device.tracked_create_buffer_with_data(&BufferInitDescriptor {
             label: Some("screen overlay layers"),
             contents: bytemuck::bytes_of(&OverlayUniform::default()),
             usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
@@ -215,6 +217,9 @@ fn prepare_overlay(
     queue: Res<RenderQueue>,
     mut gpu: ResMut<OverlayGpu>,
 ) {
+    let _render_system_span = crate::render_systems::time(
+        crate::render_systems::System::ScreenOverlayRenderPrepareOverlay,
+    );
     if gpu.textures_revision != Some(scene.textures_revision) {
         let (texture, view) = match &scene.textures {
             Some(textures) => texture_array(
@@ -321,7 +326,7 @@ fn prepare_overlay(
             0.0,
         ];
     }
-    queue.write_buffer(&gpu.uniform, 0, bytemuck::bytes_of(&uniform));
+    queue.tracked_write_buffer(&gpu.uniform, 0, bytemuck::bytes_of(&uniform));
 }
 
 struct OverlayPipelineSpecializer;
@@ -447,6 +452,7 @@ impl Specializer<RenderPipeline> for OverlayPipelineSpecializer {
         key: Self::Key,
         descriptor: &mut RenderPipelineDescriptor,
     ) -> Result<Canonical<Self::Key>, BevyError> {
+        crate::render_work::specialization();
         descriptor.multisample.count = key.msaa.samples();
         if key.after_hand {
             descriptor.depth_stencil = None;
@@ -469,10 +475,13 @@ fn prepare_bind_group(
     pipeline: Res<OverlayPipeline>,
     mut gpu: ResMut<OverlayGpu>,
 ) {
+    let _render_system_span = crate::render_systems::time(
+        crate::render_systems::System::ScreenOverlayRenderPrepareBindGroup,
+    );
     if gpu.bind_group.is_some() {
         return;
     }
-    gpu.bind_group = Some(device.create_bind_group(
+    gpu.bind_group = Some(device.tracked_create_bind_group(
         "screen overlay bind group",
         &pipeline_cache.get_bind_group_layout(&pipeline.bind_group_layout),
         &[
@@ -517,6 +526,8 @@ fn queue_overlay(
     draw_functions: Res<DrawFunctions<Transparent3d>>,
     views: Query<(Entity, &MainEntity, &ExtractedView, &Msaa)>,
 ) {
+    let _render_system_span =
+        crate::render_systems::time(crate::render_systems::System::ScreenOverlayRenderQueueOverlay);
     gpu.view_pipelines.clear();
     if scene.layers.is_empty() {
         return;
@@ -730,5 +741,30 @@ mod review_tests {
             .set_layers([], 0.0);
         app.world_mut().run_system_once(queue_overlay).unwrap();
         assert!(fixture::items(&app, view).is_empty());
+    }
+}
+
+impl crate::pipeline_warmup::PrewarmPipelines for OverlayPipeline {
+    const PROFILE: crate::render_systems::System =
+        crate::render_systems::System::WarmupOverlayPipeline;
+
+    /// Warms every built-in mode through the same cache used by drawing.
+    fn prewarm(
+        &mut self,
+        cache: &PipelineCache,
+        view: crate::pipeline_warmup::WarmView,
+        ids: &mut crate::pipeline_warmup::WarmupIds,
+    ) -> Result<(), BevyError> {
+        for after_hand in [false, true] {
+            ids.push(self.variants.specialize(
+                cache,
+                OverlayPipelineKey {
+                    msaa: view.msaa,
+                    hdr: view.hdr,
+                    after_hand,
+                },
+            )?);
+        }
+        Ok(())
     }
 }

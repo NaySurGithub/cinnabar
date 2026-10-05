@@ -85,6 +85,13 @@ fn dragon_dissolve_depth_and_color_passes_keep_their_distinct_depth_contracts() 
 }
 
 #[test]
+fn empty_frames_do_not_invalidate_skin_residency() {
+    assert!(player_skins_resident(
+        &crate::actor::ActorRenderFrame::default()
+    ));
+}
+
+#[test]
 fn skin_preparation_rejects_slots_that_are_not_resident() {
     let mut frame = crate::actor::ActorRenderFrame::default();
     frame.rig.instances = Arc::from([crate::actor::ActorGpuInstance {
@@ -119,15 +126,75 @@ fn generic_only_frames_do_not_require_or_reinterpret_player_skins() {
 
 #[test]
 fn first_generic_only_frame_prepares_after_an_empty_skin_revision() {
-    use crate::actor::{ActorDrawManifestEntry, ActorRenderIdentity, ActorRigRoute};
     use bevy::ecs::system::RunSystemOnce;
-    use render_model::{ActorRigVertex, EntityRigId};
     let mut app = app_with_noop_render_sub_app();
     app.add_plugins(ActorRenderPlugin);
     app.finish();
     let world = app.sub_app_mut(RenderApp).world_mut();
     world.run_schedule(RenderStartup);
     world.resource_mut::<ActorGpu>().skin_revision = 0;
+    let frame = generic_actor_frame();
+    world.insert_resource(frame);
+    world
+        .run_system_once(super::prepare_actor_resources)
+        .unwrap();
+    let gpu = world.resource::<ActorGpu>();
+    assert_eq!(gpu.instance_count, 1);
+    assert_eq!(gpu.artwork.pages.len(), 1);
+    let draw = crate::actor::ActorDrawFrame {
+        artwork_identity: gpu.artwork_identity,
+        skin_revision: gpu.skin_revision,
+        geometry_revision: gpu.geometry_revision,
+        frame_generation: gpu.frame_generation,
+        draw_generation: 1,
+        manifest: Arc::clone(&gpu.manifest),
+    };
+    let gate = world
+        .resource::<crate::actor::ActorPresentationGate>()
+        .clone();
+    let old = gate.try_reserve_callback(draw).unwrap();
+    let mut replacement = world
+        .resource::<crate::actor::ActorRenderFrame>()
+        .artwork
+        .as_ref()
+        .clone();
+    replacement.identity = [3; 32];
+    replacement.entity_identity = [4; 32];
+    world
+        .resource_mut::<crate::actor::ActorRenderFrame>()
+        .artwork = Arc::new(replacement);
+    world
+        .run_system_once(super::prepare_actor_resources)
+        .unwrap();
+    // A session pack's artwork replaces the old generation instead of hiding neutral pages.
+    let gpu = world.resource::<ActorGpu>();
+    assert!(gpu.artwork_current);
+    assert_eq!(gpu.artwork_identity, [3; 32]);
+    assert_eq!(gpu.artwork.pages.len(), 1);
+    assert!(gpu.artwork.pages[0].bind_group.is_none());
+    let now = std::time::Instant::now();
+    assert!(!gate.publish_reserved(old, now, now));
+    assert!(gate.drain().is_empty());
+
+    let mut next = world
+        .resource::<crate::actor::ActorRenderFrame>()
+        .artwork
+        .as_ref()
+        .clone();
+    next.entity_identity = [5; 32];
+    world
+        .resource_mut::<crate::actor::ActorRenderFrame>()
+        .artwork = Arc::new(next);
+    world
+        .run_system_once(super::prepare_actor_resources)
+        .unwrap();
+    assert!(world.resource::<ActorGpu>().artwork_current);
+}
+
+/// One generic actor with stable geometry and artwork, independent of player skins.
+fn generic_actor_frame() -> crate::actor::ActorRenderFrame {
+    use crate::actor::{ActorDrawManifestEntry, ActorRenderIdentity, ActorRigRoute};
+    use render_model::{ActorRigVertex, EntityRigId};
     let mut frame = crate::actor::ActorRenderFrame::default();
     frame.rig.frame_generation = 1;
     frame.rig.geometry_revision = 1;
@@ -186,68 +253,144 @@ fn first_generic_only_frame_prepares_after_an_empty_skin_revision() {
         rgba8: vec![255; 1024].into(),
     }]);
     frame.artwork = Arc::new(artwork);
+    frame
+}
+
+#[test]
+fn empty_actor_frames_retain_bindings_and_do_no_gpu_work() {
+    use bevy::ecs::system::RunSystemOnce;
+    use bevy::render::view::ViewUniforms;
+    let mut app = app_with_noop_render_sub_app();
+    app.add_plugins(ActorRenderPlugin);
+    app.finish();
+    let world = app.sub_app_mut(RenderApp).world_mut();
+    world.run_schedule(RenderStartup);
+    let device = world.resource::<RenderDevice>().clone();
+    let queue = world.resource::<RenderQueue>().clone();
+    world.init_resource::<ViewUniforms>();
+    drop(
+        world
+            .resource_mut::<ViewUniforms>()
+            .uniforms
+            .get_writer(1, &device, &queue),
+    );
+
+    let mut frame = generic_actor_frame();
+    frame.rig.instances = Arc::from([]);
+    frame.rig.manifest = Arc::from([]);
+    frame.instance_pages = Arc::from([]);
     world.insert_resource(frame);
     world
         .run_system_once(super::prepare_actor_resources)
         .unwrap();
+    world
+        .run_system_once(super::prepare_actor_bind_group)
+        .unwrap();
+    let binding = world
+        .resource::<ActorGpu>()
+        .bind_group
+        .as_ref()
+        .unwrap()
+        .id();
+    let before = crate::render_work::snapshot();
+    for _ in 0..10 {
+        world
+            .run_system_once(super::prepare_actor_resources)
+            .unwrap();
+        world
+            .run_system_once(super::prepare_actor_bind_group)
+            .unwrap();
+        let gpu = world.resource::<ActorGpu>();
+        assert_eq!(gpu.instance_count, 0);
+        assert_eq!(gpu.bind_group.as_ref().unwrap().id(), binding);
+    }
+    assert_eq!(
+        crate::render_work::snapshot().delta_since(before),
+        Default::default()
+    );
+
+    // A player arriving after empty frames still uploads and binds its resident skin.
+    let mut frame = generic_actor_frame();
+    frame.rig.frame_generation += 1;
+    frame.instance_pages = Arc::from([0]);
+    frame.skins = one_resident_skin();
+    frame.skin_revision += 1;
+    world.insert_resource(frame);
+    world
+        .run_system_once(super::prepare_actor_resources)
+        .unwrap();
+    world
+        .run_system_once(super::prepare_actor_bind_group)
+        .unwrap();
     let gpu = world.resource::<ActorGpu>();
     assert_eq!(gpu.instance_count, 1);
-    assert_eq!(gpu.artwork.pages.len(), 1);
-    let draw = crate::actor::ActorDrawFrame {
-        artwork_identity: gpu.artwork_identity,
-        skin_revision: gpu.skin_revision,
-        geometry_revision: gpu.geometry_revision,
-        frame_generation: gpu.frame_generation,
-        draw_generation: 1,
-        manifest: Arc::clone(&gpu.manifest),
-    };
-    let gate = world
-        .resource::<crate::actor::ActorPresentationGate>()
-        .clone();
-    let old = gate.try_reserve_callback(draw).unwrap();
-    let mut replacement = world
-        .resource::<crate::actor::ActorRenderFrame>()
-        .artwork
-        .as_ref()
-        .clone();
-    replacement.identity = [3; 32];
-    replacement.entity_identity = [4; 32];
-    world
-        .resource_mut::<crate::actor::ActorRenderFrame>()
-        .artwork = Arc::new(replacement);
+    assert_ne!(gpu.bind_group.as_ref().unwrap().id(), binding);
+    assert_eq!(
+        crate::render_work::snapshot()
+            .delta_since(before)
+            .texture_upload_bytes,
+        render_model::STANDARD_SKIN_BYTES as u64
+    );
+    let resident = crate::render_work::snapshot();
     world
         .run_system_once(super::prepare_actor_resources)
         .unwrap();
-    // A session pack's artwork replaces the old generation instead of hiding neutral pages.
-    let gpu = world.resource::<ActorGpu>();
-    assert!(gpu.artwork_current);
-    assert_eq!(gpu.artwork_identity, [3; 32]);
-    assert_eq!(gpu.artwork.pages.len(), 1);
-    assert!(gpu.artwork.pages[0].bind_group.is_none());
-    let now = std::time::Instant::now();
-    assert!(!gate.publish_reserved(old, now, now));
-    assert!(gate.drain().is_empty());
+    world
+        .run_system_once(super::prepare_actor_bind_group)
+        .unwrap();
+    assert_eq!(
+        crate::render_work::snapshot().delta_since(resident),
+        Default::default()
+    );
 
-    let mut next = world
-        .resource::<crate::actor::ActorRenderFrame>()
-        .artwork
-        .as_ref()
-        .clone();
-    next.entity_identity = [5; 32];
-    world
-        .resource_mut::<crate::actor::ActorRenderFrame>()
-        .artwork = Arc::new(next);
+    let mut frame = world.resource_mut::<crate::actor::ActorRenderFrame>();
+    frame.skins = Arc::default();
+    frame.skin_revision += 1;
+    frame.rig.frame_generation += 1;
     world
         .run_system_once(super::prepare_actor_resources)
         .unwrap();
-    assert!(world.resource::<ActorGpu>().artwork_current);
+    let gpu = world.resource::<ActorGpu>();
+    assert_eq!(gpu.instance_count, 0);
+    assert!(
+        gpu.bind_group.is_none(),
+        "nonresident player skins remain undrawable"
+    );
 }
 
+/// An isolated render app whose device never accesses a native GPU or window.
 fn app_with_noop_render_sub_app() -> App {
-    let (device, queue) = wgpu::Device::noop(&wgpu::DeviceDescriptor::default());
+    use bevy::render::{render_resource::PipelineCache, renderer::RenderAdapter};
+    use std::{
+        future::Future,
+        pin::pin,
+        task::{Context, Poll, Waker},
+    };
+    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+        backends: wgpu::Backends::NOOP,
+        backend_options: wgpu::BackendOptions {
+            noop: wgpu::NoopBackendOptions { enable: true },
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+    let mut context = Context::from_waker(Waker::noop());
+    let Poll::Ready(Ok(adapter)) =
+        pin!(instance.request_adapter(&wgpu::RequestAdapterOptions::default())).poll(&mut context)
+    else {
+        panic!("noop adapter must be immediate");
+    };
+    let Poll::Ready(Ok((device, queue))) =
+        pin!(adapter.request_device(&wgpu::DeviceDescriptor::default())).poll(&mut context)
+    else {
+        panic!("noop device must be immediate");
+    };
+    let adapter = RenderAdapter(Arc::new(WgpuWrapper::new(adapter)));
     let mut render_app = SubApp::new();
+    let device = RenderDevice::from(device);
     render_app
-        .insert_resource(RenderDevice::from(device))
+        .insert_resource(PipelineCache::new(device.clone(), adapter, true))
+        .insert_resource(device.clone())
         .insert_resource(RenderQueue(Arc::new(WgpuWrapper::new(queue))))
         .insert_resource(DrawFunctions::<Opaque3d>::default())
         .insert_resource(DrawFunctions::<Transparent3d>::default())
@@ -526,4 +669,46 @@ fn skin_arrays_upload_only_newly_admitted_skins() {
     assert_eq!(scene.frame().skins.classes[3].len(), 2);
     assert_eq!(two[..5], one[..]);
     assert_eq!(gpu.uploaded_bytes, 4 * classic + 2 * 256 * 256 * 4);
+}
+
+#[test]
+fn warmed_actor_material_keys_remain_stable_across_frames() {
+    use crate::pipeline_warmup::{PrewarmPipelines, WarmView};
+    use bevy::prelude::{FromWorld, Msaa};
+    use bevy::render::render_resource::{PipelineCache, TextureFormat};
+
+    let (mut app, _) = crate::queue_review_support::app();
+    let mut pipeline = super::ActorPipeline::from_world(app.world_mut());
+    let cache = app.world().resource::<PipelineCache>();
+    let view = WarmView {
+        msaa: Msaa::Off,
+        hdr: false,
+        enhanced: false,
+        main_format: TextureFormat::Rgba8Unorm,
+        output_format: TextureFormat::Rgba8Unorm,
+    };
+    let before = crate::render_work::snapshot();
+    let mut warmed_ids = Vec::new();
+    pipeline.prewarm(cache, view, &mut warmed_ids).unwrap();
+    let warm = crate::render_work::snapshot();
+    assert_eq!(
+        warm.delta_since(before).render_pipelines_queued,
+        warmed_ids.len() as u64
+    );
+    assert!(!warmed_ids.is_empty());
+    for _ in 0..4 {
+        pipeline
+            .prepare_draw_variants(cache, view.msaa, view.hdr)
+            .unwrap();
+        for (material, id) in warmed_ids.iter().enumerate() {
+            assert_eq!(
+                pipeline.draw_variant(view.msaa, view.hdr, material as u32),
+                Some(*id)
+            );
+        }
+    }
+    assert_eq!(
+        crate::render_work::snapshot().delta_since(warm),
+        Default::default()
+    );
 }

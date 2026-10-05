@@ -142,6 +142,9 @@ impl bevy::render::extract_resource::ExtractResource for ChunkBiomeTints {
     type Source = Self;
 
     fn extract_resource(source: &Self::Source) -> Self {
+        let _render_system_span = crate::render_systems::time(
+            crate::render_systems::System::ChunkBiomeTintsExtractResource,
+        );
         source.clone()
     }
 }

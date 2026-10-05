@@ -27,6 +27,8 @@ pub(crate) fn install_opaque_phase_reset(render_app: &mut SubApp) {
 /// Dropping the phases lets extraction rebuild them empty, so a pipeline keyed on a stale
 /// view state (HDR, MSAA) is never drawn into the new target.
 fn reset_opaque_phases(phases: Option<ResMut<ViewBinnedRenderPhases<Opaque3d>>>) {
+    let _render_system_span =
+        crate::render_systems::time(crate::render_systems::System::OpaquePhaseResetOpaquePhases);
     if let Some(mut phases) = phases {
         phases.clear();
     }

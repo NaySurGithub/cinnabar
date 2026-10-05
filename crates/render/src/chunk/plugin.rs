@@ -41,6 +41,7 @@ impl ChunkRenderPlugin {
 
 impl Plugin for ChunkRenderPlugin {
     fn build(&self, app: &mut App) {
+        crate::pipeline_warmup::register::<ChunkPipeline>(app);
         install_atmosphere(app);
         app.init_resource::<ChunkRenderQueue>()
             .init_resource::<crate::dropped_item_render::terrain_items::ImmediateTerrainMeshPublications>()
@@ -146,7 +147,7 @@ impl Plugin for ChunkRenderPlugin {
             .init_resource::<TransparentRetirementFence>();
         if let Some(runtime_stage_profiler) = runtime_stage_profiler {
             render_app.insert_resource(runtime_stage_profiler);
-            crate::runtime_profile_trace::install_surface_trace(render_app);
+            crate::runtime_profile_render::install_surface_trace(render_app);
         }
         install_chunk_commands(render_app);
         transparent::gamma_pass::install(app);

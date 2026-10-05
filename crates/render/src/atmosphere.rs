@@ -3,7 +3,7 @@ use std::sync::Arc;
 use assets::{ResolvedFog, RuntimeAtmosphereAssets};
 use bevy::{
     prelude::{Resource, Vec4},
-    render::{extract_resource::ExtractResource, render_resource::ShaderType},
+    render::render_resource::ShaderType,
 };
 use meshing::CameraMedium;
 use meshing::cloud_viewport::CLOUD_FADE_START;
@@ -75,7 +75,7 @@ pub const PROVISIONAL_BOSS_WORLD_FOG_END_BLOCKS: f32 = 160.0;
 const BOSS_DARKEN_ZENITH_TARGET: [f32; 3] = [0.12, 0.14, 0.16];
 const BOSS_DARKEN_HORIZON_TARGET: [f32; 3] = [0.22, 0.24, 0.26];
 
-#[derive(Resource, ExtractResource, Clone, Default)]
+#[derive(Resource, Clone, Default)]
 pub struct AtmosphereTextureAssets {
     runtime: Option<Arc<RuntimeAtmosphereAssets>>,
     identity: [u8; 32],
@@ -202,15 +202,7 @@ pub fn cloud_distance_fade(distance: f32, fade_distance: f32) -> f32 {
 /// CPU and GPU contracts identical avoids per-frame allocation or conversion.
 #[repr(C)]
 #[derive(
-    Resource,
-    ExtractResource,
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    bytemuck::Pod,
-    bytemuck::Zeroable,
-    ShaderType,
+    Resource, Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable, ShaderType,
 )]
 pub struct AtmosphereFrame {
     sun_direction_daylight: Vec4,
@@ -947,3 +939,7 @@ mod tests {
         assert_eq!(clear.with_camera_medium(CameraMedium::Air), clear);
     }
 }
+
+crate::render_systems::extract_resource!(AtmosphereTextureAssets, ExtractAtmosphereTextureAssets);
+
+crate::render_systems::extract_resource!(AtmosphereFrame, ExtractAtmosphereFrame);

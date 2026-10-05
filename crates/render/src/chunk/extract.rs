@@ -31,6 +31,9 @@ fn extract_chunk_render_instances(
     query: Extract<Query<(RenderEntity, &ChunkRenderInstance), Changed<ChunkRenderInstance>>>,
     profiler: Option<Res<RuntimeStageProfiler>>,
 ) {
+    let _render_system_span = crate::render_systems::time(
+        crate::render_systems::System::ChunkExtractExtractChunkRenderInstances,
+    );
     let _timer = profiler
         .as_deref()
         .map(|profiler| profiler.time(RuntimeStage::ChunkExtraction));

@@ -5628,3 +5628,17 @@ or window focus loss returns to the prior perspective. Windows/DX12 1280x720 hid
 capture verifies the Freelook/F settings row. Routed tests cover independent rotation,
 release/focus restoration, persistence and existing-F migration. A manual in-world
 orbit acceptance pass remains incomplete.
+
+## Render-frame spike attribution (incomplete)
+
+Render diagnostics now measure our extract, render systems, graph nodes and GPU
+API calls with stock Bevy. Empty actor synchronization, retained UI bindings and
+cloud window storage avoid recurring GPU resource creation; known application
+pipelines warm before world presentation. Hidden developer mode owns the macOS
+activation policy without backend patches. Deterministic work regressions pass.
+
+The M3 hidden captures do not close the performance gate: final render median
+is lower, but startup and tail hitches remain, including upload and submission
+stalls. The roughly 22% displayed slow-frame report is not yet attributed.
+See [capture evidence](docs/evidence/render-frame-spikes.md) for all three runs,
+measured offenders, tests and unverified workloads.

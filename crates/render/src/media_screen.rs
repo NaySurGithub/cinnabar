@@ -1,5 +1,6 @@
 //! Emissive in-world quads that sample server media textures.
 
+use crate::render_work::{DeviceWork as _, QueueWork as _};
 use std::{collections::HashMap, sync::Arc};
 
 use bevy::{
@@ -43,7 +44,7 @@ const RECORD_BYTES: u64 = 48;
 pub const MAX_MEDIA_SCREENS: usize = 4;
 
 /// Screens to draw this frame; at most `MAX_MEDIA_SCREENS` are used, in order.
-#[derive(Resource, bevy::render::extract_resource::ExtractResource, Clone, Default)]
+#[derive(Resource, Clone, Default)]
 pub struct MediaScreenScene {
     pub screens: Vec<MediaScreen>,
     /// Texture bytes all screens together may allocate.
@@ -84,6 +85,7 @@ pub fn media_screen_axes(
 }
 
 pub(crate) fn install_media_screen_render(app: &mut App) {
+    crate::pipeline_warmup::register::<MediaScreenPipeline>(app);
     load_internal_asset!(
         app,
         MEDIA_SCREEN_SHADER_HANDLE,
@@ -147,7 +149,7 @@ fn init_media_screen_gpu(
         ..default()
     });
     let placeholder = device
-        .create_texture_with_data(
+        .tracked_create_texture_with_data(
             &queue,
             &TextureDescriptor {
                 label: Some("media screen placeholder"),
@@ -186,6 +188,8 @@ fn prepare_media_screens(
     view_uniforms: Res<ViewUniforms>,
     gpu: Option<ResMut<MediaScreenGpu>>,
 ) {
+    let _render_system_span =
+        crate::render_systems::time(crate::render_systems::System::MediaScreenPrepareMediaScreens);
     let Some(mut gpu) = gpu else {
         return;
     };
@@ -268,7 +272,7 @@ fn prepare_media_screens(
         let textured = state.texture.is_some() && state.uploaded;
         let record = screen_record(screen, textured);
         if state.record != Some(record) {
-            queue.write_buffer(&state.record_buffer, 0, bytemuck::cast_slice(&record));
+            queue.tracked_write_buffer(&state.record_buffer, 0, bytemuck::cast_slice(&record));
             state.record = Some(record);
         }
         if let Some((view_binding, view_buffer)) = view.clone()
@@ -280,7 +284,7 @@ fn prepare_media_screens(
                 .filter(|_| textured)
                 .and_then(|texture| texture.view(state.texture_generation))
                 .unwrap_or(&gpu.placeholder);
-            state.bind_group = Some(device.create_bind_group(
+            state.bind_group = Some(device.tracked_create_bind_group(
                 "media screen bind group",
                 &pipeline_cache.get_bind_group_layout(&pipeline.bind_group_layout),
                 &[
@@ -428,6 +432,7 @@ impl Specializer<RenderPipeline> for MediaScreenPipelineSpecializer {
         key: Self::Key,
         descriptor: &mut RenderPipelineDescriptor,
     ) -> Result<Canonical<Self::Key>, BevyError> {
+        crate::render_work::specialization();
         descriptor.multisample.count = key.msaa.samples();
         descriptor.fragment.as_mut().unwrap().targets[0]
             .as_mut()
@@ -449,6 +454,8 @@ fn queue_media_screens(
     draw_functions: Res<DrawFunctions<Transparent3d>>,
     views: Query<(Entity, &MainEntity, &ExtractedView, &Msaa)>,
 ) {
+    let _render_system_span =
+        crate::render_systems::time(crate::render_systems::System::MediaScreenQueueMediaScreens);
     if scene.screens.is_empty() {
         return;
     }
@@ -805,3 +812,27 @@ mod tests {
         assert_eq!(colour.format, ViewTarget::TEXTURE_FORMAT_HDR);
     }
 }
+
+impl crate::pipeline_warmup::PrewarmPipelines for MediaScreenPipeline {
+    const PROFILE: crate::render_systems::System =
+        crate::render_systems::System::WarmupMediaScreenPipeline;
+
+    /// Warms every built-in mode through the same cache used by drawing.
+    fn prewarm(
+        &mut self,
+        cache: &PipelineCache,
+        view: crate::pipeline_warmup::WarmView,
+        ids: &mut crate::pipeline_warmup::WarmupIds,
+    ) -> Result<(), BevyError> {
+        ids.push(self.variants.specialize(
+            cache,
+            MediaScreenPipelineKey {
+                msaa: view.msaa,
+                hdr: view.hdr,
+            },
+        )?);
+        Ok(())
+    }
+}
+
+crate::render_systems::extract_resource!(MediaScreenScene, ExtractMediaScreenScene);

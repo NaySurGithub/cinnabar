@@ -49,6 +49,27 @@ pub enum RuntimeStage {
     BlockEntities,
     /// Render-world wall time for one frame, excluding the drawable-acquisition wait.
     RenderFrame,
+    RenderExtract,
+    RenderExtractCommands,
+    RenderPrepareAssets,
+    RenderPrepareMeshes,
+    RenderManageViews,
+    RenderQueue,
+    RenderPhaseSort,
+    RenderPrepareResources,
+    RenderPrepareCollect,
+    RenderPrepareFlush,
+    RenderPrepareBindGroups,
+    RenderCleanup,
+    CpuShadows,
+    CpuOpaque,
+    CpuTransparent,
+    CpuUi,
+    CpuHand,
+    CpuPost,
+    CpuTonemapping,
+    CpuFxaa,
+    CpuBlit,
     /// First to last GPU timestamp of one rendered frame.
     GpuFrame,
     GpuShadows,
@@ -80,7 +101,7 @@ pub enum RuntimeStage {
 }
 
 impl RuntimeStage {
-    pub const ALL: [Self; 58] = [
+    pub const ALL: [Self; 79] = [
         Self::ActorSessionSetup,
         Self::PackReload,
         Self::WorldPoll,
@@ -114,6 +135,27 @@ impl RuntimeStage {
         Self::Audio,
         Self::BlockEntities,
         Self::RenderFrame,
+        Self::RenderExtract,
+        Self::RenderExtractCommands,
+        Self::RenderPrepareAssets,
+        Self::RenderPrepareMeshes,
+        Self::RenderManageViews,
+        Self::RenderQueue,
+        Self::RenderPhaseSort,
+        Self::RenderPrepareResources,
+        Self::RenderPrepareCollect,
+        Self::RenderPrepareFlush,
+        Self::RenderPrepareBindGroups,
+        Self::RenderCleanup,
+        Self::CpuShadows,
+        Self::CpuOpaque,
+        Self::CpuTransparent,
+        Self::CpuUi,
+        Self::CpuHand,
+        Self::CpuPost,
+        Self::CpuTonemapping,
+        Self::CpuFxaa,
+        Self::CpuBlit,
         Self::GpuFrame,
         Self::GpuShadows,
         Self::GpuOpaque,
@@ -230,6 +272,27 @@ impl RuntimeStage {
             Self::Audio => "audio",
             Self::BlockEntities => "block_entities",
             Self::RenderFrame => "render_frame",
+            Self::RenderExtract => "render_extract",
+            Self::RenderExtractCommands => "render_extract_commands",
+            Self::RenderPrepareAssets => "render_prepare_assets",
+            Self::RenderPrepareMeshes => "render_prepare_meshes",
+            Self::RenderManageViews => "render_manage_views",
+            Self::RenderQueue => "render_queue",
+            Self::RenderPhaseSort => "render_phase_sort",
+            Self::RenderPrepareResources => "render_prepare_resources",
+            Self::RenderPrepareCollect => "render_prepare_collect",
+            Self::RenderPrepareFlush => "render_prepare_flush",
+            Self::RenderPrepareBindGroups => "render_prepare_bind_groups",
+            Self::RenderCleanup => "render_cleanup",
+            Self::CpuShadows => "cpu_shadows",
+            Self::CpuOpaque => "cpu_opaque",
+            Self::CpuTransparent => "cpu_transparent",
+            Self::CpuUi => "cpu_ui",
+            Self::CpuHand => "cpu_hand",
+            Self::CpuPost => "cpu_post",
+            Self::CpuTonemapping => "cpu_tonemapping",
+            Self::CpuFxaa => "cpu_fxaa",
+            Self::CpuBlit => "cpu_blit",
             Self::GpuFrame => "gpu_frame",
             Self::GpuShadows => "gpu_shadows",
             Self::GpuOpaque => "gpu_opaque",
@@ -377,6 +440,16 @@ impl RuntimeStageProfiler {
             &self.state.trace,
         ) {
             trace.slow_frame(event);
+        }
+    }
+
+    /// Associates exact render work with its own sequence, including fast frames in traces.
+    pub(crate) fn record_render_work(&self, frame: crate::runtime_profile_render::RenderWorkFrame) {
+        if let Some(slow) = &self.state.slow {
+            slow.record_render_work(frame);
+        }
+        if let Some(trace) = &self.state.trace {
+            trace.render_work(frame);
         }
     }
 
@@ -666,7 +739,7 @@ mod tests {
         app.add_schedule(Render::base_schedule())
             .insert_resource(profiler.clone())
             .init_resource::<Open>();
-        crate::runtime_profile_trace::install_surface_trace(app.main_mut());
+        crate::runtime_profile_render::install_surface_trace(app.main_mut());
         app.add_systems(
             Render,
             (

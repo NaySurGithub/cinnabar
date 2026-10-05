@@ -1,3 +1,4 @@
+use crate::render_work::{DeviceWork as _, QueueWork as _};
 use bevy::{
     asset::{load_internal_asset, uuid_handle},
     core_pipeline::core_3d::{CORE_3D_DEPTH_FORMAT, Transparent3d},
@@ -33,6 +34,7 @@ const LIGHTNING_SHADER_HANDLE: Handle<Shader> =
 const RECORD_BYTES: usize = std::mem::size_of::<BoltRecord>();
 
 pub(crate) fn install_lightning_render(app: &mut App) {
+    crate::pipeline_warmup::register::<LightningPipeline>(app);
     load_internal_asset!(
         app,
         LIGHTNING_SHADER_HANDLE,
@@ -64,7 +66,7 @@ struct LightningGpu {
 }
 
 fn init_lightning_gpu(mut commands: Commands, render_device: Res<RenderDevice>) {
-    let record_buffer = render_device.create_buffer_with_data(&BufferInitDescriptor {
+    let record_buffer = render_device.tracked_create_buffer_with_data(&BufferInitDescriptor {
         label: Some("lightning ribbon records"),
         contents: &vec![0_u8; MAX_BOLT_RECORDS * RECORD_BYTES],
         usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
@@ -82,10 +84,13 @@ fn prepare_lightning_records(
     render_queue: Res<RenderQueue>,
     mut gpu: ResMut<LightningGpu>,
 ) {
+    let _render_system_span = crate::render_systems::time(
+        crate::render_systems::System::LightningRenderPrepareLightningRecords,
+    );
     let count = scene.records.len().min(MAX_BOLT_RECORDS);
     gpu.record_count = u32::try_from(count).expect("bounded bolt record count");
     if count > 0 {
-        render_queue.write_buffer(
+        render_queue.tracked_write_buffer(
             &gpu.record_buffer,
             0,
             bytemuck::cast_slice::<BoltRecord, u8>(&scene.records[..count]),
@@ -189,6 +194,7 @@ impl Specializer<RenderPipeline> for LightningPipelineSpecializer {
         key: Self::Key,
         descriptor: &mut RenderPipelineDescriptor,
     ) -> Result<Canonical<Self::Key>, BevyError> {
+        crate::render_work::specialization();
         descriptor.multisample.count = key.msaa.samples();
         descriptor.fragment.as_mut().unwrap().targets[0]
             .as_mut()
@@ -209,6 +215,9 @@ fn prepare_lightning_bind_group(
     view_uniforms: Res<ViewUniforms>,
     mut gpu: ResMut<LightningGpu>,
 ) {
+    let _render_system_span = crate::render_systems::time(
+        crate::render_systems::System::LightningRenderPrepareLightningBindGroup,
+    );
     let Some(view_binding) = view_uniforms.uniforms.binding() else {
         gpu.bind_group = None;
         return;
@@ -220,7 +229,7 @@ fn prepare_lightning_bind_group(
     if gpu.bind_group.is_some() && gpu.view_buffer_id == Some(view_buffer.id()) {
         return;
     }
-    gpu.bind_group = Some(render_device.create_bind_group(
+    gpu.bind_group = Some(render_device.tracked_create_bind_group(
         "lightning bind group",
         &pipeline_cache.get_bind_group_layout(&pipeline.bind_group_layout),
         &[
@@ -245,6 +254,8 @@ fn queue_lightning(
     draw_functions: Res<DrawFunctions<Transparent3d>>,
     views: Query<(Entity, &MainEntity, &ExtractedView, &Msaa)>,
 ) {
+    let _render_system_span =
+        crate::render_systems::time(crate::render_systems::System::LightningRenderQueueLightning);
     if scene.records.is_empty() {
         return;
     }
@@ -376,5 +387,27 @@ mod review_tests {
         assert_ne!(items[0].distance, items[1].distance);
         assert_eq!(items[0].batch_range, 0..1);
         assert_eq!(items[1].batch_range, 1..2);
+    }
+}
+
+impl crate::pipeline_warmup::PrewarmPipelines for LightningPipeline {
+    const PROFILE: crate::render_systems::System =
+        crate::render_systems::System::WarmupLightningPipeline;
+
+    /// Warms every built-in mode through the same cache used by drawing.
+    fn prewarm(
+        &mut self,
+        cache: &PipelineCache,
+        view: crate::pipeline_warmup::WarmView,
+        ids: &mut crate::pipeline_warmup::WarmupIds,
+    ) -> Result<(), BevyError> {
+        ids.push(self.variants.specialize(
+            cache,
+            LightningPipelineKey {
+                msaa: view.msaa,
+                hdr: view.hdr,
+            },
+        )?);
+        Ok(())
     }
 }

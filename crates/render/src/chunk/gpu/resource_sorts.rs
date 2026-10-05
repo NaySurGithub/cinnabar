@@ -1,5 +1,6 @@
 //! Transparent address sets are uploaded into the candidate arena before publication.
 use crate::chunk::*;
+use crate::render_work::QueueWork as _;
 
 pub(super) struct ResourceView {
     pub(super) entity: Entity,
@@ -129,7 +130,7 @@ pub(super) fn prepare(
             arena.transparent_slot_refs,
             batch.ref_range().start,
         );
-        queue.write_buffer(
+        queue.tracked_write_buffer(
             &arena.transparent_ref_buffer,
             offset,
             bytemuck::cast_slice(batch.refs()),
@@ -137,7 +138,7 @@ pub(super) fn prepare(
         liquids.state.acknowledge_upload();
     }
     let snapshot = liquids.state.committed()?;
-    queue.write_buffer(
+    queue.tracked_write_buffer(
         &arena.transparent_indirect_buffer,
         0,
         bytemuck::bytes_of(&transparent_indirect_args(

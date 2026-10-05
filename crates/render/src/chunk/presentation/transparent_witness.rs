@@ -8,7 +8,7 @@ pub enum TransparentWitnessRequestError {
     Duplicate,
 }
 
-#[derive(Resource, ExtractResource, Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Resource, Debug, Clone, Default, PartialEq, Eq)]
 pub struct TransparentWitnessRequest {
     pub(in crate::chunk) revision: u64,
     pub(in crate::chunk) keys: Arc<[SubChunkKey]>,
@@ -267,3 +267,8 @@ impl TransparentWitnessEvidence {
         self.set_authoritative_request(&TransparentWitnessRequest::default());
     }
 }
+
+crate::render_systems::extract_resource!(
+    TransparentWitnessRequest,
+    ExtractTransparentWitnessRequest
+);

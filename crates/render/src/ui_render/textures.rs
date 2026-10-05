@@ -1,5 +1,6 @@
 //! Retained dimension buckets and transactional dirty-page write planning.
 
+use crate::render_work::{DeviceWork as _, QueueWork as _};
 use bevy::render::{
     render_resource::{
         BindGroup, Extent3d, Origin3d, TexelCopyBufferLayout, TexelCopyTextureInfo, Texture,
@@ -211,7 +212,7 @@ impl UiGpuTextures {
                     ..Default::default()
                 });
                 let coverage = u32::from(bucket.format == UiTextureFormat::Coverage);
-                let format_uniform = device.create_buffer_with_data(
+                let format_uniform = device.tracked_create_buffer_with_data(
                     &bevy::render::render_resource::BufferInitDescriptor {
                         label: Some("UI bucket page format"),
                         contents: bytemuck::cast_slice(&[coverage, 0, 0, 0]),
@@ -237,7 +238,7 @@ impl UiGpuTextures {
         let buckets = &self.buckets;
         self.state.execute(catalog, &dirty, |_, page, location| {
             let [width, height] = page.dimensions();
-            queue.write_texture(
+            queue.tracked_write_texture(
                 TexelCopyTextureInfo {
                     texture: &buckets[location.bucket].texture,
                     mip_level: 0,
@@ -272,6 +273,9 @@ pub(super) fn prepare_ui_bind_group(
     pipeline: Res<UiPipeline>,
     mut gpu: ResMut<UiGpu>,
 ) {
+    let _render_system_span = crate::render_systems::time(
+        crate::render_systems::System::UiRenderTexturesPrepareUiBindGroup,
+    );
     if gpu.accepted_revision.is_none() || &gpu.device != render_device.wgpu_device() {
         return;
     }
@@ -282,7 +286,7 @@ pub(super) fn prepare_ui_bind_group(
         if bucket.bind_group.is_some() {
             continue;
         }
-        bucket.bind_group = Some(render_device.create_bind_group(
+        bucket.bind_group = Some(render_device.tracked_create_bind_group(
             "shared retained UI bind group",
             &pipeline_cache.get_bind_group_layout(&pipeline.bind_group_layout),
             &[

@@ -235,6 +235,9 @@ fn admit_depth_sampling(mut cameras: Query<&mut Camera3d>) {
 }
 
 fn reset_gpu_cull_frame(mut frame: ResMut<GpuCullFrame>, cull: Option<ResMut<GpuCull>>) {
+    let _render_system_span = crate::render_systems::time(
+        crate::render_systems::System::ChunkGpuCullModResetGpuCullFrame,
+    );
     frame.view = None;
     if let Some(mut cull) = cull {
         cull.prepared_view = None;

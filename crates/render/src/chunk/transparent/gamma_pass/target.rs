@@ -32,6 +32,9 @@ pub(super) fn prepare_gamma_targets(
     device: Res<RenderDevice>,
     views: GammaTargetViews,
 ) {
+    let _render_system_span = crate::render_systems::time(
+        crate::render_systems::System::ChunkTransparentGammaPassTargetPrepareGammaTargets,
+    );
     for (entity, view, target, msaa, enhanced, previous) in &views {
         if !admitted(view.hdr, *msaa, enhanced.is_some()) {
             if previous.is_some() {

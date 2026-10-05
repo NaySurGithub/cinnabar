@@ -1,3 +1,4 @@
+use crate::render_work::{DeviceWork as _, QueueWork as _};
 use bevy::{
     asset::{load_internal_asset, uuid_handle},
     core_pipeline::core_3d::{CORE_3D_DEPTH_FORMAT, Transparent3d},
@@ -53,6 +54,7 @@ struct WeatherParamsGpu {
 }
 
 pub(crate) fn install_weather_render(app: &mut App) {
+    crate::pipeline_warmup::register::<WeatherPipeline>(app);
     load_internal_asset!(
         app,
         WEATHER_SHADER_HANDLE,
@@ -98,22 +100,22 @@ fn init_weather_gpu(
     render_device: Res<RenderDevice>,
     render_queue: Res<RenderQueue>,
 ) {
-    let record_buffer = render_device.create_buffer_with_data(&BufferInitDescriptor {
+    let record_buffer = render_device.tracked_create_buffer_with_data(&BufferInitDescriptor {
         label: Some("precipitation layer records"),
         contents: &vec![0_u8; MAX_PRECIPITATION_LAYERS * LAYER_BYTES],
         usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
     });
-    let particle_buffer = render_device.create_buffer_with_data(&BufferInitDescriptor {
+    let particle_buffer = render_device.tracked_create_buffer_with_data(&BufferInitDescriptor {
         label: Some("precipitation particle mesh"),
         contents: bytemuck::cast_slice(&particle_mesh(PARTICLE_MESH_SEED)),
         usage: BufferUsages::STORAGE,
     });
-    let occlusion_buffer = render_device.create_buffer_with_data(&BufferInitDescriptor {
+    let occlusion_buffer = render_device.tracked_create_buffer_with_data(&BufferInitDescriptor {
         label: Some("precipitation occlusion grid"),
         contents: &vec![0_u8; OCCLUSION_BYTES],
         usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
     });
-    let params_buffer = render_device.create_buffer_with_data(&BufferInitDescriptor {
+    let params_buffer = render_device.tracked_create_buffer_with_data(&BufferInitDescriptor {
         label: Some("precipitation parameters"),
         contents: bytemuck::bytes_of(&WeatherParamsGpu::default()),
         usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
@@ -159,6 +161,9 @@ pub(crate) fn prepare_weather_records(
     render_queue: Res<RenderQueue>,
     mut gpu: ResMut<WeatherGpu>,
 ) {
+    let _render_system_span = crate::render_systems::time(
+        crate::render_systems::System::WeatherRenderPrepareWeatherRecords,
+    );
     let sheet = textures.as_deref().and_then(|assets| {
         assets
             .textures()
@@ -199,14 +204,14 @@ pub(crate) fn prepare_weather_records(
     if count == 0 {
         return;
     }
-    render_queue.write_buffer(
+    render_queue.tracked_write_buffer(
         &gpu.record_buffer,
         0,
         bytemuck::cast_slice::<PrecipitationLayerRecord, u8>(&scene.layers[..count]),
     );
     if gpu.occlusion_generation != Some(scene.occlusion_generation) {
         gpu.occlusion_generation = Some(scene.occlusion_generation);
-        render_queue.write_buffer(
+        render_queue.tracked_write_buffer(
             &gpu.occlusion_buffer,
             0,
             bytemuck::cast_slice::<i32, u8>(&scene.occlusion.heights),
@@ -218,7 +223,7 @@ pub(crate) fn prepare_weather_records(
         forward: [x, y, z, has_sheet],
         grid: [origin_x, origin_z, 0, 0],
     };
-    render_queue.write_buffer(&gpu.params_buffer, 0, bytemuck::bytes_of(&params));
+    render_queue.tracked_write_buffer(&gpu.params_buffer, 0, bytemuck::bytes_of(&params));
 }
 
 struct WeatherPipelineSpecializer;
@@ -331,6 +336,7 @@ impl Specializer<RenderPipeline> for WeatherPipelineSpecializer {
         key: Self::Key,
         descriptor: &mut RenderPipelineDescriptor,
     ) -> Result<Canonical<Self::Key>, BevyError> {
+        crate::render_work::specialization();
         descriptor.multisample.count = key.msaa.samples();
         descriptor.fragment.as_mut().unwrap().targets[0]
             .as_mut()
@@ -352,6 +358,9 @@ fn prepare_weather_bind_group(
     atmosphere: Res<AtmosphereGpu>,
     mut gpu: ResMut<WeatherGpu>,
 ) {
+    let _render_system_span = crate::render_systems::time(
+        crate::render_systems::System::WeatherRenderPrepareWeatherBindGroup,
+    );
     let Some(view_binding) = view_uniforms.uniforms.binding() else {
         gpu.bind_group = None;
         return;
@@ -366,7 +375,7 @@ fn prepare_weather_bind_group(
     {
         return;
     }
-    gpu.bind_group = Some(render_device.create_bind_group(
+    gpu.bind_group = Some(render_device.tracked_create_bind_group(
         "precipitation bind group",
         &pipeline_cache.get_bind_group_layout(&pipeline.bind_group_layout),
         &[
@@ -417,6 +426,8 @@ fn queue_weather(
     draw_functions: Res<DrawFunctions<Transparent3d>>,
     views: Query<(Entity, &MainEntity, &ExtractedView, &Msaa)>,
 ) {
+    let _render_system_span =
+        crate::render_systems::time(crate::render_systems::System::WeatherRenderQueueWeather);
     if gpu.layer_count == 0 || gpu.max_particles == 0 || scene.layers.is_empty() {
         return;
     }
@@ -506,5 +517,27 @@ mod tests {
         assert_eq!(LAYER_BYTES, 80);
         assert_eq!(PARAMS_BYTES, 32);
         assert_eq!(OCCLUSION_BYTES, 2 * 64 * 64 * 4);
+    }
+}
+
+impl crate::pipeline_warmup::PrewarmPipelines for WeatherPipeline {
+    const PROFILE: crate::render_systems::System =
+        crate::render_systems::System::WarmupWeatherPipeline;
+
+    /// Warms every built-in mode through the same cache used by drawing.
+    fn prewarm(
+        &mut self,
+        cache: &PipelineCache,
+        view: crate::pipeline_warmup::WarmView,
+        ids: &mut crate::pipeline_warmup::WarmupIds,
+    ) -> Result<(), BevyError> {
+        ids.push(self.variants.specialize(
+            cache,
+            WeatherPipelineKey {
+                msaa: view.msaa,
+                hdr: view.hdr,
+            },
+        )?);
+        Ok(())
     }
 }

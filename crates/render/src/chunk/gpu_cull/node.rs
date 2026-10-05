@@ -152,6 +152,8 @@ impl ViewNode for EarlyCullNode {
         _: (),
         world: &'w World,
     ) -> Result<(), NodeRunError> {
+        let _render_system_span =
+            crate::render_systems::time(crate::render_systems::System::ChunkGpuCullNodeRun);
         let cull = world.resource::<GpuCull>();
         if cull.prepared_view != Some(graph.view_entity()) {
             return Ok(());
@@ -192,6 +194,8 @@ impl ViewNode for LateCullNode {
         ),
         world: &'w World,
     ) -> Result<(), NodeRunError> {
+        let _render_system_span =
+            crate::render_systems::time(crate::render_systems::System::ChunkGpuCullNodeRun2);
         let view_entity = graph.view_entity();
         let cull = world.resource::<GpuCull>();
         let frame = world.resource::<GpuCullFrame>();

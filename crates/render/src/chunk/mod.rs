@@ -32,7 +32,7 @@ use bevy::{
         Render, RenderApp, RenderStartup, RenderSystems,
         camera::ExtractedCamera,
         extract_component::ExtractComponent,
-        extract_resource::{ExtractResource, ExtractResourcePlugin},
+        extract_resource::ExtractResourcePlugin,
         render_phase::{
             AddRenderCommand, BinnedRenderPhaseType, DrawFunctions, InputUniformIndex, PhaseItem,
             PhaseItemExtraIndex, RenderCommand, RenderCommandResult, SetItemPipeline,
@@ -133,8 +133,7 @@ pub use biome_tints::{
 use biome_tints::{ChunkBiomeTintResourceIdentity, MATERIAL_UV_ROTATION_MASK};
 use draw::{queue_chunks, queue_transparent_chunks};
 use extract::install_chunk_extraction;
-#[cfg(test)]
-use gpu::arena::plan_chunk_range_update;
+pub(crate) use gpu::arena::arena_work;
 #[allow(unused_imports)]
 use gpu::arena::{
     ArenaLimits, ChunkGpuArena, ChunkGpuUploadStats, FreshChunkRanges, GPU_UPDATE_OVERDUE_FRAMES,

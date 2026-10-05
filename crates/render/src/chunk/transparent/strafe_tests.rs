@@ -111,7 +111,7 @@ fn fixture() -> Fixture {
     let mut app = App::new();
     app.insert_resource(PipelineCache::new(device.clone(), adapter.clone(), false))
         .insert_resource(ChunkGpuArena::new(&device))
-        .insert_resource(device)
+        .insert_resource(device.clone())
         .insert_resource(adapter)
         .insert_resource(RenderQueue(Arc::new(WgpuWrapper::new(queue))))
         .insert_resource(ChunkUploadBudget::new(usize::MAX, u64::MAX))

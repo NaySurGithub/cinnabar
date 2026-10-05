@@ -4,6 +4,7 @@ use crate::dropped_item::{
     MAX_DROPPED_ITEM_INSTANCES, MAX_DYNAMIC_ITEM_VERTICES, MAX_ITEM_LAYERS, MAX_ITEM_SPRITE_SIDE,
     block_mesh, cube_mesh, extruded_sprite_mesh, native_dropped_sprite_mesh,
 };
+use crate::render_work::{DeviceWork as _, QueueWork as _};
 use bevy::{
     asset::{AssetId, load_internal_asset, uuid_handle},
     core_pipeline::core_3d::{CORE_3D_DEPTH_FORMAT, Opaque3d, Opaque3dBatchSetKey, Opaque3dBinKey},
@@ -65,6 +66,7 @@ impl Plugin for DroppedItemRenderPlugin {
 struct Installed;
 
 fn install(app: &mut App) {
+    crate::pipeline_warmup::register::<ItemPipeline>(app);
     app.init_resource::<DroppedItemScene>();
     crate::lighting::install(app);
     let Some(render_app) = app.get_sub_app(RenderApp) else {
@@ -280,14 +282,14 @@ fn rebuild_models(
     }
     let layers = atlas.len() / layer_bytes;
     gpu.mesh_buffer = (!vertices.is_empty()).then(|| {
-        device.create_buffer_with_data(&BufferInitDescriptor {
+        device.tracked_create_buffer_with_data(&BufferInitDescriptor {
             label: Some("dropped item model meshes"),
             contents: bytemuck::cast_slice::<ItemMeshVertex, u8>(&vertices),
             usage: BufferUsages::VERTEX,
         })
     });
     gpu.ranges = ranges;
-    let texture = device.create_texture_with_data(
+    let texture = device.tracked_create_texture_with_data(
         queue,
         &TextureDescriptor {
             label: Some("dropped item texture layers"),
@@ -323,6 +325,8 @@ fn prepare_items(
     queue: Res<RenderQueue>,
     mut gpu: ResMut<ItemGpu>,
 ) {
+    let _render_system_span =
+        crate::render_systems::time(crate::render_systems::System::DroppedItemRenderPrepareItems);
     if gpu.models_revision != scene.models_revision || gpu.atlas_view.is_none() {
         rebuild_models(&scene, &device, &queue, &mut gpu);
     }
@@ -367,21 +371,21 @@ fn prepare_items(
         ],
         meta: [0, 15, 15, 0],
     });
-    queue.write_buffer(
+    queue.tracked_write_buffer(
         &gpu.instance_buffer,
         0,
         bytemuck::cast_slice::<GpuItemInstance, u8>(&instances),
     );
     gpu.dynamic_count = scene.dynamic.len() as u32;
     if !scene.dynamic.is_empty() {
-        queue.write_buffer(
+        queue.tracked_write_buffer(
             &gpu.dynamic_buffer,
             0,
             bytemuck::cast_slice::<ItemMeshVertex, u8>(&scene.dynamic),
         );
     }
     gpu.draws = draws;
-    queue.write_buffer(
+    queue.tracked_write_buffer(
         &gpu.environment,
         0,
         bytemuck::cast_slice::<f32, u8>(&[scene.daylight, 0.0, 0.0, 0.0]),
@@ -555,6 +559,7 @@ impl Specializer<RenderPipeline> for ItemPipelineSpecializer {
         key: Self::Key,
         descriptor: &mut RenderPipelineDescriptor,
     ) -> Result<Canonical<Self::Key>, BevyError> {
+        crate::render_work::specialization();
         descriptor.multisample.count = key.msaa.samples();
         descriptor.fragment.as_mut().unwrap().targets[0]
             .as_mut()
@@ -575,6 +580,9 @@ fn prepare_bind_group(
     view_uniforms: Res<ViewUniforms>,
     mut gpu: ResMut<ItemGpu>,
 ) {
+    let _render_system_span = crate::render_systems::time(
+        crate::render_systems::System::DroppedItemRenderPrepareBindGroup,
+    );
     let Some(view_binding) = view_uniforms.uniforms.binding() else {
         gpu.bind_group = None;
         return;
@@ -590,7 +598,7 @@ fn prepare_bind_group(
     if gpu.bind_group.is_some() && gpu.view_buffer_id == Some(view_buffer.id()) {
         return;
     }
-    let bind_group = device.create_bind_group(
+    let bind_group = device.tracked_create_bind_group(
         "dropped item bind group",
         &cache.get_bind_group_layout(&pipeline.bind_group_layout),
         &[
@@ -637,6 +645,8 @@ struct QueueItemParams<'w, 's> {
 }
 
 fn queue_items(mut params: QueueItemParams<'_, '_>, mut next_tick: Local<Tick>) {
+    let _render_system_span =
+        crate::render_systems::time(crate::render_systems::System::DroppedItemRenderQueueItems);
     if params.scene.instances.is_empty()
         && params.scene.dynamic.is_empty()
         && !params
@@ -758,5 +768,27 @@ mod tests {
                 .visibility
                 .contains(ShaderStages::FRAGMENT)
         );
+    }
+}
+
+impl crate::pipeline_warmup::PrewarmPipelines for ItemPipeline {
+    const PROFILE: crate::render_systems::System =
+        crate::render_systems::System::WarmupItemPipeline;
+
+    /// Warms every built-in mode through the same cache used by drawing.
+    fn prewarm(
+        &mut self,
+        cache: &PipelineCache,
+        view: crate::pipeline_warmup::WarmView,
+        ids: &mut crate::pipeline_warmup::WarmupIds,
+    ) -> Result<(), BevyError> {
+        ids.push(self.variants.specialize(
+            cache,
+            ItemPipelineKey {
+                msaa: view.msaa,
+                hdr: view.hdr,
+            },
+        )?);
+        Ok(())
     }
 }

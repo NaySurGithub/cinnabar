@@ -3,7 +3,7 @@ pub(in crate::chunk) const DEFAULT_ACKNOWLEDGEMENT_CAPACITY: usize = 512;
 pub(in crate::chunk) const DEFAULT_PRESENTED_FRAME_ACK_CAPACITY: usize = 8;
 pub(in crate::chunk) const DEFAULT_ZERO_BYTE_OPERATIONS_PER_FRAME: usize = 256;
 /// Maximum non-empty sub-chunk uploads transferred per main-world update.
-#[derive(Resource, ExtractResource, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ChunkUploadBudget {
     pub max_per_frame: usize,
     pub max_bytes_per_frame: u64,
@@ -183,7 +183,7 @@ pub(in crate::chunk) struct PendingGpuRemoval {
     pub(in crate::chunk) permit: PublicationPermit,
 }
 
-#[derive(Resource, ExtractResource, Clone)]
+#[derive(Resource, Clone)]
 pub(in crate::chunk) struct ChunkGpuRemovalQueue {
     inner: Arc<Mutex<VecDeque<PendingGpuRemoval>>>,
     capacity: usize,
@@ -897,3 +897,6 @@ impl ChunkUploadAcknowledgements {
         true
     }
 }
+
+crate::render_systems::extract_resource!(ChunkUploadBudget, ExtractChunkUploadBudget);
+crate::render_systems::extract_resource!(ChunkGpuRemovalQueue, ExtractChunkGpuRemovalQueue);

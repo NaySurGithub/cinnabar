@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use bevy::{prelude::Resource, render::extract_resource::ExtractResource};
+use bevy::prelude::Resource;
 
 #[path = "scene/cache.rs"]
 mod cache;
@@ -121,7 +121,7 @@ pub struct SceneClock {
 }
 
 /// Extracted per-frame draw data; textured models require an installed atlas.
-#[derive(Clone, Debug, Default, Resource, ExtractResource)]
+#[derive(Clone, Debug, Default, Resource)]
 pub struct BlockEntityFrame {
     pub revision: u64,
     pub atlas: Option<Arc<BlockEntityAtlasImage>>,
@@ -568,3 +568,5 @@ mod tests {
         assert!(!scene.has_assets());
     }
 }
+
+crate::render_systems::extract_resource!(BlockEntityFrame, ExtractBlockEntityFrame);

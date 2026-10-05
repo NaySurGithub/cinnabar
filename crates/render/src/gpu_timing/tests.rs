@@ -18,8 +18,9 @@ fn noop_device(features: wgpu::Features) -> (RenderDevice, RenderQueue) {
         ..Default::default()
     }))
     .unwrap();
+    let device = RenderDevice::from(device);
     (
-        RenderDevice::from(device),
+        device.clone(),
         RenderQueue(Arc::new(WgpuWrapper::new(queue))),
     )
 }
@@ -71,12 +72,19 @@ fn run_opaque(world: &World, device: &RenderDevice) -> Vec<wgpu::CommandBuffer> 
 }
 
 #[test]
-fn missing_timestamp_feature_runs_nodes_untimed() {
+fn missing_timestamp_feature_still_records_cpu_node_work() {
     let (device, queue) = noop_device(wgpu::Features::empty());
     assert!(GpuTimestamps::new(&device, &queue, true).is_none());
-    let (world, runs) = timed_world();
+    let (mut world, runs) = timed_world();
+    let profiler = RuntimeStageProfiler::new(true);
+    world.insert_resource(profiler.clone());
     assert!(run_opaque(&world, &device).is_empty());
     assert_eq!(runs.load(Ordering::Relaxed), 1);
+    let snapshot = profiler
+        .take_snapshot_if_due(std::time::Duration::ZERO)
+        .unwrap();
+    assert_eq!(snapshot.samples[RuntimeStage::CpuOpaque as usize].count, 1);
+    assert_eq!(snapshot.samples[RuntimeStage::GpuOpaque as usize].count, 0);
 }
 
 #[test]
@@ -158,7 +166,7 @@ fn nodes_are_wrapped_inside_the_render_app_under_pipelined_rendering() {
     render_app
         .add_schedule(bevy::ecs::schedule::Schedule::new(RenderStartup))
         .insert_resource(graph)
-        .insert_resource(device)
+        .insert_resource(device.clone())
         .insert_resource(queue);
     let mut app = App::new();
     app.insert_sub_app(RenderApp, render_app);

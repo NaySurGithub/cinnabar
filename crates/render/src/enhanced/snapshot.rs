@@ -32,6 +32,8 @@ impl ViewNode for EnhancedSnapshotNode {
         (entity, settings, target, depth): QueryItem<Self::ViewQuery>,
         world: &World,
     ) -> Result<(), NodeRunError> {
+        let _render_system_span =
+            crate::render_systems::time(crate::render_systems::System::EnhancedSnapshotRun);
         if !super::ENHANCED_RENDERING_ENABLED || !settings.water_reflections {
             return Ok(());
         }

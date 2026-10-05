@@ -91,6 +91,9 @@ impl ViewNode for GammaTransparentPass {
         >,
         world: &'w World,
     ) -> Result<(), NodeRunError> {
+        let _render_system_span = crate::render_systems::time(
+            crate::render_systems::System::ChunkTransparentGammaPassRun,
+        );
         if !target::admitted(view.hdr, *msaa, enhanced.is_some()) {
             return MainTransparentPass3dNode.run(
                 graph,

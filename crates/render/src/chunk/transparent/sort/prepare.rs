@@ -8,6 +8,7 @@ use super::{
     transparent_indirect_args, transparent_ref_offset,
 };
 use crate::chunk::*;
+use crate::render_work::QueueWork as _;
 use std::cell::RefCell;
 
 pub(in crate::chunk) fn transparent_snapshot_addresses_are_resident<'a, 'b>(
@@ -68,7 +69,7 @@ fn write_transparent_refs(
     first_ref: usize,
     refs: &[PackedTransparentDrawRef],
 ) -> u64 {
-    render_queue.write_buffer(
+    render_queue.tracked_write_buffer(
         &arena.transparent_ref_buffer,
         transparent_ref_offset(buffer_slot, arena.transparent_slot_refs, first_ref),
         bytemuck::cast_slice(refs),
@@ -93,6 +94,9 @@ pub(in crate::chunk) fn prepare_transparent_sorts(
     mut upload_budget: ResMut<TransparentUploadBudget>,
     profiler: Option<Res<RuntimeStageProfiler>>,
 ) {
+    let _render_system_span = crate::render_systems::time(
+        crate::render_systems::System::ChunkTransparentSortPreparePrepareTransparentSorts,
+    );
     let worker_profiler = profiler.as_deref().cloned();
     let _timer = profiler
         .as_deref()
@@ -502,7 +506,7 @@ pub(in crate::chunk) fn prepare_transparent_sorts(
         ))
     }) && runtime.last_indirect_identity != Some(identity)
     {
-        render_queue.write_buffer(
+        render_queue.tracked_write_buffer(
             &arena.transparent_indirect_buffer,
             0,
             bytemuck::bytes_of(&command),

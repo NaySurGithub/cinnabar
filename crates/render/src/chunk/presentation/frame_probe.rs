@@ -1,4 +1,5 @@
 use crate::chunk::*;
+use crate::render_work::DeviceWork as _;
 use std::sync::{
     MutexGuard,
     atomic::{AtomicBool, Ordering},
@@ -647,6 +648,9 @@ pub(in crate::chunk) fn submit_presented_frame_probe(
     visibility_completion_fence: Res<VisibilityCompletionFence>,
     visibility_diagnostics: Res<VisibilityDiagnostics>,
 ) {
+    let _render_system_span = crate::render_systems::time(
+        crate::render_systems::System::ChunkPresentationFrameProbeSubmitPresentedFrameProbe,
+    );
     let visibility_snapshot = visibility_probe.take_completed().and_then(|snapshot| {
         visibility_completion_fence
             .try_reserve()
@@ -701,7 +705,7 @@ pub(in crate::chunk) fn submit_presented_frame_probe(
         && witness_token.is_none()
         && visibility_snapshot.is_none()
     {
-        if let Err(error) = render_device.poll(PollType::Poll) {
+        if let Err(error) = render_device.tracked_poll(PollType::Poll) {
             bevy::log::warn!(
                 ?error,
                 "could not nonblockingly poll presented-frame fences"
@@ -746,7 +750,7 @@ pub(in crate::chunk) fn submit_presented_frame_probe(
         }
     });
     render_queue.submit([command_buffer]);
-    if let Err(error) = render_device.poll(PollType::Poll) {
+    if let Err(error) = render_device.tracked_poll(PollType::Poll) {
         bevy::log::warn!(
             ?error,
             "could not nonblockingly poll presented-frame fences"

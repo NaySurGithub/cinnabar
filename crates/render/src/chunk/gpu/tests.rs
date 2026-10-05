@@ -1,4 +1,5 @@
 use super::*;
+use crate::chunk::gpu::arena::plan_chunk_range_update;
 use crate::chunk::gpu::upload::validate_local_model_streams;
 
 #[test]

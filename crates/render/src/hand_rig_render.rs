@@ -1,6 +1,7 @@
 //! Near-camera first-person pass that draws the local player's own animated rig (arms + hands)
 //! over the scene, reusing the actor rig's packed buffers with a hand-local view and lighting.
 //! The rendered content is the player's own skin on the standard samples player geometry.
+use crate::render_work::{DeviceWork as _, PipelineWork as _, QueueWork as _};
 use crate::{ActorGpuInstance, ActorRigGeometrySpan, ActorRigRenderFrame};
 use bevy::{
     asset::{load_internal_asset, uuid_handle},
@@ -8,7 +9,7 @@ use bevy::{
     prelude::*,
     render::{
         Render, RenderApp, RenderStartup, RenderSystems,
-        extract_resource::{ExtractResource, ExtractResourcePlugin},
+        extract_resource::ExtractResourcePlugin,
         render_graph::{RenderGraph, RenderLabel, ViewNodeRunner},
         render_resource::*,
         renderer::{RenderDevice, RenderQueue},
@@ -124,7 +125,7 @@ pub(crate) struct HandRigFrame {
 }
 
 /// Published by the app each frame the first-person hand should draw; empty otherwise.
-#[derive(Clone, Default, Debug, Resource, ExtractResource)]
+#[derive(Clone, Default, Debug, Resource)]
 pub struct HandRigScene {
     pub(crate) frame: Option<HandRigFrame>,
 }
@@ -191,6 +192,7 @@ impl HandRigScene {
 }
 
 fn install(app: &mut App) {
+    crate::pipeline_warmup::register::<HandRigGpu>(app);
     app.init_resource::<HandRigScene>();
     crate::lighting::install(app);
     let Some(render_app) = app.get_sub_app(RenderApp) else {
@@ -306,13 +308,13 @@ struct HandRigGpu {
 
 fn init_gpu(mut commands: Commands, device: Res<RenderDevice>) {
     let uniform = |label: &'static str, contents: &[u8]| {
-        device.create_buffer_with_data(&BufferInitDescriptor {
+        device.tracked_create_buffer_with_data(&BufferInitDescriptor {
             label: Some(label),
             contents,
             usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
         })
     };
-    let material = device.create_buffer_with_data(&BufferInitDescriptor {
+    let material = device.tracked_create_buffer_with_data(&BufferInitDescriptor {
         label: Some("first-person rig texture and alpha selectors"),
         contents: bytemuck::bytes_of(&HAND_MATERIAL),
         usage: BufferUsages::UNIFORM,
@@ -358,6 +360,8 @@ fn prepare(
     mut gpu: ResMut<HandRigGpu>,
     views: Query<(&ExtractedView, &Msaa)>,
 ) {
+    let _render_system_span =
+        crate::render_systems::time(crate::render_systems::System::HandRigRenderPrepare);
     if background.is_some_and(|background| !background.game_visible()) {
         deactivate(&mut gpu);
         return;
@@ -385,17 +389,17 @@ fn prepare(
     let aspect = viewport.z as f32 / viewport.w as f32;
     let projection =
         Mat4::perspective_infinite_reverse_rh(frame.fov_radians, aspect, HAND_RIG_NEAR_PLANE);
-    queue.write_buffer(
+    queue.tracked_write_buffer(
         &gpu.view_uniform,
         0,
         bytemuck::cast_slice(&projection.to_cols_array()),
     );
-    queue.write_buffer(&gpu.light_uniform, 0, bytemuck::bytes_of(&frame.light));
+    queue.tracked_write_buffer(&gpu.light_uniform, 0, bytemuck::bytes_of(&frame.light));
     build_bind_group(&mut gpu, &device, &cache);
     let gpu = &mut *gpu;
     let layout = gpu.layout.clone();
     gpu.pipeline = memoized_pipeline(&mut gpu.pipeline_variants, samples, hdr, || {
-        cache.queue_render_pipeline(specialized_pipeline(layout.clone(), samples, hdr))
+        cache.tracked_queue_render_pipeline(specialized_pipeline(layout.clone(), samples, hdr))
     });
     if gpu.bind_group.is_none() || gpu.pipeline.is_none() {
         gpu.maximum_vertex_count = 0;
@@ -466,14 +470,16 @@ fn upload_pose(
     ] {
         match slot {
             Some(buffer) if buffer.size() == bytes.len() as u64 => {
-                queue.write_buffer(buffer, 0, bytes);
+                queue.tracked_write_buffer(buffer, 0, bytes);
             }
             _ => {
-                *slot = Some(device.create_buffer_with_data(&BufferInitDescriptor {
-                    label: Some(label),
-                    contents: bytes,
-                    usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
-                }));
+                *slot = Some(
+                    device.tracked_create_buffer_with_data(&BufferInitDescriptor {
+                        label: Some(label),
+                        contents: bytes,
+                        usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+                    }),
+                );
                 recreated = true;
             }
         }
@@ -500,7 +506,7 @@ fn upload_skin(
         return;
     }
     let side = render_model::STANDARD_SKIN_SIDE as u32;
-    let texture = device.create_texture_with_data(
+    let texture = device.tracked_create_texture_with_data(
         queue,
         &TextureDescriptor {
             label: Some("first-person rig skin"),
@@ -567,7 +573,7 @@ fn upload_atlas(
         }) {
             continue;
         }
-        let texture = device.create_texture_with_data(
+        let texture = device.tracked_create_texture_with_data(
             queue,
             &TextureDescriptor {
                 label: Some("first-person item atlas"),
@@ -652,7 +658,7 @@ fn build_bind_group(gpu: &mut HandRigGpu, device: &RenderDevice, cache: &Pipelin
         return;
     };
     gpu.bind_group = Some(
-        device.create_bind_group(
+        device.tracked_create_bind_group(
             "first-person rig bind group",
             &cache.get_bind_group_layout(&gpu.layout),
             &[
@@ -719,7 +725,7 @@ fn build_bind_group(gpu: &mut HandRigGpu, device: &RenderDevice, cache: &Pipelin
 }
 
 fn storage<T: bytemuck::Pod>(device: &RenderDevice, label: &'static str, data: &[T]) -> Buffer {
-    device.create_buffer_with_data(&BufferInitDescriptor {
+    device.tracked_create_buffer_with_data(&BufferInitDescriptor {
         label: Some(label),
         contents: bytemuck::cast_slice(data),
         usage: BufferUsages::STORAGE,
@@ -880,3 +886,34 @@ fn hand_rig_layout() -> BindGroupLayoutDescriptor {
         ],
     )
 }
+
+impl crate::pipeline_warmup::PrewarmPipelines for HandRigGpu {
+    const PROFILE: crate::render_systems::System = crate::render_systems::System::WarmupHandRigGpu;
+
+    /// Warms every built-in mode through the same cache used by drawing.
+    fn prewarm(
+        &mut self,
+        cache: &PipelineCache,
+        view: crate::pipeline_warmup::WarmView,
+        ids: &mut crate::pipeline_warmup::WarmupIds,
+    ) -> Result<(), BevyError> {
+        let layout = self.layout.clone();
+        let id = memoized_pipeline(
+            &mut self.pipeline_variants,
+            view.msaa.samples(),
+            view.hdr,
+            || {
+                cache.tracked_queue_render_pipeline(specialized_pipeline(
+                    layout,
+                    view.msaa.samples(),
+                    view.hdr,
+                ))
+            },
+        )
+        .ok_or_else(|| BevyError::from("unsupported hand pipeline sample count"))?;
+        ids.push(id);
+        Ok(())
+    }
+}
+
+crate::render_systems::extract_resource!(HandRigScene, ExtractHandRigScene);

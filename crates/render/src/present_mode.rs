@@ -344,6 +344,9 @@ fn apply_dx12_present_mode_policy(
     mut lifecycle: Local<AutoRemedyLifecycle>,
     mut probe_retry: Local<SurfaceProbeRetry>,
 ) {
+    let _render_system_span = crate::render_systems::time(
+        crate::render_systems::System::PresentModeApplyDx12PresentModePolicy,
+    );
     let preference = policy.preference();
     let Some(window_id) = windows.primary else {
         policy.publish_remedy(PresentModeRemedy::KeepRequested);

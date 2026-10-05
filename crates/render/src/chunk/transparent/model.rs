@@ -484,6 +484,9 @@ pub(in crate::chunk) fn prepare_transparent_model_sorts(
     mut upload_budget: ResMut<TransparentUploadBudget>,
     mut runtime: ResMut<TransparentModelSortRuntime>,
 ) {
+    let _render_system_span = crate::render_systems::time(
+        crate::render_systems::System::ChunkTransparentModelPrepareTransparentModelSorts,
+    );
     runtime.draw_orders.refresh(&arena, &instances);
     let Some((view_entity, view, visible_entities)) = views
         .iter()

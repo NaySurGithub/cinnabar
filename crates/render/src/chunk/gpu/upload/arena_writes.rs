@@ -1,4 +1,5 @@
 use crate::chunk::*;
+use crate::render_work::QueueWork as _;
 
 /// Arena writes collected while GPU preparation admits uploads.
 #[derive(Default)]
@@ -32,7 +33,7 @@ impl ArenaWrites {
             std::mem::take(&mut self.quads),
         );
         for (index, origin) in self.origins.drain(..) {
-            render_queue.write_buffer(
+            render_queue.tracked_write_buffer(
                 &arena.origin_buffer,
                 u64::from(index) * CHUNK_ORIGIN_BYTES,
                 bytemuck::bytes_of(&origin),

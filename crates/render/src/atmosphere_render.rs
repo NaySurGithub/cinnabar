@@ -1,3 +1,4 @@
+use crate::render_work::{DeviceWork as _, QueueWork as _};
 use std::collections::HashMap;
 
 use assets::{AtmosphereRole, AtmosphereTexture};
@@ -65,6 +66,7 @@ impl Plugin for AtmospherePlugin {
 struct AtmosphereRenderInstalled;
 
 pub(crate) fn install_atmosphere(app: &mut App) {
+    crate::pipeline_warmup::register::<AtmospherePipeline>(app);
     app.init_resource::<AtmosphereFrame>();
     app.init_resource::<crate::AtmosphereViewInputs>();
     app.init_resource::<AtmosphereTextureAssets>();
@@ -148,13 +150,13 @@ struct PreparedAtmosphereAssets {
 
 fn init_atmosphere_gpu(mut commands: Commands, render_device: Res<RenderDevice>) {
     AtmosphereFrame::assert_uniform_compat();
-    let buffer = render_device.create_buffer_with_data(&BufferInitDescriptor {
+    let buffer = render_device.tracked_create_buffer_with_data(&BufferInitDescriptor {
         label: Some("global atmosphere frame"),
         contents: bytemuck::bytes_of(&AtmosphereFrame::default()),
         usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
     });
     let vertices = crate::stars::vertices();
-    let stars = render_device.create_buffer_with_data(&BufferInitDescriptor {
+    let stars = render_device.tracked_create_buffer_with_data(&BufferInitDescriptor {
         label: Some("seeded classic star quads"),
         contents: bytemuck::cast_slice(&vertices),
         usage: BufferUsages::STORAGE,
@@ -178,7 +180,10 @@ fn prepare_atmosphere_uniform(
     gpu: Res<AtmosphereGpu>,
     render_queue: Res<RenderQueue>,
 ) {
-    render_queue.write_buffer(&gpu.buffer, 0, bytemuck::bytes_of(&*frame));
+    let _render_system_span = crate::render_systems::time(
+        crate::render_systems::System::AtmosphereRenderPrepareAtmosphereUniform,
+    );
+    render_queue.tracked_write_buffer(&gpu.buffer, 0, bytemuck::bytes_of(&*frame));
 }
 
 fn prepare_atmosphere_textures(
@@ -188,6 +193,9 @@ fn prepare_atmosphere_textures(
     render_queue: Res<RenderQueue>,
     mut gpu: ResMut<AtmosphereGpu>,
 ) {
+    let _render_system_span = crate::render_systems::time(
+        crate::render_systems::System::AtmosphereRenderPrepareAtmosphereTextures,
+    );
     let Some(runtime) = requested.runtime() else {
         gpu.prepared = None;
         gpu.bind_group = None;
@@ -288,7 +296,7 @@ pub(crate) fn upload_rgba(
     rgba8: &[u8],
     label: &'static str,
 ) -> (Texture, TextureView) {
-    let gpu_texture = render_device.create_texture_with_data(
+    let gpu_texture = render_device.tracked_create_texture_with_data(
         render_queue,
         &TextureDescriptor {
             label: Some(label),
@@ -460,6 +468,7 @@ impl Specializer<RenderPipeline> for AtmospherePipelineSpecializer {
         key: Self::Key,
         descriptor: &mut RenderPipelineDescriptor,
     ) -> Result<Canonical<Self::Key>, BevyError> {
+        crate::render_work::specialization();
         descriptor.multisample.count = key.msaa.samples();
         let target = descriptor.fragment.as_mut().unwrap().targets[0]
             .as_mut()
@@ -482,6 +491,9 @@ fn prepare_atmosphere_bind_group(
     view_uniforms: Res<ViewUniforms>,
     mut gpu: ResMut<AtmosphereGpu>,
 ) {
+    let _render_system_span = crate::render_systems::time(
+        crate::render_systems::System::AtmosphereRenderPrepareAtmosphereBindGroup,
+    );
     let Some(view_binding) = view_uniforms.uniforms.binding() else {
         gpu.bind_group = None;
         gpu.view_buffer_id = None;
@@ -505,7 +517,7 @@ fn prepare_atmosphere_bind_group(
         return;
     }
     let asset_identity = prepared.identity;
-    gpu.bind_group = Some(render_device.create_bind_group(
+    gpu.bind_group = Some(render_device.tracked_create_bind_group(
         "texture-backed atmosphere bind group",
         &pipeline_cache.get_bind_group_layout(&pipeline.bind_group_layout),
         &[
@@ -552,6 +564,8 @@ fn queue_atmosphere(
     mut gpu: ResMut<AtmosphereGpu>,
     mut next_tick: Local<Tick>,
 ) {
+    let _render_system_span =
+        crate::render_systems::time(crate::render_systems::System::AtmosphereRenderQueueAtmosphere);
     let draw_function = draw_functions.read().id::<DrawAtmosphereCommands>();
     // Only current views contribute keys; the finite MSAA/HDR combinations do
     // not accumulate across view recreation or graphics setting changes.
@@ -726,8 +740,9 @@ mod tests {
     fn app_with_noop_render_sub_app() -> App {
         let (device, queue) = wgpu::Device::noop(&wgpu::DeviceDescriptor::default());
         let mut render_app = SubApp::new();
+        let device = RenderDevice::from(device);
         render_app
-            .insert_resource(RenderDevice::from(device))
+            .insert_resource(device.clone())
             .insert_resource(RenderQueue(Arc::new(WgpuWrapper::new(queue))))
             .insert_resource(DrawFunctions::<Opaque3d>::default())
             .insert_resource(DrawFunctions::<Transparent3d>::default())
@@ -895,3 +910,28 @@ mod tests {
 #[cfg(test)]
 #[path = "atmosphere_pipeline_tests.rs"]
 mod pipeline_tests;
+
+impl crate::pipeline_warmup::PrewarmPipelines for AtmospherePipeline {
+    const PROFILE: crate::render_systems::System =
+        crate::render_systems::System::WarmupAtmospherePipeline;
+
+    /// Warms every built-in mode through the same cache used by drawing.
+    fn prewarm(
+        &mut self,
+        cache: &PipelineCache,
+        view: crate::pipeline_warmup::WarmView,
+        ids: &mut crate::pipeline_warmup::WarmupIds,
+    ) -> Result<(), BevyError> {
+        for stars in [false, true] {
+            ids.push(self.variants.specialize(
+                cache,
+                AtmospherePipelineKey {
+                    msaa: view.msaa,
+                    hdr: view.hdr,
+                    stars,
+                },
+            )?);
+        }
+        Ok(())
+    }
+}

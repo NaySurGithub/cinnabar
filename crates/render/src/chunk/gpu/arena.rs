@@ -1,4 +1,5 @@
 use crate::chunk::*;
+use crate::render_work::DeviceWork as _;
 
 #[derive(Resource, Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(in crate::chunk) struct ChunkGpuUploadStats {
@@ -116,6 +117,8 @@ pub(in crate::chunk) struct ChunkGpuArena {
     pub(in crate::chunk) pending_removals: BTreeSet<Entity>,
     pub(in crate::chunk) retirement_budget: TransparentRetirementBudget,
     pub(in crate::chunk) migration: Option<ArenaMigration>,
+    pub(in crate::chunk) migrations_started: u64,
+    pub(in crate::chunk) migration_copy_bytes: u64,
 }
 
 pub(in crate::chunk) fn init_chunk_gpu_arena(
@@ -148,21 +151,23 @@ impl ChunkGpuArena {
                 "packed chunk origins",
                 CHUNK_ORIGIN_BYTES,
             ),
-            biome_buffer: render_device.create_buffer_with_data(&BufferInitDescriptor {
+            biome_buffer: render_device.tracked_create_buffer_with_data(&BufferInitDescriptor {
                 label: Some("packed chunk biome records"),
                 contents: bytemuck::cast_slice(&FALLBACK_BIOME_RECORD),
                 usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC | BufferUsages::COPY_DST,
             }),
-            index_buffer: render_device.create_buffer_with_data(&BufferInitDescriptor {
+            index_buffer: render_device.tracked_create_buffer_with_data(&BufferInitDescriptor {
                 label: Some("shared chunk quad indices"),
                 contents: bytemuck::cast_slice(&STATIC_QUAD_INDICES),
                 usage: BufferUsages::INDEX,
             }),
-            model_index_buffer: render_device.create_buffer_with_data(&BufferInitDescriptor {
-                label: Some("shared model template quad indices"),
-                contents: bytemuck::cast_slice(&STATIC_QUAD_INDICES),
-                usage: BufferUsages::INDEX,
-            }),
+            model_index_buffer: render_device.tracked_create_buffer_with_data(
+                &BufferInitDescriptor {
+                    label: Some("shared model template quad indices"),
+                    contents: bytemuck::cast_slice(&STATIC_QUAD_INDICES),
+                    usage: BufferUsages::INDEX,
+                },
+            ),
             indirect_buffer: create_indirect_buffer(render_device, 1),
             transparent_indirect_buffer: create_indirect_buffer(render_device, 1),
             transparent_ref_buffer: transparent_ref_buffer(
@@ -195,6 +200,8 @@ impl ChunkGpuArena {
                 MAX_TRANSPARENT_RETIRED_BYTES,
             ),
             migration: None,
+            migrations_started: 0,
+            migration_copy_bytes: 0,
         };
         super::telemetry::log_initial_arena_capacity(&arena, render_device);
         arena
@@ -891,4 +898,13 @@ pub(in crate::chunk) fn release_completed_transparent_retirements(
         arena.retirement_budget.release(1, bytes);
     }
     arena.retired_allocations = retained;
+}
+
+/// Cumulative arena migration work; GPU copies are separate from host uploads.
+pub(crate) fn arena_work(world: &bevy::prelude::World) -> (u64, u64) {
+    world
+        .get_resource::<ChunkGpuArena>()
+        .map_or((0, 0), |arena| {
+            (arena.migrations_started, arena.migration_copy_bytes)
+        })
 }

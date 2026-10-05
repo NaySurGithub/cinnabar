@@ -13,8 +13,9 @@ fn noop_gpu_publication_app(
     };
 
     let (device, queue) = wgpu::Device::noop(&wgpu::DeviceDescriptor::default());
+    let device = RenderDevice::from(device);
     let mut app = App::new();
-    app.insert_resource(RenderDevice::from(device))
+    app.insert_resource(device.clone())
         .insert_resource(RenderQueue(Arc::new(WgpuWrapper::new(queue))))
         .insert_resource(ChunkUploadBudget::new(0, 0))
         .insert_resource(ChunkGpuUploadStats::default())

@@ -1,4 +1,5 @@
 use super::*;
+use crate::chunk::gpu::arena::plan_chunk_range_update;
 
 fn fragmented_arena(holes: u32) -> ChunkGpuArena {
     let (device, _queue) = wgpu::Device::noop(&wgpu::DeviceDescriptor::default());

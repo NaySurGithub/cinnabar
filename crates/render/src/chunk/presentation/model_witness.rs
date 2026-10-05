@@ -9,7 +9,7 @@ pub enum ModelWitnessRequestError {
     Duplicate,
 }
 
-#[derive(Resource, ExtractResource, Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Resource, Debug, Clone, Default, PartialEq, Eq)]
 pub struct ModelWitnessRequest {
     pub(in crate::chunk) revision: u64,
     pub(in crate::chunk) request_hash: [u8; 32],
@@ -212,3 +212,5 @@ impl ModelWitnessEvidence {
         self.set_authoritative_request(&ModelWitnessRequest::default());
     }
 }
+
+crate::render_systems::extract_resource!(ModelWitnessRequest, ExtractModelWitnessRequest);

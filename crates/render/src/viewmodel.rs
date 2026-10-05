@@ -1,6 +1,6 @@
 //! Neutral empty-hand foundation. Animation and environmental lighting are not
 //! supplied by this mode; it is deliberately not an idle-animation parity claim.
-use bevy::{prelude::*, render::extract_resource::ExtractResource};
+use bevy::prelude::*;
 use std::sync::{Arc, Mutex};
 mod cube;
 mod geometry;
@@ -131,7 +131,7 @@ pub(super) struct HandFrame {
     pub fallback: Option<(u64, u32, u32)>,
 }
 
-#[derive(Clone, Default, Debug, Resource, ExtractResource)]
+#[derive(Clone, Default, Debug, Resource)]
 pub struct ViewmodelScene {
     pub(super) frame: Option<HandFrame>,
 }
@@ -464,3 +464,5 @@ pub(super) fn hand_projection(size: [u32; 2]) -> Mat4 {
         0.1,
     )
 }
+
+crate::render_systems::extract_resource!(ViewmodelScene, ExtractViewmodelScene);

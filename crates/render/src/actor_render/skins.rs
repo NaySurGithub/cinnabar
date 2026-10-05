@@ -1,4 +1,5 @@
 //! Player skin arrays mirroring the main world's slot residency; only changed layers upload.
+use crate::render_work::QueueWork as _;
 use std::sync::Arc;
 
 use super::*;
@@ -141,7 +142,7 @@ impl GpuSkinArrays {
                 if gpu.admissions[layer] == resident.admission {
                     continue;
                 }
-                queue.write_texture(
+                queue.tracked_write_texture(
                     TexelCopyTextureInfo {
                         texture,
                         mip_level: 0,

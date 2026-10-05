@@ -64,7 +64,7 @@ impl GpuArtwork {
         for page in pages.pages.iter() {
             // UVs are normalised, so a page past the device limit draws downscaled, not blank.
             let page = &page.fit_within(limits.max_texture_dimension_2d);
-            let texture = device.create_texture_with_data(
+            let texture = device.tracked_create_texture_with_data(
                 queue,
                 &TextureDescriptor {
                     label: Some("immutable neutral binary-alpha actor page"),

@@ -1,4 +1,5 @@
 use crate::chunk::*;
+use crate::render_work::QueueWork as _;
 
 pub(in crate::chunk) fn drawable_allocation_identity(
     frame_probe: &FrameProbeScope<'_>,
@@ -106,6 +107,9 @@ pub(in crate::chunk) fn prepare_chunk_indirect_batches(
     mut arena: ResMut<ChunkGpuArena>,
     profiler: Option<Res<RuntimeStageProfiler>>,
 ) {
+    let _render_system_span = crate::render_systems::time(
+        crate::render_systems::System::ChunkPipelineCommandsPrepareChunkIndirectBatches,
+    );
     let _timer = profiler
         .as_deref()
         .map(|profiler| profiler.time(RuntimeStage::IndirectPreparation));
@@ -198,7 +202,7 @@ pub(in crate::chunk) fn upload_indirect_commands_if_changed(
     if arena.uploaded_indirect_bytes == bytes {
         return 0;
     }
-    render_queue.write_buffer(&arena.indirect_buffer, 0, bytes);
+    render_queue.tracked_write_buffer(&arena.indirect_buffer, 0, bytes);
     arena.uploaded_indirect_bytes.clear();
     arena.uploaded_indirect_bytes.extend_from_slice(bytes);
     bytes.len() as u64

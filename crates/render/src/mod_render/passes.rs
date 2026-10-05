@@ -3,6 +3,7 @@
 
 use super::ModRenderScene;
 use crate::RuntimeStage;
+use crate::render_work::{DeviceWork as _, QueueWork as _};
 use bevy::tasks::{AsyncComputeTaskPool, Task};
 use bevy::{
     core_pipeline::core_3d::graph::{Core3d, Node3d},
@@ -109,7 +110,7 @@ impl PassGpu {
     }
 }
 
-/// Compiles off the render thread where Bevy does, and inline where it compiles inline.
+/// Compiles on a worker on native platforms; WebAssembly has no worker pool.
 fn compile(
     device: RenderDevice,
     layout: BindGroupLayout,
@@ -117,7 +118,7 @@ fn compile(
     format: TextureFormat,
 ) -> PipelineState {
     let task = async move { create_pipeline(&device, &layout, &shader, format) };
-    if cfg!(any(target_os = "macos", target_arch = "wasm32")) {
+    if cfg!(target_arch = "wasm32") {
         bevy::tasks::block_on(task).map_or(PipelineState::Failed, PipelineState::Ready)
     } else {
         PipelineState::Creating(AsyncComputeTaskPool::get().spawn(task))
@@ -133,7 +134,7 @@ pub(crate) fn create_pipeline(
 ) -> Option<RenderPipeline> {
     let wgpu_device = device.wgpu_device();
     wgpu_device.push_error_scope(wgpu::ErrorFilter::Validation);
-    let module = device.create_and_validate_shader_module(wgpu::ShaderModuleDescriptor {
+    let module = device.tracked_create_and_validate_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("mod post pass"),
         source: wgpu::ShaderSource::Wgsl(shader.into()),
     });
@@ -142,7 +143,7 @@ pub(crate) fn create_pipeline(
         bind_group_layouts: &[layout],
         push_constant_ranges: &[],
     });
-    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    let pipeline = device.tracked_create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("mod post pass"),
         layout: Some(&pipeline_layout),
         vertex: wgpu::VertexState {
@@ -301,6 +302,8 @@ fn prepare(
     gpu: Option<ResMut<PassGpu>>,
     views: Query<(Entity, &ExtractedView, &ViewTarget)>,
 ) {
+    let _render_system_span =
+        crate::render_systems::time(crate::render_systems::System::ModRenderPassesPrepare);
     let (Some(scene), Some(mut gpu)) = (scene, gpu) else {
         return;
     };
@@ -344,7 +347,7 @@ fn prepare(
                         mapped_at_creation: false,
                     })
                 });
-            queue.write_buffer(buffer, 0, bytemuck::bytes_of(&uniform));
+            queue.tracked_write_buffer(buffer, 0, bytemuck::bytes_of(&uniform));
         }
     }
 }
@@ -387,6 +390,8 @@ impl ViewNode for ModPassNode {
         (target, depth): QueryItem<'w, '_, Self::ViewQuery>,
         world: &'w World,
     ) -> Result<(), NodeRunError> {
+        let _render_system_span =
+            crate::render_systems::time(crate::render_systems::System::ModRenderPassesRun);
         let (Some(scene), Some(gpu), Some(cache)) = (
             world.get_resource::<ModRenderScene>(),
             world.get_resource::<PassGpu>(),
@@ -453,7 +458,7 @@ impl ViewNode for ModPassNode {
                             resource: BindingResource::TextureView(depth_view),
                         },
                     ];
-                    context.render_device().create_bind_group(
+                    context.render_device().tracked_create_bind_group(
                         "mod pass",
                         &cache.get_bind_group_layout(&gpu.layouts[usize::from(pass.depth)]),
                         &colour[..if pass.depth { 4 } else { 3 }],

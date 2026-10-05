@@ -22,6 +22,8 @@ impl ViewNode for HandViewNode {
         (owner, view, target, msaa): QueryItem<Self::ViewQuery>,
         world: &World,
     ) -> Result<(), NodeRunError> {
+        let _render_system_span =
+            crate::render_systems::time(crate::render_systems::System::ViewmodelRenderNodeRun);
         let (Some(gpu), Some(gate), Some(drawn), Some(cache)) = (
             world.get_resource::<HandGpu>(),
             world.get_resource::<ViewmodelCompletionGate>(),
