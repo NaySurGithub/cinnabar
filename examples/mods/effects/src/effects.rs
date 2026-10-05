@@ -237,6 +237,11 @@ impl Effects {
         self.trigger(event);
     }
 
+    /// Forgets the boss once it leaves the entity snapshot, so its aura goes with it.
+    pub fn lose_boss(&mut self) {
+        self.boss = None;
+    }
+
     /// Tracks the boss from an entity snapshot; crossing half health starts phase 2.
     pub fn observe_boss(&mut self, at: Point, health: Option<f32>) {
         self.boss = Some(at);
@@ -460,7 +465,7 @@ impl Effects {
             heartbeat,
         ]);
         let enabled = [
-            self.boss_aura,
+            self.boss_aura && self.boss.is_some(),
             beam.is_some(),
             pulse_strength > 0.0 || shake > 0.01 || haze > 0.0 || self.speed_lines > 0.0,
             low > 0.0 || death > 0.0 || impact,

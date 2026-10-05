@@ -9,7 +9,11 @@ use std::cell::RefCell;
 
 const BOSS_TYPE: &str = "cinnabar:hollow_warden";
 
-thread_local! { static EFFECTS: RefCell<Effects> = RefCell::new(Effects::new()); }
+thread_local! {
+    static EFFECTS: RefCell<Effects> = RefCell::new(Effects::new());
+    /// Server marker actors already turned into events, by runtime id.
+    static MARKERS: RefCell<Vec<u64>> = const { RefCell::new(Vec::new()) };
+}
 
 const PANEL: &str = r#"{"title":"Effects","toggle_key":"F7","dark":true,"controls":[
 {"kind":"slider","id":"health","label":"Health","value":1,"min":0,"max":1,"step":0.05},
@@ -55,7 +59,6 @@ impl Guest for Component {
             "Digit3".into(),
             "Digit4".into(),
         ]);
-        let _ = hud::set_label("FX: 1 charge, 2 beam, 3 flash, 4 meteor, F7 panel");
     }
 
     fn frame() {
@@ -87,15 +90,34 @@ impl Guest for Component {
                 }
                 _ => fx.clear_view(),
             }
-            if let Ok(mobs) = gameplay::read_mobs()
-                && let Some(boss) = mobs.iter().find(|mob| mob.type_id == BOSS_TYPE)
-            {
-                fx.observe_boss(
-                    [boss.position.x, boss.position.y, boss.position.z],
-                    boss.health
-                        .zip(boss.max_health)
-                        .map(|(h, max)| h / max.max(1.0)),
-                );
+            if let Ok(mobs) = gameplay::read_mobs() {
+                let boss = mobs.iter().find(|mob| mob.type_id == BOSS_TYPE);
+                if boss.is_none() {
+                    fx.lose_boss();
+                }
+                if let Some(boss) = boss {
+                    fx.observe_boss(
+                        [boss.position.x, boss.position.y, boss.position.z],
+                        boss.health
+                            .zip(boss.max_health)
+                            .map(|(h, max)| h / max.max(1.0)),
+                    );
+                }
+                MARKERS.with(|seen| {
+                    let mut seen = seen.borrow_mut();
+                    seen.retain(|id| mobs.iter().any(|mob| mob.runtime_id == *id));
+                    for mob in &mobs {
+                        if seen.contains(&mob.runtime_id) {
+                            continue;
+                        }
+                        if let Some((name, extra)) = crate::marker_cue(&mob.type_id) {
+                            seen.push(mob.runtime_id);
+                            let mut values = vec![mob.position.x, mob.position.y, mob.position.z];
+                            values.extend_from_slice(extra);
+                            fx.handle_cue(name, &values);
+                        }
+                    }
+                });
             }
             let out = fx.step(dt);
             let _ = render::draw(&out.primitives);

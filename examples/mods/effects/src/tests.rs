@@ -66,9 +66,13 @@ fn every_pass_passes_the_host_sandbox() {
 fn idle_effects_disable_every_costly_pass_but_the_boss_aura() {
     let mut fx = Effects::new();
     fx.set_view(EYE, 0.0, 0.0, false);
+    fx.observe_boss([0.0, 64.0, 8.0], None);
     let frame = fx.step(1.0 / 60.0);
     let enabled: Vec<_> = frame.passes.iter().map(|p| p.enabled).collect();
     assert_eq!(enabled, [true, false, false, false]);
+    fx.lose_boss();
+    assert!(!fx.step(1.0 / 60.0).passes[0].enabled, "the aura outlived the boss");
+    fx.observe_boss([0.0, 64.0, 8.0], None);
     assert!(frame.primitives.decals.is_empty() && frame.primitives.billboards.is_empty());
     fx.handle_panel("aura", 0.0);
     assert!(fx.step(1.0 / 60.0).passes.iter().all(|p| !p.enabled));
@@ -245,4 +249,15 @@ fn showcase_cues_drive_abilities_and_silence_own_keys() {
         fx.step(0.016).passes[2].enabled,
         "half health pulses phase 2"
     );
+}
+
+#[test]
+fn server_markers_raise_their_boss_cues() {
+    let mut fx = Effects::new();
+    let (name, extra) = crate::marker_cue("cinnabar:fx_telegraph").unwrap();
+    let mut values = vec![1.0, 2.0, 3.0];
+    values.extend_from_slice(extra);
+    fx.handle_cue(name, &values);
+    assert_eq!(fx.telegraphs.len(), 1);
+    assert!(crate::marker_cue("cinnabar:hollow_warden").is_none());
 }

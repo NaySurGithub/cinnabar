@@ -31,6 +31,8 @@ const FLASH: Kick = Kick {
     roll: 0.0,
     fov: 14.0,
 };
+/// The shoulder view narrows the player's FOV so the wide default does not read as fisheye.
+pub const SHOULDER_FOV: f32 = -14.0;
 const CHARGE_FOV: f32 = 6.0;
 const CHARGE_FOV_SECONDS: f32 = 1.5;
 const BEAM_FOV: f32 = -6.0;
@@ -223,11 +225,6 @@ impl Director {
         let mut output = Output {
             rig: Some(rig),
             rotate,
-            label: Some(if self.lock.is_some() {
-                "Lock-on: Hollow Warden"
-            } else {
-                "Free camera"
-            }),
             ..Output::default()
         };
         let commands = self.commands.len().min(MAX_COMMANDS_PER_FRAME);
@@ -450,7 +447,7 @@ impl Director {
             *current += (goal - *current) * blend;
         }
         let mut roll = 0.0;
-        let mut fov = 0.0;
+        let mut fov = SHOULDER_FOV;
         for pulse in &mut self.pulses {
             pulse.elapsed += visual;
             let strength = pulse.envelope();

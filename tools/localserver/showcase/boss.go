@@ -3,7 +3,7 @@ package showcase
 import "math/rand/v2"
 
 const (
-	bossMaxHealth   = 400.0
+	bossMaxHealth   = 300.0
 	bossMaxPoise    = 100.0
 	staggerTime     = 1.2
 	roarTime        = 2.0

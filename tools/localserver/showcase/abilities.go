@@ -107,20 +107,14 @@ func (c *Controller) tickAbilities(tx *world.Tx, p *player.Player, part *partici
 	pos := p.Position()
 	tick := int(math.Round(c.now / dt))
 	switch f.Active() {
+	// Ability visuals belong to the client effects mod; the server keeps only sounds and debris.
 	case AbilityCharge:
-		if tick%2 == 0 {
-			for i := range 6 {
-				a := float64(tick*37+i*60) * math.Pi / 180
-				tx.AddParticle(pos.Add(mgl64.Vec3{math.Cos(a) * 0.9, float64(i%3) * 0.6, math.Sin(a) * 0.9}), particle.Dust{Colour: gold})
-			}
-		}
 		if tick%20 == 0 {
 			tx.PlaySound(pos, soundNamed("beacon.ambient", 1, 1.6))
 		}
 	case AbilityBeam:
 		c.beamTick(tx, p, tick)
 	case AbilityMeteor:
-		tx.AddParticle(pos, particle.Flame{Colour: gold})
 		if f.Land(p.OnGround(), c.now) {
 			c.meteorCrash(tx, p)
 		}
@@ -171,15 +165,7 @@ func (c *Controller) beamTick(tx *world.Tx, p *player.Player, tick int) {
 			if t, hit := rayBox(eye, dir, b.bbox(), length); hit {
 				length = t
 				c.fight.hurt(tx, beamDamage, beamPoise, dir.Mul(beamKnock), false)
-				if tick%6 == 0 {
-					tx.AddParticle(eye.Add(dir.Mul(t)), particle.HugeExplosion{})
-				}
 			}
-		}
-	}
-	if tick%2 == 0 {
-		for d := 1.0; d < length; d += 0.7 {
-			tx.AddParticle(eye.Add(dir.Mul(d)), particle.Dust{Colour: beamBlue})
 		}
 	}
 	if tick%10 == 0 {
@@ -206,19 +192,13 @@ func (c *Controller) flashStep(tx *world.Tx, p *player.Player, part *participant
 		}
 		dest = next
 	}
-	for d := 0.0; d < dest.Sub(start).Len(); d += 0.8 {
-		tx.AddParticle(start.Add(dir.Mul(d)).Add(mgl64.Vec3{0, 1, 0}), particle.Dust{Colour: color.RGBA{R: 255, G: 255, B: 255, A: 255}})
-	}
-	tx.AddParticle(start.Add(mgl64.Vec3{0, 1, 0}), particle.EndermanTeleport{})
 	p.Teleport(dest)
-	tx.AddParticle(dest.Add(mgl64.Vec3{0, 1, 0}), particle.EndermanTeleport{})
 	tx.PlaySound(dest, sound.Teleport{})
 }
 
 // meteorCrash is the meteor slam's landing: an AoE that hurts and throws the boss.
 func (c *Controller) meteorCrash(tx *world.Tx, p *player.Player) {
 	pos := p.Position()
-	tx.AddParticle(pos, particle.HugeExplosion{})
 	tx.PlaySound(pos, sound.Explosion{})
 	floor := tx.Block(cube.PosFromVec3(pos).Side(cube.FaceDown))
 	for r := 1.5; r <= meteorRadius; r += 1.5 {

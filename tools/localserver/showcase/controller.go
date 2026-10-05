@@ -72,7 +72,9 @@ type Controller struct {
 	fight   *bossFight
 	seed    uint64
 	pending atomic.Bool
-	intro   intro
+	// lockstep advances the showcase only through Step, one tick per client tick.
+	lockstep bool
+	intro    intro
 }
 
 // NewController returns the showcase of the world in dir, enabled if dir holds a marker from an
@@ -100,7 +102,7 @@ func (c *Controller) Configure(conf *server.Config) {
 	if len(reg.Types()) == 0 {
 		reg = entity.DefaultRegistry
 	}
-	conf.Entities = reg.Config().New(append(slices.Clone(reg.Types()), BossType))
+	conf.Entities = reg.Config().New(append(append(slices.Clone(reg.Types()), BossType), markerTypes...))
 	if c.Enabled() {
 		conf.Resources = append(conf.Resources, c.packs.Pack())
 	}
@@ -115,8 +117,17 @@ func (c *Controller) Attach(w *world.World) { c.w = w }
 // Enabled reports whether the world has the showcase on, so its pack must be offered.
 func (c *Controller) Enabled() bool { return c.arena != nil }
 
+// SetLockstep makes Step the only clock; call it before Run.
+func (c *Controller) SetLockstep() { c.lockstep = true }
+
+// Step advances the showcase one tick on its world's owner, as a lockstep world tick does.
+func (c *Controller) Step() *world.Task { return c.w.Do(c.tick) }
+
 // Run ticks the showcase until ctx ends.
 func (c *Controller) Run(ctx context.Context) {
+	if c.lockstep {
+		return
+	}
 	t := time.NewTicker(tickRate)
 	defer t.Stop()
 	for {
@@ -282,7 +293,7 @@ func (c *Controller) stopFight(tx *world.Tx) {
 	}
 	// Bosses saved by an earlier run come back without a controller; clear them.
 	for e := range tx.Entities() {
-		if e.H().Type() == BossType {
+		if t := e.H().Type(); t == BossType || slices.Contains(markerTypes, t) {
 			_ = e.Close()
 		}
 	}
@@ -290,7 +301,7 @@ func (c *Controller) stopFight(tx *world.Tx) {
 
 func (c *Controller) tick(tx *world.Tx) {
 	// A paused local world freezes the fight with it.
-	if c.arena == nil || tx.World().Paused() {
+	if c.arena == nil || (tx.World().Paused() && !c.lockstep) {
 		return
 	}
 	c.now += dt
@@ -380,7 +391,6 @@ func (c *Controller) bossFelled(tx *world.Tx) {
 		if c.participantOf(p) != nil {
 			p.SendTitle(victoryTitle())
 			p.PlaySound(soundNamed("random.levelup", 1, 0.8))
-			p.Message("§6Rest at the site of grace to face Varr again.")
 		}
 	}
 }

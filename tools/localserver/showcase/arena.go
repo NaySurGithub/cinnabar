@@ -79,7 +79,8 @@ func (a Arena) Block(pos cube.Pos) (world.Block, bool) {
 		}
 	case edge:
 		if entrance && h <= entranceHeight {
-			return block.Air{}, true
+			// Open to the eye, closed to knockback: a thrown player stays in the fight.
+			return block.Barrier{}, true
 		}
 		if h <= wallHeight {
 			return block.DeepslateBricks{Cracked: hash(x, z, h)%7 == 0}, true

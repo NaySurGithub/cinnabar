@@ -48,7 +48,6 @@ func (s showcaseReset) Run(_ cmd.Source, o *cmd.Output, tx *world.Tx) {
 		return
 	}
 	s.c.Reset(tx)
-	o.Print("Fight reset.")
 }
 
 type showcaseOff struct {
@@ -93,14 +92,13 @@ type abilityCmd struct {
 	Phase cmd.Optional[abilityPhase] `cmd:"phase"`
 }
 
-// Run is silent on success so a client mod can send it every press.
+// Run is silent so a client mod can send it every press.
 func (a abilityCmd) Run(src cmd.Source, o *cmd.Output, tx *world.Tx) {
 	p, ok := src.(*player.Player)
 	if !ok || tx == nil {
 		o.Error("only players have abilities")
 		return
 	}
-	if err := a.c.Request(tx, p, abilityNames[string(a.Name)], string(a.Phase.LoadOr(""))); err != nil {
-		o.Error(err)
-	}
+	// Refusals stay silent: the HUD shows energy and cooldowns, and chat lines would clutter play.
+	_ = a.c.Request(tx, p, abilityNames[string(a.Name)], string(a.Phase.LoadOr("")))
 }
