@@ -60,7 +60,7 @@ func NewAccount(ctx context.Context, path string, oauth oauth2.TokenSource, diag
 type derivedDeps struct {
 	discover func(context.Context) (*service.AuthorizationEnvironment, error)
 	login    func(context.Context, *service.AuthorizationEnvironment, xsapi.TokenAndSignaturer) (*playfab.Client, error)
-	services func(*service.AuthorizationEnvironment, service.SessionTicketSource, *service.Token) service.TokenSource
+	services func(env *service.AuthorizationEnvironment, tickets service.SessionTicketSource, token *service.Token, deviceID string) service.TokenSource
 	mint     func(context.Context, *service.AuthorizationEnvironment, service.TokenSource, *ecdsa.PublicKey) (string, error)
 }
 
@@ -80,8 +80,10 @@ func defaultDerivedDeps() derivedDeps {
 		login: func(ctx context.Context, env *service.AuthorizationEnvironment, signer xsapi.TokenAndSignaturer) (*playfab.Client, error) {
 			return playfab.LoginWithXbox(ctx, env.PlayFabTitleID, signer, playfab.ClientConfig{CreateAccount: true})
 		},
-		services: func(env *service.AuthorizationEnvironment, tickets service.SessionTicketSource, token *service.Token) service.TokenSource {
-			return env.ResumeTokenSource(tickets, clientplatform.TokenConfig(), token)
+		services: func(env *service.AuthorizationEnvironment, tickets service.SessionTicketSource, token *service.Token, deviceID string) service.TokenSource {
+			config := clientplatform.TokenConfig()
+			config.Device.ID = deviceID
+			return env.ResumeTokenSource(tickets, config, token)
 		},
 		mint: func(ctx context.Context, env *service.AuthorizationEnvironment, source service.TokenSource, key *ecdsa.PublicKey) (string, error) {
 			return minecraft.NewMultiplayerTokenSource(env, source).MultiplayerToken(ctx, key)
@@ -361,11 +363,16 @@ func (s *Account) ServiceToken(ctx context.Context) (*service.Token, error) {
 		defer lease.Close()
 		s.reloadLocked()
 	}
+	return s.serviceTokenLocked(ctx, lease != nil)
+}
+
+// serviceTokenLocked returns the shared service token, refreshing it when invalid; publish persists a change.
+func (s *Account) serviceTokenLocked(ctx context.Context, publish bool) (*service.Token, error) {
 	if err := s.ensureEnvironmentLocked(ctx); err != nil {
 		return nil, err
 	}
 	if s.services == nil {
-		s.services = s.deps.services(s.environment, sessionTickets{s}, s.service)
+		s.services = s.deps.services(s.environment, sessionTickets{s}, s.service, s.serviceDeviceIDLocked())
 	}
 	before, session := s.service, sessionFingerprint(s.session.Snapshot())
 	token, err := s.services.ServiceToken(ctx)
@@ -384,7 +391,7 @@ func (s *Account) ServiceToken(ctx context.Context) (*service.Token, error) {
 	if session != sessionFingerprint(s.session.Snapshot()) {
 		s.updateOAuthBindingLocked(ctx)
 	}
-	s.persistLocked(ctx, lease != nil)
+	s.persistLocked(ctx, publish)
 	return token, nil
 }
 
