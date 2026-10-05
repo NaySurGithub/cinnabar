@@ -1,9 +1,8 @@
 //! Draw destinations on whole physical pixels, where vanilla's UI render context puts them.
 //!
-//! `MinecraftUIRenderContext::drawImage` (reference 26.30, RVA 0x04437d80) multiplies an image's
-//! position by `GuiData`'s GUI scale (+0x5c), truncates it to a whole physical pixel and scales
-//! it back by the inverse (+0x60); the size is rounded up to whole pixels the same way:
-//! `x' = (int)(x * s) / s`, `w' = ceil(w * s) / s`. `flushText` (0x04436020) truncates text
+//! Vanilla multiplies an image's position by the GUI scale, truncates it to a whole physical
+//! pixel and scales it back by the inverse; the size is rounded up to whole pixels the same way:
+//! `x' = (int)(x * s) / s`, `w' = ceil(w * s) / s`. Vanilla truncates text
 //! positions the same way, and each line's alignment offset in the label's unscaled text space
 //! (`(int)(offset * s) / s` per line). Without it a control centred in an odd free space starts
 //! half a GUI unit off the pixel grid, and at an odd GUI scale its quad edges fall on half
@@ -14,7 +13,7 @@
 const EPSILON: f32 = 1.0 / 1024.0;
 
 /// `rect` (`x`, `y`, `w`, `h` in GUI units) as logical `[x0, y0, x1, y1]` whose physical edges
-/// are whole pixels, as `drawImage` places an image: `pixels` physical pixels and `logical`
+/// are whole pixels, as vanilla places an image: `pixels` physical pixels and `logical`
 /// logical pixels per GUI unit (their ratio is the platform DPI).
 pub(super) fn snapped(rect: [f64; 4], pixels: f32, logical: f32) -> [f32; 4] {
     let [x, y, w, h] = rect.map(|value| value as f32 * pixels);
@@ -24,7 +23,7 @@ pub(super) fn snapped(rect: [f64; 4], pixels: f32, logical: f32) -> [f32; 4] {
     [x0, y0, x0 + size(w), y0 + size(h)].map(|edge| edge * to_logical)
 }
 
-/// `rect` moved to a whole physical pixel with its size kept, as `flushText` places text.
+/// `rect` moved to a whole physical pixel with its size kept, as vanilla places text.
 pub(super) fn positioned(rect: [f64; 4], pixels: f32, logical: f32) -> [f32; 4] {
     let [x, y, w, h] = rect.map(|value| value as f32 * pixels);
     let to_logical = logical / pixels;
@@ -32,7 +31,7 @@ pub(super) fn positioned(rect: [f64; 4], pixels: f32, logical: f32) -> [f32; 4] 
     [x0, y0, x0 + w * to_logical, y0 + h * to_logical]
 }
 
-/// The grid, in 1/65536 logical pixels, that `flushText` truncates a label's per-line alignment
+/// The grid, in 1/65536 logical pixels, that vanilla truncates a label's per-line alignment
 /// offsets onto: it snaps them to whole physical pixels in the label's unscaled text space, so a
 /// label at text scale `scale` steps by `scale` physical pixels.
 pub(super) fn align_grid_65536(scale: f32, pixels: f32, logical: f32) -> u32 {
