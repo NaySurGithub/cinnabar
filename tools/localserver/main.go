@@ -3,7 +3,7 @@
 // It prints "ready" once listening and reads "pause", "resume" and "stop" lines on stdin, and
 // "experience reload <id>" lines when it hosts Experiences; stdin EOF and SIGINT/SIGTERM also stop
 // it. docs/experience-runtime.md describes the Experiences of -experiences and the client parts of
-// the -extension flags.
+// the -extension flags. /showcase souls opts a world into the boss showcase of package showcase.
 package main
 
 import (
@@ -27,6 +27,7 @@ import (
 
 	"github.com/hashimthearab/rust-mcbe/tools/localserver/experience"
 	"github.com/hashimthearab/rust-mcbe/tools/localserver/extension"
+	"github.com/hashimthearab/rust-mcbe/tools/localserver/showcase"
 )
 
 // experienceDataDir is the directory under -dir that holds the Experiences' private data.
@@ -72,12 +73,21 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		}
 		return fmt.Errorf("configure server: %w", err)
 	}
+	show, err := showcase.NewController(cfg.dir, cfg.addr, logger)
+	if err != nil {
+		if exps != nil {
+			err = errors.Join(err, exps.closeSupervisors())
+		}
+		return err
+	}
+	show.Configure(&conf)
 	if ext != nil {
 		for i, listen := range conf.Listeners {
 			conf.Listeners[i] = ext.Listener(listen)
 		}
 	}
 	srv := conf.New()
+	show.Attach(srv.World())
 	worlds := []*world.World{srv.World(), srv.Nether(), srv.End()}
 	cfg.applyTo(worlds...)
 	cmds := commands{pause: func(paused bool) { setPaused(worlds, paused) }}
@@ -110,18 +120,25 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		deliverClientMessages(ext, srv.Player, host, logger)
 	}
 	registerChatCommands()
+	showcase.RegisterCommands(show)
 	srv.Listen()
 	accepting := make(chan struct{})
 	go func() {
 		defer close(accepting)
-		for range srv.Accept() {
+		for p := range srv.Accept() {
+			show.Join(p)
 		}
 	}()
+	showCtx, stopShow := context.WithCancel(context.Background())
+	var showing sync.WaitGroup
+	showing.Go(func() { show.Run(showCtx) })
 	fmt.Fprintln(stdout, "ready")
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	serveCommands(ctx, stdin, cmds)
+	stopShow()
+	showing.Wait()
 	closeErr := srv.Close()
 	<-accepting
 	if host != nil {
