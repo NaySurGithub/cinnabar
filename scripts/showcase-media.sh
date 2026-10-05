@@ -4,6 +4,7 @@
 # transcodes it to the client's WebM AV1+Opus profile, signs the `showcase` client part bundle,
 # seeds it into a client's cache and prints the server and client commands.
 # Usage: scripts/showcase-media.sh <client-user-data-dir> <world-dir> [media-addr]
+# A client run from a checkout keeps its user data in that checkout's .local directory.
 set -euo pipefail
 
 if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
@@ -75,7 +76,7 @@ Server (from $root/tools/localserver):
     -extension-key "$out/server.seed" -extension-audience 127.0.0.1:19132 \\
     -extension-cxb "$out/cxb" -extension-media "$out/media" -extension-media-addr $addr
 
-Client (join 127.0.0.1:19132, allow the client part, then run /intro):
+Client (join 127.0.0.1:19132, allow the client part, then run /showcase souls or /intro):
   cargo build -p mod-host --features media
   CINNABAR_DEV_SERVER_EXPERIENCES=1 CINNABAR_DEV_MEDIA_CA="$ca" cargo run -p bedrock-client
 EOF

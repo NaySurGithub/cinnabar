@@ -269,6 +269,13 @@ func (s *Server) Send(player uuid.UUID, exp, channel string, schema uint16, payl
 	return c != nil && c.send(exp, channel, schema, payload)
 }
 
+// Active reports whether player runs an active client part.
+func (s *Server) Active(player uuid.UUID) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.active[player] != nil
+}
+
 // activate makes c its player's active connection.
 func (s *Server) activate(c *Conn) {
 	s.mu.Lock()

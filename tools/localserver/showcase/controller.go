@@ -72,6 +72,7 @@ type Controller struct {
 	fight   *bossFight
 	seed    uint64
 	pending atomic.Bool
+	intro   intro
 }
 
 // NewController returns the showcase of the world in dir, enabled if dir holds a marker from an
@@ -182,7 +183,9 @@ func (c *Controller) Enable(tx *world.Tx, p *player.Player) error {
 	arena.Build(tx)
 	c.arena = &arena
 	tx.World().SetSpawn(cube.PosFromVec3(arena.PlayerSpawn()))
-	c.startFight(tx)
+	if !c.beginIntro(tx) {
+		c.startFight(tx)
+	}
 	for e := range tx.Players() {
 		q := e.(*player.Player)
 		if part := c.lookup(q.UUID()); part != nil {
@@ -222,6 +225,7 @@ func (c *Controller) Disable(tx *world.Tx) error {
 		return err
 	}
 	c.stopFight(tx)
+	c.endIntro(c.arenaPlayers(tx))
 	for e := range tx.Players() {
 		p := e.(*player.Player)
 		if part := c.lookup(p.UUID()); part != nil {
@@ -243,6 +247,7 @@ func (c *Controller) Reset(tx *world.Tx) {
 	if c.arena == nil {
 		return
 	}
+	c.endIntro(c.arenaPlayers(tx))
 	c.startFight(tx)
 	for e := range tx.Players() {
 		p := e.(*player.Player)
@@ -250,6 +255,17 @@ func (c *Controller) Reset(tx *world.Tx) {
 			c.returnToGrace(p, part)
 		}
 	}
+}
+
+// arenaPlayers lists the participants in the arena.
+func (c *Controller) arenaPlayers(tx *world.Tx) []*player.Player {
+	var players []*player.Player
+	for e := range tx.Players() {
+		if p := e.(*player.Player); c.participantOf(p) != nil {
+			players = append(players, p)
+		}
+	}
+	return players
 }
 
 func (c *Controller) startFight(tx *world.Tx) {
@@ -278,15 +294,15 @@ func (c *Controller) tick(tx *world.Tx) {
 		return
 	}
 	c.now += dt
-	present := false
+	var present []*player.Player
 	for e := range tx.Players() {
 		p := e.(*player.Player)
 		if part := c.participantOf(p); part != nil {
-			present = true
+			present = append(present, p)
 			c.tickPlayer(tx, p, part)
 		}
 	}
-	if !present {
+	if len(present) == 0 || c.tickIntro(present) {
 		return
 	}
 	// A restarted server spawns its boss once someone is there to fight it.
@@ -330,6 +346,10 @@ func (c *Controller) tickPlayer(tx *world.Tx, p *player.Player, part *participan
 				p.SendBossBar(bossbar.New(BossName).WithHealthPercentage(frac).WithColour(bossbar.Red()))
 			}
 		}
+	} else if part.bossBar != 0 {
+		// No boss yet, as while the intro plays.
+		part.bossBar = 0
+		p.RemoveBossBar()
 	}
 }
 

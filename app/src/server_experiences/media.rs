@@ -256,8 +256,10 @@ impl Media {
                 let _ = audio.push(&block);
             }
             let playback = slot.player.playback();
+            // Audio keeps draining through a video rebuffer, so the decoder never stalls behind
+            // a full PCM queue; drift correction realigns it afterwards.
+            audio.pause(!playback.playing);
             let running = playback.playing && !slot.player.buffering;
-            audio.pause(!running);
             audio.update(settings, playback.volume, muted, None, None);
             if running
                 && let Some(audible) = audio.audible_position_us()
@@ -297,6 +299,7 @@ impl Media {
     }
 
     fn event(&mut self, (bundle, id): &(String, String), kind: EventKind, position_us: u64) {
+        bevy::log::info!(media = %id, ?kind, position_us, "server media event");
         if self.events.len() >= MAX_EVENTS {
             return;
         }

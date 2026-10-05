@@ -23,7 +23,7 @@ const (
 )
 
 // TimeoutSlack is how long past the video's duration a play waits for its end before giving up.
-const TimeoutSlack = 10 * time.Second
+const TimeoutSlack = 30 * time.Second
 
 // Screen actions, as the `showcase.screen` choice field numbers them.
 const (
@@ -87,6 +87,9 @@ type Cinema struct {
 type play struct {
 	done func(Outcome)
 	stop func() bool
+	// staleStops counts stop events still due from the play this one replaced.
+	staleStops int
+	playing    bool
 }
 
 // New returns a Cinema that times a play out after duration plus TimeoutSlack.
@@ -104,28 +107,32 @@ func New(send Sender, duration time.Duration) *Cinema {
 // Play shows the intro on screen for player and calls done once it is over. A play already running
 // for player is skipped first.
 func (c *Cinema) Play(player uuid.UUID, screen Screen, done func(Outcome)) {
-	c.Skip(player)
+	replaced := c.Skip(player)
 	if !c.send.Send(player, BundleID, ScreenChannel, Schema, screenRecord(screen, actionPlay)) {
 		done(Fallback)
 		return
 	}
 	p := &play{done: done}
+	if replaced {
+		p.staleStops = 1
+	}
 	c.mu.Lock()
 	c.plays[player] = p
 	p.stop = c.after(c.timeout, func() { c.finish(player, p, Timeout) })
 	c.mu.Unlock()
 }
 
-// Skip stops player's play, if any, and finishes it as Skipped.
-func (c *Cinema) Skip(player uuid.UUID) {
+// Skip stops player's play, if any, finishes it as Skipped and reports whether there was one.
+func (c *Cinema) Skip(player uuid.UUID) bool {
 	c.mu.Lock()
 	p := c.plays[player]
 	c.mu.Unlock()
 	if p == nil {
-		return
+		return false
 	}
 	c.send.Send(player, BundleID, ScreenChannel, Schema, screenRecord(Screen{Width: 1, Height: 1}, actionStop))
 	c.finish(player, p, Skipped)
+	return true
 }
 
 // Receive handles a `showcase.media` event from player's client part; it reports whether the
@@ -136,6 +143,18 @@ func (c *Cinema) Receive(player uuid.UUID, channel string, schema uint16, payloa
 	}
 	var outcome Outcome
 	switch *payload[0].Choice {
+	case eventPlaying:
+		// Time the play from its first frame, so slow startup or rebuffering is not a timeout.
+		c.mu.Lock()
+		if p := c.plays[player]; p != nil {
+			p.playing = true
+			if p.stop != nil {
+				p.stop()
+			}
+			p.stop = c.after(c.timeout, func() { c.finish(player, p, Timeout) })
+		}
+		c.mu.Unlock()
+		return true
 	case eventEnded:
 		outcome = Ended
 	case eventStopped:
@@ -145,11 +164,21 @@ func (c *Cinema) Receive(player uuid.UUID, channel string, schema uint16, payloa
 	}
 	c.mu.Lock()
 	p := c.plays[player]
+	if p != nil && outcome == Stopped && !p.playing && p.staleStops > 0 {
+		p.staleStops--
+		p = nil
+	}
 	c.mu.Unlock()
 	if p != nil {
 		c.finish(player, p, outcome)
 	}
 	return true
+}
+
+// Ready reports whether player's client part is active, so a Play would not fall back at once.
+func (c *Cinema) Ready(player uuid.UUID) bool {
+	active, ok := c.send.(interface{ Active(uuid.UUID) bool })
+	return !ok || active.Active(player)
 }
 
 // finish ends p with outcome unless it already ended.
@@ -164,6 +193,10 @@ func (c *Cinema) finish(player uuid.UUID, p *play, outcome Outcome) {
 	c.mu.Unlock()
 	if stop != nil {
 		stop()
+	}
+	if outcome != Skipped {
+		// Take the screen down; Skip has already sent its stop.
+		c.send.Send(player, BundleID, ScreenChannel, Schema, screenRecord(Screen{Width: 1, Height: 1}, actionStop))
 	}
 	p.done(outcome)
 }

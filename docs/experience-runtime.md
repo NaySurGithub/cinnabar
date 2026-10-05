@@ -229,7 +229,7 @@ fetches loopback media only with `CINNABAR_DEV_SERVER_EXPERIENCES=1` and
 `CINNABAR_DEV_MEDIA_CA` naming that file. `/intro` plays the video on a screen ahead of the
 caller and `/intro stop` skips it; other code calls `cinema.Play` and `cinema.Skip`, whose callback
 fires once when the client reports the end or a stop, on skip, at once without a client part, or
-after the duration plus ten seconds.
+after the duration plus thirty seconds from the first frame.
 
 ## Limits
 

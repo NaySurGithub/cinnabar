@@ -90,6 +90,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		return err
 	}
 	show.Configure(&conf)
+	if cin != nil {
+		show.SetIntro(cin)
+	}
 	if ext != nil {
 		for i, listen := range conf.Listeners {
 			conf.Listeners[i] = ext.Listener(listen)

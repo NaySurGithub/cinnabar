@@ -98,7 +98,7 @@ pub fn decode<R: Read + Seek>(
     let audio_track = audio.track_number().get();
     let scale = file.info().timestamp_scale().get();
     let mut settings = Settings::new();
-    settings.set_n_threads(2);
+    settings.set_n_threads(4);
     settings.set_max_frame_delay(1);
     settings.set_frame_size_limit(MAX_WIDTH * MAX_HEIGHT);
     settings.set_strict_std_compliance(true);
@@ -275,16 +275,10 @@ mod tests {
             },
         );
         let mut outputs = Vec::new();
-        decode(
-            reader,
-            &descriptor,
-            start_us,
-            &Contained::for_test(),
-            |output| {
-                outputs.push(output);
-                Ok(())
-            },
-        )
+        decode(reader, &descriptor, start_us, &Contained(()), |output| {
+            outputs.push(output);
+            Ok(())
+        })
         .unwrap();
         outputs
     }
@@ -349,11 +343,7 @@ mod tests {
         let (parent_read, mut child_write) = std::io::pipe().unwrap();
         let (mut child_read, parent_write) = std::io::pipe().unwrap();
         let child = std::thread::spawn(move || {
-            super::super::helper::serve_on(
-                &mut child_read,
-                &mut child_write,
-                &Contained::for_test(),
-            )
+            super::super::helper::serve_on(&mut child_read, &mut child_write, &Contained(()))
         });
         let (sender, receiver) = std::sync::mpsc::sync_channel(64);
         let consumer = std::thread::spawn(move || receiver.into_iter().collect::<Vec<_>>());
@@ -391,11 +381,7 @@ mod tests {
         let (parent_read, mut child_write) = std::io::pipe().unwrap();
         let (mut child_read, parent_write) = std::io::pipe().unwrap();
         let child = std::thread::spawn(move || {
-            super::super::helper::serve_on(
-                &mut child_read,
-                &mut child_write,
-                &Contained::for_test(),
-            )
+            super::super::helper::serve_on(&mut child_read, &mut child_write, &Contained(()))
         });
         let (sender, _receiver) = std::sync::mpsc::sync_channel(64);
         let result = serve_child(

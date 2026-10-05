@@ -1,7 +1,8 @@
 //! The real media helper process: one decode over stdio under its memory ceiling.
 
+#[cfg(feature = "media")]
+use server_experience::media::Output;
 use server_experience::media::{
-    Output,
     descriptor::{Descriptor, Profile},
     ipc::{self, Reply, Request, Start},
     worker::HELPER_COMMAND,

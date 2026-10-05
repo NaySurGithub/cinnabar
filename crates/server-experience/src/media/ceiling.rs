@@ -105,16 +105,9 @@ unsafe impl GlobalAlloc for BoundedAllocator {
     }
 }
 
-/// Proof that this process runs under the media ceiling; decoding requires it.
-pub struct Contained(());
-
-impl Contained {
-    /// Trusted fixtures decode in the test process without a helper.
-    #[cfg(all(test, feature = "developer-media"))]
-    pub(crate) fn for_test() -> Self {
-        Self(())
-    }
-}
+/// Proof that this process runs under the media ceiling; decoding requires it. Only this
+/// module's parent builds one directly, for trusted fixtures in tests.
+pub struct Contained(pub(super) ());
 
 /// Arms `allocator` (which must be the process's global allocator) and the OS data limit.
 pub fn contain_process(allocator: &'static BoundedAllocator) -> Result<Contained> {
