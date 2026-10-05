@@ -18,6 +18,8 @@ const MAX_IMPORT_WRITES: u32 = 8;
 mod controls;
 #[path = "gameplay.rs"]
 mod gameplay;
+#[path = "render.rs"]
+mod render;
 
 struct State {
     limits: StoreLimits,
@@ -36,6 +38,9 @@ struct State {
     camera_delta: Option<CameraDelta>,
     controls: controls::ControlState,
     world: gameplay::WorldState,
+    render: render::RenderState,
+    incoming_cues: Vec<cinnabar::extension::events::Cue>,
+    cue_polls: u32,
 }
 
 impl State {
@@ -64,6 +69,9 @@ impl State {
             camera_delta: None,
             controls: controls::ControlState::new(settings),
             world: gameplay::WorldState::default(),
+            render: render::RenderState::new(),
+            incoming_cues: Vec::new(),
+            cue_polls: 0,
         }
     }
 }
@@ -161,6 +169,7 @@ impl Instance {
         state.camera_delta = None;
         state.controls.begin_frame();
         state.world.begin_frame();
+        state.render.begin_frame();
         if !self.active {
             return Ok(());
         }
@@ -174,6 +183,7 @@ impl Instance {
         state.environment_writes = 0;
         state.gameplay_reads = 0;
         state.camera_writes = 0;
+        state.cue_polls = 0;
         state.snapshot = snapshot;
         state.world.advance_command_window(snapshot_seconds);
         state.world.mobs = mobs;
@@ -190,9 +200,12 @@ impl Instance {
             self.store.data_mut().camera_delta = None;
             self.store.data_mut().controls.revoke();
             self.store.data_mut().world = gameplay::WorldState::default();
+            self.store.data_mut().render.revoke();
+            self.store.data_mut().incoming_cues.clear();
             bail!("mod quarantined after a guest trap: {error:#}");
         }
         commit(&mut self.store);
+        self.store.data_mut().incoming_cues.clear();
         self.store.data_mut().snapshot = None;
         self.store.data_mut().world.mobs = Vec::new();
         self.store.data_mut().controls.frame = crate::empty_controls();
@@ -249,6 +262,17 @@ impl Instance {
         self.store.data_mut().controls.dirty_settings = None;
     }
 
+    /// Cues the next callback may poll; they last exactly one callback.
+    pub(super) fn deliver_cues(&mut self, cues: Vec<ModCue>) {
+        let state = self.store.data_mut();
+        state.incoming_cues = gameplay::incoming(cues);
+    }
+
+    pub(super) fn render(&self) -> (&mod_render::RenderOutput, u64) {
+        let render = &self.store.data().render;
+        (render.output(), render.generation())
+    }
+
     pub(super) fn settings(&self) -> &str {
         self.store.data().controls.settings()
     }
@@ -259,6 +283,7 @@ fn commit(store: &mut Store<State>) {
     let state = store.data_mut();
     state.controls.commit();
     state.world.commit();
+    state.render.commit();
     state.camera_delta = state.pending_camera.take();
     if let Some(ticks) = state.pending_time.take() {
         state.time_override = ticks;
