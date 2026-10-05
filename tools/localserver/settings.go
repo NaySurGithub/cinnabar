@@ -28,6 +28,8 @@ type settings struct {
 	// extensionMedia is a directory served over loopback HTTPS at extensionMediaAddr for client
 	// part media; empty for none.
 	extensionMedia, extensionMediaAddr string
+	// lockstep ticks the world once per player input packet instead of on the wall clock.
+	lockstep bool
 }
 
 func parseSettings(args []string, stderr io.Writer) (settings, error) {
@@ -46,6 +48,7 @@ func parseSettings(args []string, stderr io.Writer) (settings, error) {
 	flags.StringVar(&s.extensionCXB, "extension-cxb", "", "directory of client part bundles (.cxb) to offer")
 	flags.StringVar(&s.extensionMedia, "extension-media", "", "directory of client part media served over loopback HTTPS; needs the -extension flags")
 	flags.StringVar(&s.extensionMediaAddr, "extension-media-addr", cinema.DefaultAddr, "IPv4 loopback ip:port of the -extension-media server")
+	flags.BoolVar(&s.lockstep, "lockstep", false, "tick once per client tick, for fixed-clock recording")
 	if err := flags.Parse(args); err != nil {
 		return settings{}, err
 	}

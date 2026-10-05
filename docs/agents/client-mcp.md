@@ -9,8 +9,8 @@ schemas document every argument.
   joins need `allow_remote`, since they sign in with the configured account; ask the owner first.
 - `input` sends real key and mouse events, so mods' ability keys (`Digit1`…) work; `F1` hides the HUD.
 - `record_start` needs `ffmpeg` on PATH. Its default fixed clock steps game time exactly 1/fps per
-  rendered frame, so it suits the local showcase server; record remote servers with
-  `fixed_clock: false`. Audio is captured to a WAV and muxed in.
+  rendered frame; start the local server with `local_server.args: ["-lockstep"]` so it ticks once
+  per client tick and server time follows that clock. Record remote servers with `fixed_clock: false`. Audio is captured to a WAV and muxed in.
 
 ```json
 { "mcpServers": { "cinnabar": { "command": "target/debug/cinnabar-mcp", "args": ["--repo", "."] } } }

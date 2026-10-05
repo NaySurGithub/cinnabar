@@ -118,3 +118,32 @@ func TestEnableDuringTheDeathScreenClearsIt(t *testing.T) {
 		}
 	})
 }
+
+func TestBossEventsSpawnMarkersForTheEffectsMod(t *testing.T) {
+	withArena(t, func(c *Controller, tx *world.Tx, p *player.Player, _ *participant) {
+		b, _ := c.fight.entity(tx)
+		p.Teleport(b.Position().Add(mgl64.Vec3{0, 0, 2}))
+		markers := func(want markerType) int {
+			n := 0
+			for e := range tx.Entities() {
+				if e.H().Type() == want {
+					n++
+				}
+			}
+			return n
+		}
+		for range 200 {
+			c.tick(tx)
+			if markers(markerTelegraph) > 0 {
+				break
+			}
+		}
+		if markers(markerTelegraph) == 0 {
+			t.Fatal("a wind-up spawned no telegraph marker")
+		}
+		c.fight.hurt(tx, 1, bossMaxPoise, mgl64.Vec3{}, true)
+		if markers(markerStagger) == 0 {
+			t.Fatal("a poise break spawned no stagger marker")
+		}
+	})
+}

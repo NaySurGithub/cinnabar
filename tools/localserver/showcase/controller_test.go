@@ -22,7 +22,7 @@ func withArena(t *testing.T, f func(c *Controller, tx *world.Tx, p *player.Playe
 	if err != nil {
 		t.Fatal(err)
 	}
-	reg := entity.DefaultRegistry.Config().New(append(slices.Clone(entity.DefaultRegistry.Types()), BossType))
+	reg := entity.DefaultRegistry.Config().New(append(append(slices.Clone(entity.DefaultRegistry.Types()), BossType), markerTypes...))
 	w := world.Config{Synchronous: true, Entities: reg}.New()
 	t.Cleanup(func() { _ = w.Close() })
 	c.Attach(w)

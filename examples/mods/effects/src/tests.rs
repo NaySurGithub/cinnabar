@@ -246,3 +246,14 @@ fn showcase_cues_drive_abilities_and_silence_own_keys() {
         "half health pulses phase 2"
     );
 }
+
+#[test]
+fn server_markers_raise_their_boss_cues() {
+    let mut fx = Effects::new();
+    let (name, extra) = crate::marker_cue("cinnabar:fx_telegraph").unwrap();
+    let mut values = vec![1.0, 2.0, 3.0];
+    values.extend_from_slice(extra);
+    fx.handle_cue(name, &values);
+    assert_eq!(fx.telegraphs.len(), 1);
+    assert!(crate::marker_cue("cinnabar:hollow_warden").is_none());
+}

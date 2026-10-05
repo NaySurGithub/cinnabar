@@ -1,6 +1,8 @@
 package showcase
 
 import (
+	"time"
+
 	"github.com/df-mc/dragonfly/server/block/cube"
 	"github.com/df-mc/dragonfly/server/entity"
 	"github.com/df-mc/dragonfly/server/world"
@@ -76,3 +78,38 @@ func (b *bossEntity) move(tx *world.Tx, mc *entity.MovementComputer, yaw float64
 
 // bbox is the boss's collision box in world space.
 func (b *bossEntity) bbox() cube.BBox { return BossType.BBox(b).Translate(b.data.Pos) }
+
+// markerLife is how long a marker stays: long enough for the effects mod to sample it.
+const markerLife = 600 * time.Millisecond
+
+// Invisible actors the client effects mod reads as boss events it cannot otherwise see.
+var (
+	markerTelegraph = markerType{"cinnabar:fx_telegraph"}
+	markerSlam      = markerType{"cinnabar:fx_slam"}
+	markerStagger   = markerType{"cinnabar:fx_stagger"}
+	markerPhase2    = markerType{"cinnabar:fx_phase2"}
+	markerTypes     = []world.EntityType{markerTelegraph, markerSlam, markerStagger, markerPhase2}
+)
+
+type markerType struct{ id string }
+
+func (m markerType) Open(tx *world.Tx, handle *world.EntityHandle, data *world.EntityData) world.Entity {
+	return markerEntity{entity.Open(tx, handle, data)}
+}
+func (m markerType) EncodeEntity() string                     { return m.id }
+func (markerType) BBox(world.Entity) cube.BBox                { return cube.BBox{} }
+func (markerType) EncodeNBT(*world.EntityData) map[string]any { return nil }
+func (markerType) DecodeNBT(_ map[string]any, data *world.EntityData) {
+	// A marker restored from a save has outlived its event.
+	data.Data = entity.StationaryBehaviourConfig{ExistenceDuration: time.Millisecond}.New()
+}
+
+type markerEntity struct{ *entity.Ent }
+
+// Invisible is read by the session's entity metadata.
+func (markerEntity) Invisible() bool { return true }
+
+func spawnMarker(tx *world.Tx, t markerType, pos mgl64.Vec3) {
+	conf := entity.StationaryBehaviourConfig{ExistenceDuration: markerLife}
+	tx.AddEntity(world.EntitySpawnOpts{Position: pos}.New(t, conf))
+}

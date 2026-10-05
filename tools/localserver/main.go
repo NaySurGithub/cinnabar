@@ -90,6 +90,14 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		return err
 	}
 	show.Configure(&conf)
+	var step *lockstep
+	if cfg.lockstep {
+		step = newLockstep()
+		show.SetLockstep()
+		for i, listen := range conf.Listeners {
+			conf.Listeners[i] = step.Listener(listen)
+		}
+	}
 	if cin != nil {
 		show.SetIntro(cin)
 	}
@@ -103,6 +111,12 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	worlds := []*world.World{srv.World(), srv.Nether(), srv.End()}
 	cfg.applyTo(worlds...)
 	cmds := commands{pause: func(paused bool) { setPaused(worlds, paused) }}
+	if step != nil {
+		// The client's ticks drive the world, so the wall-clock loop stays paused throughout.
+		setPaused(worlds, true)
+		cmds.pause = func(bool) {}
+		go step.run(srv.World(), show, logger)
+	}
 	var host *experience.Host
 	var running sync.WaitGroup
 	runCtx, stopRunning := context.WithCancel(context.Background())

@@ -147,19 +147,19 @@ func (f *bossFight) apply(tx *world.Tx, b *bossEntity, ev BossEvent, target *pla
 		}
 		switch f.boss.Attack {
 		case AttackSlam:
-			tx.AddParticle(pos, particle.HugeExplosion{})
+			spawnMarker(tx, markerSlam, pos)
 			tx.PlaySound(pos, soundNamed("mob.warden.attack_impact", 2, 0.6))
 			tx.PlaySound(pos, sound.Explosion{})
 			ring(tx, pos, slamRadius, 32, particle.BlockBreak{Block: block.StoneBricks{}})
 			f.hitPlayers(tx, func(p *player.Player) bool {
 				return flatDist(p.Position(), pos) <= slamRadius && p.Position()[1]-pos[1] < 2
-			}, pos, 1.0, 0.6)
+			}, pos, 0.7, 0.45)
 		case AttackSwipe:
 			tx.PlaySound(pos, soundNamed("mob.warden.attack_impact", 1.5, 1.1))
 			arc(tx, pos, f.yaw, swipeRadius, particle.Flame{Colour: ember})
 			f.hitPlayers(tx, func(p *player.Player) bool {
 				return inArc(pos, f.yaw, p.Position(), swipeRadius, swipeHalfAngle)
-			}, pos, 0.8, 0.4)
+			}, pos, 0.6, 0.35)
 		case AttackLunge:
 			f.lunge = yawDir(f.yaw)
 			f.lungeOn = map[*world.EntityHandle]bool{}
@@ -167,6 +167,7 @@ func (f *bossFight) apply(tx *world.Tx, b *bossEntity, ev BossEvent, target *pla
 		}
 	case EventStagger:
 		f.knock = mgl64.Vec3{}
+		spawnMarker(tx, markerStagger, pos)
 		tx.PlaySound(pos, soundNamed("mob.ravager.stun", 2, 0.8))
 	case EventPhase2:
 		f.phase2(tx, b)
@@ -178,6 +179,9 @@ func (f *bossFight) apply(tx *world.Tx, b *bossEntity, ev BossEvent, target *pla
 // telegraph is the wind-up cue: a sound, an animation and a particle outline of the coming hit.
 func (f *bossFight) telegraph(tx *world.Tx, b *bossEntity, target *player.Player) {
 	pos := b.Position()
+	if f.boss.Attack != AttackLunge {
+		spawnMarker(tx, markerTelegraph, pos)
+	}
 	switch f.boss.Attack {
 	case AttackSlam:
 		tx.PlaySound(pos, soundNamed("mob.warden.sonic_charge", 2, 0.7))
@@ -226,7 +230,7 @@ func (f *bossFight) lungeHits(tx *world.Tx, b *bossEntity) {
 		}
 		f.lungeOn[p.H()] = true
 		return true
-	}, pos, 1.1, 0.5)
+	}, pos, 0.7, 0.4)
 }
 
 // hurt damages the boss with a knockback impulse; poise breaks stagger it.
@@ -250,6 +254,7 @@ func (f *bossFight) hurt(tx *world.Tx, dmg, poise float64, impulse mgl64.Vec3, h
 
 func (f *bossFight) phase2(tx *world.Tx, b *bossEntity) {
 	pos := b.Position()
+	spawnMarker(tx, markerPhase2, pos)
 	tx.PlayEntityAnimation(b, world.NewEntityAnimation("animation.warden.roar"))
 	tx.PlaySound(pos, soundNamed("mob.warden.roar", 3, 0.7))
 	for r := 1.0; r <= 6; r++ {

@@ -20,6 +20,18 @@ pub use effects::Effects;
 
 pub type Point = [f32; 3];
 
+/// The cue a server marker actor stands for, with the values that follow its position. The
+/// local showcase server spawns these briefly at boss events the client cannot otherwise see.
+pub fn marker_cue(type_id: &str) -> Option<(&'static str, &'static [f32])> {
+    match type_id {
+        "cinnabar:fx_telegraph" => Some(("boss.telegraph", &[5.0, 1.0])),
+        "cinnabar:fx_slam" => Some(("boss.slam", &[])),
+        "cinnabar:fx_stagger" => Some(("camera.parry", &[])),
+        "cinnabar:fx_phase2" => Some(("boss.phase2", &[])),
+        _ => None,
+    }
+}
+
 /// Effect triggers; positions are world block coordinates at the feet.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Event {

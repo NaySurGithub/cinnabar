@@ -28,7 +28,7 @@ func TestArenaWallsEncloseTheFloorExceptTheEntrance(t *testing.T) {
 			{100 + i, y, -30 - arenaHalf}, {100 + i, y, -30 + arenaHalf},
 			{100 - arenaHalf, y, -30 + i}, {100 + arenaHalf, y, -30 + i},
 		} {
-			if isAir(blockAt(t, a, pos)) {
+			if b := blockAt(t, a, pos); isAir(b) || b == (block.Barrier{}) {
 				gaps++
 				if pos.Z() != -30+arenaHalf || abs(pos.X()-100) > entranceHalf {
 					t.Errorf("gap in the wall at %v", pos)

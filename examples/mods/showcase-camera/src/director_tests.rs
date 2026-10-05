@@ -36,7 +36,7 @@ fn idle_frames_hold_an_over_the_shoulder_rig_within_host_bounds() {
     let output = director.step(&frame(&[], &[]));
     let rig = output.rig.unwrap();
     assert!(rig.offset[0] > 0.0 && rig.offset[1] > 0.0 && rig.offset[2] > 2.0);
-    assert_eq!((rig.roll, rig.fov_delta), (0.0, 0.0));
+    assert_eq!((rig.roll, rig.fov_delta), (0.0, SHOULDER_FOV));
     assert!(output.commands.is_empty() && output.cues.is_empty());
     assert_eq!(output.rotate, None);
 }
@@ -137,15 +137,15 @@ fn flash_step_kicks_the_fov_and_eases_back() {
     let mut director = Director::default();
     let output = director.step(&frame(&["Digit3"], &[]));
     assert_eq!(output.commands, ["/ability flash"]);
-    let mut peak = output.rig.unwrap().fov_delta;
+    let mut peak = output.rig.unwrap().fov_delta - SHOULDER_FOV;
     for _ in 0..6 {
-        peak = peak.max(director.step(&frame(&[], &[])).rig.unwrap().fov_delta);
+        peak = peak.max(director.step(&frame(&[], &[])).rig.unwrap().fov_delta - SHOULDER_FOV);
     }
     assert!(peak > 10.0);
     for _ in 0..60 {
         director.step(&frame(&[], &[]));
     }
-    assert_eq!(director.step(&frame(&[], &[])).rig.unwrap().fov_delta, 0.0);
+    assert_eq!(director.step(&frame(&[], &[])).rig.unwrap().fov_delta, SHOULDER_FOV);
 }
 
 #[test]
@@ -200,7 +200,7 @@ fn parry_stretches_a_flash_kick_over_more_real_time() {
         }
         director.step(&frame(&["Digit3"], &[]));
         (0..200)
-            .take_while(|_| director.step(&frame(&[], &[])).rig.unwrap().fov_delta > 0.0)
+            .take_while(|_| director.step(&frame(&[], &[])).rig.unwrap().fov_delta > SHOULDER_FOV)
             .count()
     };
     assert!(kick_frames(true) > kick_frames(false));
