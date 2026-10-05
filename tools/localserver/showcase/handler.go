@@ -27,7 +27,13 @@ type handler struct {
 	c *Controller
 }
 
-func (h *handler) HandleQuit(p *player.Player) { h.c.leave(p) }
+func (h *handler) HandleQuit(p *player.Player) { h.c.leave(p, true) }
+
+func (h *handler) HandleChangeWorld(p *player.Player, before, _ *world.World) {
+	if before == h.c.w {
+		h.c.leave(p, false)
+	}
+}
 
 func (h *handler) HandleToggleSneak(ctx *player.Context, after bool) {
 	p := ctx.Player()

@@ -39,7 +39,11 @@ type showcaseReset struct {
 }
 
 func (s showcaseReset) Run(_ cmd.Source, o *cmd.Output, tx *world.Tx) {
-	if !s.c.Enabled() || tx == nil {
+	if err := s.c.owns(tx); err != nil {
+		o.Error(err)
+		return
+	}
+	if !s.c.Enabled() {
 		o.Error("the showcase is not running; use /showcase souls")
 		return
 	}
@@ -53,7 +57,8 @@ type showcaseOff struct {
 }
 
 func (s showcaseOff) Run(_ cmd.Source, o *cmd.Output, tx *world.Tx) {
-	if tx == nil {
+	if err := s.c.owns(tx); err != nil {
+		o.Error(err)
 		return
 	}
 	if err := s.c.Disable(tx); err != nil {

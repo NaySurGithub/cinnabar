@@ -23,3 +23,4 @@ mod selection_wheel;
 mod server_pack;
 mod support;
 mod tooltip;
+mod showcase_pack;
