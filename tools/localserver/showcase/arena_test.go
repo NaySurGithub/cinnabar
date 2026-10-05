@@ -61,8 +61,8 @@ func TestArenaFloorIsSolidAndTheInteriorClear(t *testing.T) {
 func TestGraceAndSpawnsSitInsideTheArena(t *testing.T) {
 	a := Arena{Origin: cube.Pos{5, 70, 5}}
 	g := a.Grace()
-	if _, ok := blockAt(t, a, g).(block.Campfire); !ok {
-		t.Fatalf("grace block is %T, want a campfire", blockAt(t, a, g))
+	if _, ok := blockAt(t, a, g).(block.RespawnAnchor); !ok {
+		t.Fatalf("grace block is %T, want a respawn anchor", blockAt(t, a, g))
 	}
 	if g.Z()-a.Origin.Z() < arenaHalf-4 {
 		t.Fatal("grace is not by the entrance")

@@ -33,7 +33,8 @@ func (a Arena) Grace() cube.Pos {
 
 // PlayerSpawn is where players start and respawn, facing the boss.
 func (a Arena) PlayerSpawn() mgl64.Vec3 {
-	return cube.Pos{a.Origin.X(), a.floorY() + 1, a.Origin.Z() + arenaHalf - 5}.Vec3Middle()
+	// Far enough ahead of grace that an over-the-shoulder camera never frames it.
+	return cube.Pos{a.Origin.X(), a.floorY() + 1, a.Origin.Z() + arenaHalf - 9}.Vec3Middle()
 }
 
 // BossSpawn is the boss's starting point in the north half.
@@ -84,7 +85,7 @@ func (a Arena) Block(pos cube.Pos) (world.Block, bool) {
 			return block.DeepslateBricks{Cracked: hash(x, z, h)%7 == 0}, true
 		}
 	case pos == a.Grace():
-		return block.Campfire{Type: block.SoulFire(), Facing: cube.North}, true
+		return block.RespawnAnchor{Charge: 4}, true
 	}
 	return block.Air{}, true
 }
