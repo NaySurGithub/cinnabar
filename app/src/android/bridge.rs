@@ -147,6 +147,10 @@ fn initialise(env: &mut JNIEnv<'_>, activity: &JObject<'_>) -> Result<()> {
 }
 
 fn resources(attempt: &Attempt<'_, GlobalRef>) -> Result<()> {
+    attempt.publish_resources(|| publish_resources(attempt))
+}
+
+fn publish_resources(attempt: &Attempt<'_, GlobalRef>) -> Result<()> {
     let archive = jni_call(|env, activity| {
         let name = JObject::from(env.new_string(super::runtime().resource_archive)?);
         let value = JString::from(

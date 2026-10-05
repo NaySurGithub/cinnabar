@@ -13,6 +13,7 @@ pub(super) struct Coordinator<T> {
     serial: Mutex<()>,
     active: Mutex<Option<T>>,
     cancel: AtomicBool,
+    resources_published: AtomicBool,
 }
 
 impl<T> Coordinator<T> {
@@ -21,6 +22,7 @@ impl<T> Coordinator<T> {
             serial: Mutex::new(()),
             active: Mutex::new(None),
             cancel: AtomicBool::new(false),
+            resources_published: AtomicBool::new(false),
         }
     }
 
@@ -80,6 +82,28 @@ pub(super) struct Attempt<'a, T> {
 }
 
 impl<T> Attempt<'_, T> {
+    /// A successfully published APK kit stays immutable while native startup reads it.
+    pub(super) fn publish_resources<E>(
+        &self,
+        publish: impl FnOnce() -> Result<(), E>,
+    ) -> Result<(), E> {
+        if self.coordinator.resources_published.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+        publish()?;
+        let _active = self
+            .coordinator
+            .active
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if !self.coordinator.cancel.load(Ordering::Relaxed) {
+            self.coordinator
+                .resources_published
+                .store(true, Ordering::Relaxed);
+        }
+        Ok(())
+    }
+
     pub(super) fn fresh_staging(&self, resources: &Path) -> io::Result<PathBuf> {
         let staged = resources.with_extension("staging");
         if staged.exists() {

@@ -115,3 +115,78 @@ fn completed_activity_cannot_cancel_without_an_active_attempt() {
     assert!(coordinator.owner().is_none());
     assert!(!coordinator.cancel(|owner| *owner == 1));
 }
+
+#[test]
+fn later_setup_cannot_replace_the_kit_handed_to_native_startup() {
+    let fixture = Fixture::new();
+    let coordinator = Coordinator::new();
+    let kit = fixture.resources().join("payload");
+    {
+        let first = coordinator.begin(1, || {});
+        first
+            .publish_resources(|| -> io::Result<()> {
+                fs::create_dir_all(fixture.resources())?;
+                fs::write(&kit, b"installed APK")
+            })
+            .unwrap();
+    }
+    let mut replaced = false;
+    let next = coordinator.begin(2, || {});
+    next.publish_resources(|| -> io::Result<()> {
+        replaced = true;
+        fs::write(&kit, b"second setup")
+    })
+    .unwrap();
+    // Native startup may run after a subsequent setup has already acquired ownership.
+    assert_eq!(fs::read(&kit).unwrap(), b"installed APK");
+    assert!(!replaced);
+}
+
+#[test]
+fn failed_publication_can_retry_from_a_fresh_stage() {
+    let fixture = Fixture::new();
+    let coordinator = Coordinator::new();
+    {
+        let first = coordinator.begin(1, || {});
+        let result = first.publish_resources(|| -> io::Result<()> {
+            let staged = first.fresh_staging(&fixture.resources())?;
+            fs::create_dir_all(&staged)?;
+            fs::write(staged.join("payload"), b"partial")?;
+            Err(io::Error::other("interrupted publication"))
+        });
+        assert!(result.is_err());
+    }
+    let retry = coordinator.begin(2, || {});
+    retry
+        .publish_resources(|| -> io::Result<()> {
+            let staged = retry.fresh_staging(&fixture.resources())?;
+            fs::create_dir_all(&staged)?;
+            File::create_new(staged.join("payload"))?;
+            fs::rename(staged, fixture.resources())
+        })
+        .unwrap();
+    assert!(fixture.resources().join("payload").is_file());
+}
+
+#[test]
+fn cancelled_publication_does_not_skip_the_next_attempt() {
+    let coordinator = Coordinator::new();
+    {
+        let first = coordinator.begin(1, || {});
+        first
+            .publish_resources(|| -> io::Result<()> {
+                assert!(coordinator.cancel(|owner| *owner == 1));
+                Ok(())
+            })
+            .unwrap();
+    }
+    let mut retried = false;
+    let retry = coordinator.begin(2, || {});
+    retry
+        .publish_resources(|| -> io::Result<()> {
+            retried = true;
+            Ok(())
+        })
+        .unwrap();
+    assert!(retried);
+}
