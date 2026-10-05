@@ -153,6 +153,7 @@ impl Instance {
         pressed: bool,
         snapshot: Option<GameplaySnapshot>,
         mobs: Vec<GameplayMob>,
+        inbox: Vec<ModCue>,
         controls: crate::ControlFrame,
     ) -> Result<()> {
         let state = self.store.data_mut();
@@ -166,6 +167,7 @@ impl Instance {
         }
         gameplay::validate_snapshot(snapshot.as_ref())?;
         gameplay::validate_mobs(snapshot.as_ref(), &mobs)?;
+        gameplay::validate_inbox(&inbox)?;
         controls::validate_frame(&controls)?;
         let snapshot_seconds = snapshot.as_ref().map_or(0.0, |frame| frame.frame_seconds);
         let state = self.store.data_mut();
@@ -177,6 +179,7 @@ impl Instance {
         state.snapshot = snapshot;
         state.world.advance_command_window(snapshot_seconds);
         state.world.mobs = mobs;
+        state.world.inbox = inbox;
         state.controls.frame = controls;
         self.store.set_fuel(FRAME_FUEL)?;
         if let Err(error) = self.guest.call_frame(&mut self.store) {
@@ -195,6 +198,7 @@ impl Instance {
         commit(&mut self.store);
         self.store.data_mut().snapshot = None;
         self.store.data_mut().world.mobs = Vec::new();
+        self.store.data_mut().world.inbox = Vec::new();
         self.store.data_mut().controls.frame = crate::empty_controls();
         Ok(())
     }

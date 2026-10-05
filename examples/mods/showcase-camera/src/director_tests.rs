@@ -251,3 +251,18 @@ fn rigs_stay_inside_host_bounds_under_stacked_effects() {
         assert!(rig.fov_delta.abs() <= MAX_RIG_FOV_DELTA_DEGREES);
     }
 }
+
+#[test]
+fn rejected_commands_are_retried_in_order_before_new_ones() {
+    let mut director = Director::default();
+    let start = director.step(&frame(&["Digit2"], &["Digit2"]));
+    assert_eq!(start.commands, ["/ability beam start"]);
+    let stop = director.step(&frame(&["Digit3"], &[]));
+    assert_eq!(stop.commands, ["/ability beam stop", "/ability flash"]);
+    director.requeue(stop.commands);
+    let retry = director.step(&frame(&["Digit4"], &[]));
+    assert_eq!(
+        retry.commands,
+        ["/ability beam stop", "/ability flash", "/ability meteor"]
+    );
+}

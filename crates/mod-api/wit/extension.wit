@@ -92,9 +92,13 @@ interface gameplay {
     request-command: func(command: string) -> result<_, string>;
 }
 
-/// Local presentation cues published to the host after frame returns; no authority.
+/// Local presentation cues shared between loaded mods; they carry no authority.
 interface events {
+    record cue { name: string, values: list<f32> }
+    /// Published to the host and other mods after frame returns.
     emit: func(name: string, values: list<f32>) -> result<_, string>;
+    /// Requires the events grant: cues other mods committed since this mod's last frame, oldest first.
+    poll: func() -> result<list<cue>, string>;
 }
 
 /// Experimental developer contract; no WASI or ambient operating-system access.

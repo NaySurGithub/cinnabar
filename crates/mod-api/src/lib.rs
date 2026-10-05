@@ -33,6 +33,10 @@ pub const MAX_COMMANDS_PER_SECOND: usize = 10;
 pub const MAX_CUES_PER_FRAME: usize = 16;
 pub const MAX_CUE_NAME_BYTES: usize = 32;
 pub const MAX_CUE_VALUES: usize = 8;
+/// Cues retained for one mod between its frames; older ones are dropped first.
+pub const MAX_CUE_INBOX: usize = 64;
+/// Local mods running at once.
+pub const MAX_LOADED_MODS: usize = 4;
 
 pub mod bindings {
     wit_bindgen::generate!({
