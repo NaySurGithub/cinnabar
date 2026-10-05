@@ -1,0 +1,1057 @@
+// Showcase HUD over the vanilla hud_screen: souls bars, ability slots and a bottom boss bar.
+// The bars decode the sidebar title the local server sends; SPEC: tools/localserver/showcase/hud.go.
+{
+  "namespace": "hud",
+  "centered_gui_elements_at_bottom_middle/heart_rend": {
+    "ignored": true
+  },
+  "centered_gui_elements_at_bottom_middle/armor_rend": {
+    "ignored": true
+  },
+  "centered_gui_elements_at_bottom_middle/hunger_rend": {
+    "ignored": true
+  },
+  "root_panel/sidebar": {
+    "ignored": true
+  },
+  "root_panel/boss_health_panel": {
+    "ignored": true
+  },
+  "root_panel": {
+    "modifications": [
+      {
+        "array_name": "controls",
+        "operation": "insert_back",
+        "value": [
+          {
+            "cinnabar_showcase@hud.cinnabar_showcase_hud": {}
+          }
+        ]
+      }
+    ]
+  },
+  "cinnabar_showcase_hud": {
+    "type": "panel",
+    "size": [
+      "100%",
+      "100%"
+    ],
+    "layer": 20,
+    "controls": [
+      {
+        "status": {
+          "type": "stack_panel",
+          "orientation": "vertical",
+          "size": [
+            160,
+            "100%c"
+          ],
+          "anchor_from": "top_left",
+          "anchor_to": "top_left",
+          "offset": [
+            8,
+            8
+          ],
+          "controls": [
+            {
+              "health": {
+                "type": "panel",
+                "size": [
+                  152,
+                  8
+                ],
+                "anchor_from": "top_left",
+                "anchor_to": "top_left",
+                "controls": [
+                  {
+                    "frame": {
+                      "type": "image",
+                      "texture": "textures/ui/cinnabar_solid",
+                      "color": [
+                        0.05,
+                        0.04,
+                        0.03
+                      ],
+                      "alpha": 0.85,
+                      "size": [
+                        "100%",
+                        "100%"
+                      ],
+                      "layer": 1,
+                      "keep_ratio": false
+                    }
+                  },
+                  {
+                    "back": {
+                      "type": "image",
+                      "texture": "textures/ui/cinnabar_solid",
+                      "color": [
+                        0.2,
+                        0.03,
+                        0.03
+                      ],
+                      "size": [
+                        150,
+                        6
+                      ],
+                      "offset": [
+                        1,
+                        0
+                      ],
+                      "layer": 2,
+                      "anchor_from": "left_middle",
+                      "anchor_to": "left_middle",
+                      "keep_ratio": false
+                    }
+                  },
+                  {
+                    "fill": {
+                      "type": "image",
+                      "texture": "textures/ui/cinnabar_solid",
+                      "color": [
+                        0.72,
+                        0.08,
+                        0.1
+                      ],
+                      "size": [
+                        150,
+                        6
+                      ],
+                      "offset": [
+                        1,
+                        0
+                      ],
+                      "layer": 3,
+                      "anchor_from": "left_middle",
+                      "anchor_to": "left_middle",
+                      "clip_direction": "left",
+                      "clip_pixelperfect": false,
+                      "bindings": [
+                        {
+                          "binding_name": "#objective_sidebar_name",
+                          "binding_type": "global"
+                        },
+                        {
+                          "binding_type": "view",
+                          "source_property_name": "((200 - (('%.9s' * #objective_sidebar_name) - ('%.6s' * #objective_sidebar_name))) * .01)",
+                          "target_property_name": "#clip_ratio"
+                        }
+                      ],
+                      "keep_ratio": false
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "gap_1": {
+                "type": "panel",
+                "size": [
+                  1,
+                  2
+                ]
+              }
+            },
+            {
+              "stamina": {
+                "type": "panel",
+                "size": [
+                  112,
+                  6
+                ],
+                "anchor_from": "top_left",
+                "anchor_to": "top_left",
+                "controls": [
+                  {
+                    "frame": {
+                      "type": "image",
+                      "texture": "textures/ui/cinnabar_solid",
+                      "color": [
+                        0.05,
+                        0.04,
+                        0.03
+                      ],
+                      "alpha": 0.85,
+                      "size": [
+                        "100%",
+                        "100%"
+                      ],
+                      "layer": 1,
+                      "keep_ratio": false
+                    }
+                  },
+                  {
+                    "back": {
+                      "type": "image",
+                      "texture": "textures/ui/cinnabar_solid",
+                      "color": [
+                        0.06,
+                        0.16,
+                        0.07
+                      ],
+                      "size": [
+                        110,
+                        4
+                      ],
+                      "offset": [
+                        1,
+                        0
+                      ],
+                      "layer": 2,
+                      "anchor_from": "left_middle",
+                      "anchor_to": "left_middle",
+                      "keep_ratio": false
+                    }
+                  },
+                  {
+                    "fill": {
+                      "type": "image",
+                      "texture": "textures/ui/cinnabar_solid",
+                      "color": [
+                        0.3,
+                        0.72,
+                        0.32
+                      ],
+                      "size": [
+                        110,
+                        4
+                      ],
+                      "offset": [
+                        1,
+                        0
+                      ],
+                      "layer": 3,
+                      "anchor_from": "left_middle",
+                      "anchor_to": "left_middle",
+                      "clip_direction": "left",
+                      "clip_pixelperfect": false,
+                      "bindings": [
+                        {
+                          "binding_name": "#objective_sidebar_name",
+                          "binding_type": "global"
+                        },
+                        {
+                          "binding_type": "view",
+                          "source_property_name": "((200 - (('%.6s' * #objective_sidebar_name) - ('%.3s' * #objective_sidebar_name))) * .01)",
+                          "target_property_name": "#clip_ratio"
+                        }
+                      ],
+                      "keep_ratio": false
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "gap_2": {
+                "type": "panel",
+                "size": [
+                  1,
+                  2
+                ]
+              }
+            },
+            {
+              "energy": {
+                "type": "panel",
+                "size": [
+                  132,
+                  6
+                ],
+                "anchor_from": "top_left",
+                "anchor_to": "top_left",
+                "controls": [
+                  {
+                    "frame": {
+                      "type": "image",
+                      "texture": "textures/ui/cinnabar_solid",
+                      "color": [
+                        0.05,
+                        0.04,
+                        0.03
+                      ],
+                      "alpha": 0.85,
+                      "size": [
+                        "100%",
+                        "100%"
+                      ],
+                      "layer": 1,
+                      "keep_ratio": false
+                    }
+                  },
+                  {
+                    "back": {
+                      "type": "image",
+                      "texture": "textures/ui/cinnabar_solid",
+                      "color": [
+                        0.2,
+                        0.15,
+                        0.04
+                      ],
+                      "size": [
+                        130,
+                        4
+                      ],
+                      "offset": [
+                        1,
+                        0
+                      ],
+                      "layer": 2,
+                      "anchor_from": "left_middle",
+                      "anchor_to": "left_middle",
+                      "keep_ratio": false
+                    }
+                  },
+                  {
+                    "fill": {
+                      "type": "image",
+                      "texture": "textures/ui/cinnabar_solid",
+                      "color": [
+                        1.0,
+                        0.76,
+                        0.22
+                      ],
+                      "size": [
+                        130,
+                        4
+                      ],
+                      "offset": [
+                        1,
+                        0
+                      ],
+                      "layer": 3,
+                      "anchor_from": "left_middle",
+                      "anchor_to": "left_middle",
+                      "clip_direction": "left",
+                      "clip_pixelperfect": false,
+                      "bindings": [
+                        {
+                          "binding_name": "#objective_sidebar_name",
+                          "binding_type": "global"
+                        },
+                        {
+                          "binding_type": "view",
+                          "source_property_name": "((200 - (('%.12s' * #objective_sidebar_name) - ('%.9s' * #objective_sidebar_name))) * .01)",
+                          "target_property_name": "#clip_ratio"
+                        }
+                      ],
+                      "keep_ratio": false
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "abilities": {
+          "type": "stack_panel",
+          "orientation": "horizontal",
+          "size": [
+            "100%c",
+            30
+          ],
+          "anchor_from": "bottom_right",
+          "anchor_to": "bottom_right",
+          "offset": [
+            -8,
+            -8
+          ],
+          "controls": [
+            {
+              "slot_1": {
+                "type": "panel",
+                "size": [
+                  30,
+                  30
+                ],
+                "controls": [
+                  {
+                    "active": {
+                      "type": "image",
+                      "texture": "textures/ui/cinnabar_solid",
+                      "color": [
+                        1.0,
+                        0.78,
+                        0.25
+                      ],
+                      "size": [
+                        30,
+                        30
+                      ],
+                      "layer": 1,
+                      "bindings": [
+                        {
+                          "binding_name": "#objective_sidebar_name",
+                          "binding_type": "global"
+                        },
+                        {
+                          "binding_type": "view",
+                          "source_property_name": "((('%.21s' * #objective_sidebar_name) - ('%.18s' * #objective_sidebar_name)) = 101)",
+                          "target_property_name": "#visible"
+                        }
+                      ],
+                      "keep_ratio": false
+                    }
+                  },
+                  {
+                    "back": {
+                      "type": "image",
+                      "texture": "textures/ui/cinnabar_solid",
+                      "color": [
+                        0.07,
+                        0.06,
+                        0.08
+                      ],
+                      "alpha": 0.85,
+                      "size": [
+                        26,
+                        26
+                      ],
+                      "layer": 2,
+                      "keep_ratio": false
+                    }
+                  },
+                  {
+                    "name": {
+                      "type": "label",
+                      "text": "CHARGE",
+                      "color": [
+                        0.95,
+                        0.88,
+                        0.7
+                      ],
+                      "localize": false,
+                      "shadow": true,
+                      "font_scale_factor": 0.75,
+                      "layer": 4
+                    }
+                  },
+                  {
+                    "key": {
+                      "type": "label",
+                      "text": "1",
+                      "color": [
+                        0.7,
+                        0.7,
+                        0.7
+                      ],
+                      "localize": false,
+                      "shadow": true,
+                      "font_scale_factor": 0.6,
+                      "anchor_from": "top_left",
+                      "anchor_to": "top_left",
+                      "offset": [
+                        3,
+                        2
+                      ],
+                      "layer": 5
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "gap_1": {
+                "type": "panel",
+                "size": [
+                  3,
+                  1
+                ]
+              }
+            },
+            {
+              "slot_2": {
+                "type": "panel",
+                "size": [
+                  30,
+                  30
+                ],
+                "controls": [
+                  {
+                    "active": {
+                      "type": "image",
+                      "texture": "textures/ui/cinnabar_solid",
+                      "color": [
+                        1.0,
+                        0.78,
+                        0.25
+                      ],
+                      "size": [
+                        30,
+                        30
+                      ],
+                      "layer": 1,
+                      "bindings": [
+                        {
+                          "binding_name": "#objective_sidebar_name",
+                          "binding_type": "global"
+                        },
+                        {
+                          "binding_type": "view",
+                          "source_property_name": "((('%.21s' * #objective_sidebar_name) - ('%.18s' * #objective_sidebar_name)) = 102)",
+                          "target_property_name": "#visible"
+                        }
+                      ],
+                      "keep_ratio": false
+                    }
+                  },
+                  {
+                    "back": {
+                      "type": "image",
+                      "texture": "textures/ui/cinnabar_solid",
+                      "color": [
+                        0.07,
+                        0.06,
+                        0.08
+                      ],
+                      "alpha": 0.85,
+                      "size": [
+                        26,
+                        26
+                      ],
+                      "layer": 2,
+                      "keep_ratio": false
+                    }
+                  },
+                  {
+                    "name": {
+                      "type": "label",
+                      "text": "BEAM",
+                      "color": [
+                        0.95,
+                        0.88,
+                        0.7
+                      ],
+                      "localize": false,
+                      "shadow": true,
+                      "font_scale_factor": 0.75,
+                      "layer": 4
+                    }
+                  },
+                  {
+                    "key": {
+                      "type": "label",
+                      "text": "2",
+                      "color": [
+                        0.7,
+                        0.7,
+                        0.7
+                      ],
+                      "localize": false,
+                      "shadow": true,
+                      "font_scale_factor": 0.6,
+                      "anchor_from": "top_left",
+                      "anchor_to": "top_left",
+                      "offset": [
+                        3,
+                        2
+                      ],
+                      "layer": 5
+                    }
+                  },
+                  {
+                    "low_energy": {
+                      "type": "image",
+                      "texture": "textures/ui/cinnabar_solid",
+                      "color": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "alpha": 0.6,
+                      "size": [
+                        26,
+                        26
+                      ],
+                      "layer": 3,
+                      "bindings": [
+                        {
+                          "binding_name": "#objective_sidebar_name",
+                          "binding_type": "global"
+                        },
+                        {
+                          "binding_type": "view",
+                          "source_property_name": "((('%.12s' * #objective_sidebar_name) - ('%.9s' * #objective_sidebar_name)) < 110)",
+                          "target_property_name": "#visible"
+                        }
+                      ],
+                      "keep_ratio": false
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "gap_2": {
+                "type": "panel",
+                "size": [
+                  3,
+                  1
+                ]
+              }
+            },
+            {
+              "slot_3": {
+                "type": "panel",
+                "size": [
+                  30,
+                  30
+                ],
+                "controls": [
+                  {
+                    "active": {
+                      "type": "image",
+                      "texture": "textures/ui/cinnabar_solid",
+                      "color": [
+                        1.0,
+                        0.78,
+                        0.25
+                      ],
+                      "size": [
+                        30,
+                        30
+                      ],
+                      "layer": 1,
+                      "bindings": [
+                        {
+                          "binding_name": "#objective_sidebar_name",
+                          "binding_type": "global"
+                        },
+                        {
+                          "binding_type": "view",
+                          "source_property_name": "((('%.21s' * #objective_sidebar_name) - ('%.18s' * #objective_sidebar_name)) = 103)",
+                          "target_property_name": "#visible"
+                        }
+                      ],
+                      "keep_ratio": false
+                    }
+                  },
+                  {
+                    "back": {
+                      "type": "image",
+                      "texture": "textures/ui/cinnabar_solid",
+                      "color": [
+                        0.07,
+                        0.06,
+                        0.08
+                      ],
+                      "alpha": 0.85,
+                      "size": [
+                        26,
+                        26
+                      ],
+                      "layer": 2,
+                      "keep_ratio": false
+                    }
+                  },
+                  {
+                    "name": {
+                      "type": "label",
+                      "text": "FLASH",
+                      "color": [
+                        0.95,
+                        0.88,
+                        0.7
+                      ],
+                      "localize": false,
+                      "shadow": true,
+                      "font_scale_factor": 0.75,
+                      "layer": 4
+                    }
+                  },
+                  {
+                    "key": {
+                      "type": "label",
+                      "text": "3",
+                      "color": [
+                        0.7,
+                        0.7,
+                        0.7
+                      ],
+                      "localize": false,
+                      "shadow": true,
+                      "font_scale_factor": 0.6,
+                      "anchor_from": "top_left",
+                      "anchor_to": "top_left",
+                      "offset": [
+                        3,
+                        2
+                      ],
+                      "layer": 5
+                    }
+                  },
+                  {
+                    "cooldown": {
+                      "type": "image",
+                      "texture": "textures/ui/cinnabar_solid",
+                      "color": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "alpha": 0.7,
+                      "size": [
+                        26,
+                        26
+                      ],
+                      "layer": 3,
+                      "clip_direction": "down",
+                      "clip_pixelperfect": false,
+                      "bindings": [
+                        {
+                          "binding_name": "#objective_sidebar_name",
+                          "binding_type": "global"
+                        },
+                        {
+                          "binding_type": "view",
+                          "source_property_name": "((200 - (('%.15s' * #objective_sidebar_name) - ('%.12s' * #objective_sidebar_name))) * .01)",
+                          "target_property_name": "#clip_ratio"
+                        }
+                      ],
+                      "keep_ratio": false
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "gap_3": {
+                "type": "panel",
+                "size": [
+                  3,
+                  1
+                ]
+              }
+            },
+            {
+              "slot_4": {
+                "type": "panel",
+                "size": [
+                  30,
+                  30
+                ],
+                "controls": [
+                  {
+                    "active": {
+                      "type": "image",
+                      "texture": "textures/ui/cinnabar_solid",
+                      "color": [
+                        1.0,
+                        0.78,
+                        0.25
+                      ],
+                      "size": [
+                        30,
+                        30
+                      ],
+                      "layer": 1,
+                      "bindings": [
+                        {
+                          "binding_name": "#objective_sidebar_name",
+                          "binding_type": "global"
+                        },
+                        {
+                          "binding_type": "view",
+                          "source_property_name": "((('%.21s' * #objective_sidebar_name) - ('%.18s' * #objective_sidebar_name)) = 104)",
+                          "target_property_name": "#visible"
+                        }
+                      ],
+                      "keep_ratio": false
+                    }
+                  },
+                  {
+                    "back": {
+                      "type": "image",
+                      "texture": "textures/ui/cinnabar_solid",
+                      "color": [
+                        0.07,
+                        0.06,
+                        0.08
+                      ],
+                      "alpha": 0.85,
+                      "size": [
+                        26,
+                        26
+                      ],
+                      "layer": 2,
+                      "keep_ratio": false
+                    }
+                  },
+                  {
+                    "name": {
+                      "type": "label",
+                      "text": "SLAM",
+                      "color": [
+                        0.95,
+                        0.88,
+                        0.7
+                      ],
+                      "localize": false,
+                      "shadow": true,
+                      "font_scale_factor": 0.75,
+                      "layer": 4
+                    }
+                  },
+                  {
+                    "key": {
+                      "type": "label",
+                      "text": "4",
+                      "color": [
+                        0.7,
+                        0.7,
+                        0.7
+                      ],
+                      "localize": false,
+                      "shadow": true,
+                      "font_scale_factor": 0.6,
+                      "anchor_from": "top_left",
+                      "anchor_to": "top_left",
+                      "offset": [
+                        3,
+                        2
+                      ],
+                      "layer": 5
+                    }
+                  },
+                  {
+                    "cooldown": {
+                      "type": "image",
+                      "texture": "textures/ui/cinnabar_solid",
+                      "color": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "alpha": 0.7,
+                      "size": [
+                        26,
+                        26
+                      ],
+                      "layer": 3,
+                      "clip_direction": "down",
+                      "clip_pixelperfect": false,
+                      "bindings": [
+                        {
+                          "binding_name": "#objective_sidebar_name",
+                          "binding_type": "global"
+                        },
+                        {
+                          "binding_type": "view",
+                          "source_property_name": "((200 - (('%.18s' * #objective_sidebar_name) - ('%.15s' * #objective_sidebar_name))) * .01)",
+                          "target_property_name": "#clip_ratio"
+                        }
+                      ],
+                      "keep_ratio": false
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "boss_grid": {
+          "type": "grid",
+          "grid_dimension_binding": "#boss_grid_dimension",
+          "grid_item_template": "hud.cinnabar_boss_bar",
+          "grid_fill_direction": "vertical",
+          "collection_name": "boss_bars",
+          "size": [
+            262,
+            24
+          ],
+          "anchor_from": "bottom_middle",
+          "anchor_to": "bottom_middle",
+          "offset": [
+            0,
+            -54
+          ]
+        }
+      }
+    ],
+    "bindings": [
+      {
+        "binding_name": "#scoreboard_sidebar_visible",
+        "binding_name_override": "#visible"
+      }
+    ]
+  },
+  "cinnabar_boss_bar": {
+    "type": "panel",
+    "size": [
+      262,
+      24
+    ],
+    "controls": [
+      {
+        "name": {
+          "type": "label",
+          "text": "#bossName",
+          "color": [
+            0.93,
+            0.89,
+            0.8
+          ],
+          "shadow": true,
+          "localize": false,
+          "anchor_from": "top_left",
+          "anchor_to": "top_left",
+          "offset": [
+            1,
+            0
+          ],
+          "bindings": [
+            {
+              "binding_name": "#bossName",
+              "binding_type": "collection",
+              "binding_collection_name": "boss_bars"
+            }
+          ]
+        }
+      },
+      {
+        "frame": {
+          "type": "image",
+          "texture": "textures/ui/cinnabar_solid",
+          "color": [
+            0.05,
+            0.04,
+            0.03
+          ],
+          "alpha": 0.9,
+          "size": [
+            262,
+            7
+          ],
+          "anchor_from": "bottom_left",
+          "anchor_to": "bottom_left",
+          "offset": [
+            0,
+            -2
+          ],
+          "layer": 1,
+          "keep_ratio": false
+        }
+      },
+      {
+        "back": {
+          "type": "image",
+          "texture": "textures/ui/cinnabar_solid",
+          "color": [
+            0.18,
+            0.03,
+            0.03
+          ],
+          "size": [
+            260,
+            5
+          ],
+          "anchor_from": "bottom_left",
+          "anchor_to": "bottom_left",
+          "offset": [
+            1,
+            -3
+          ],
+          "layer": 2,
+          "keep_ratio": false
+        }
+      },
+      {
+        "fill": {
+          "type": "image",
+          "texture": "textures/ui/cinnabar_solid",
+          "color": [
+            0.62,
+            0.06,
+            0.06
+          ],
+          "size": [
+            260,
+            5
+          ],
+          "anchor_from": "bottom_left",
+          "anchor_to": "bottom_left",
+          "offset": [
+            1,
+            -3
+          ],
+          "layer": 3,
+          "clip_direction": "left",
+          "clip_pixelperfect": false,
+          "bindings": [
+            {
+              "binding_name": "#progress_percentage",
+              "binding_name_override": "#clip_ratio",
+              "binding_type": "collection",
+              "binding_collection_name": "boss_bars"
+            }
+          ],
+          "keep_ratio": false
+        }
+      }
+    ],
+    "bindings": [
+      {
+        "binding_name": "#bar_visible",
+        "binding_type": "collection",
+        "binding_collection_name": "boss_bars",
+        "binding_name_override": "#visible"
+      }
+    ]
+  },
+  "hud_title_text/title_frame/title_background": {
+    "ignored": true
+  },
+  "hud_title_text/subtitle_frame/subtitle_background": {
+    "ignored": true
+  },
+  "hud_title_text/title_frame/title": {
+    "font_type": "MinecraftTen",
+    "offset": [
+      0,
+      12
+    ]
+  },
+  "hud_title_text/title_frame": {
+    "modifications": [
+      {
+        "array_name": "controls",
+        "operation": "insert_front",
+        "value": [
+          {
+            "cinnabar_band": {
+              "type": "image",
+              "texture": "textures/ui/cinnabar_solid",
+              "color": [
+                0,
+                0,
+                0
+              ],
+              "alpha": 0.55,
+              "size": [
+                "100%",
+                44
+              ],
+              "layer": 0,
+              "bindings": [
+                {
+                  "binding_name": "#hud_title_text_string",
+                  "binding_type": "global"
+                },
+                {
+                  "binding_type": "view",
+                  "source_property_name": "(not (#hud_title_text_string = ''))",
+                  "target_property_name": "#visible"
+                }
+              ],
+              "keep_ratio": false
+            }
+          }
+        ]
+      }
+    ]
+  }
+}
