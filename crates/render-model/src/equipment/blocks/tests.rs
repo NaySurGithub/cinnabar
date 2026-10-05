@@ -77,6 +77,32 @@ fn cube_sheets_preserve_blended_and_cutout_face_pixels() {
 }
 
 #[test]
+fn session_fallback_cubes_keep_carried_faces_and_alpha() {
+    for flags in [
+        0,
+        assets::MATERIAL_FLAG_ALPHA_BLEND,
+        assets::MATERIAL_FLAG_ALPHA_CUTOUT,
+    ] {
+        let mut session = overlay(BlockFlags::CUBE_GEOMETRY, flags, 32);
+        session.visuals[0].support = VisualSupport::VanillaFallback;
+        let sheet = overlay_sheet(&session, 0)
+            .expect("a drawable session cube retains its authored carried faces");
+        assert_eq!([sheet.width, sheet.height], assets::BLOCK_ITEM_SHEET_SIZE);
+        assert!(
+            sheet
+                .rgba8
+                .chunks_exact(4)
+                .all(|pixel| pixel == [40, 80, 120, 128])
+        );
+        session.visuals[0].support = VisualSupport::Diagnostic;
+        assert!(overlay_sheet(&session, 0).is_none());
+        session.visuals[0].support = VisualSupport::VanillaFallback;
+        session.materials[1].flags |= assets::MATERIAL_FLAG_FOLIAGE_TINT;
+        assert!(overlay_sheet(&session, 0).is_none());
+    }
+}
+
+#[test]
 fn unresolved_tint_and_non_cube_shapes_do_not_create_cube_sheets() {
     assert!(
         overlay_sheet(
