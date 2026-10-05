@@ -13,6 +13,7 @@ import (
 
 const (
 	serviceRefreshLead = 10 * time.Minute // replace the service token this long before it expires
+	refreshAttempt     = 30 * time.Second // bounds one background exchange so a hung request cannot wedge refresh
 	refreshRecheck     = 15 * time.Minute // longest sleep, so suspend or another process's refresh is noticed
 	refreshRetryMin    = time.Minute
 	refreshRetryMax    = 15 * time.Minute
@@ -46,7 +47,9 @@ func (s *Account) KeepFresh(ctx context.Context) {
 	defer s.refreshing.Store(false)
 	retry := refreshRetryMin
 	for {
-		expiry, err := s.refreshServiceAhead(ctx, serviceRefreshLead)
+		attempt, cancel := context.WithTimeout(ctx, refreshAttempt)
+		remaining, err := s.refreshServiceAhead(attempt, serviceRefreshLead)
+		cancel()
 		var wait time.Duration
 		switch {
 		case ctx.Err() != nil || s.Closed() || errors.Is(err, ErrAccountClosed) || errors.Is(err, errAccountChanged):
@@ -54,7 +57,7 @@ func (s *Account) KeepFresh(ctx context.Context) {
 		case err != nil:
 			wait, retry = retry, min(retry*2, refreshRetryMax)
 		default:
-			wait, retry = time.Until(expiry.Add(-serviceRefreshLead)), refreshRetryMin
+			wait, retry = remaining-serviceRefreshLead, refreshRetryMin
 		}
 		timer := time.NewTimer(min(max(wait, refreshRetryMin), refreshRecheck))
 		select {
@@ -68,35 +71,35 @@ func (s *Account) KeepFresh(ctx context.Context) {
 	}
 }
 
-// refreshServiceAhead replaces the service token once it is within lead of expiry and returns its expiry.
-// A token another process already refreshed is reused through the shared cache.
-func (s *Account) refreshServiceAhead(ctx context.Context, lead time.Duration) (time.Time, error) {
+// refreshServiceAhead replaces the service token once it is within lead of expiry and returns how long
+// the current token remains valid, on the service clock its validity uses. A failed early exchange keeps
+// the still-valid token; a token another process already refreshed is reused through the shared cache.
+func (s *Account) refreshServiceAhead(ctx context.Context, lead time.Duration) (time.Duration, error) {
 	ctx, cancel := s.operationContext(ctx)
 	defer cancel()
 	if err := s.lock(ctx); err != nil {
-		return time.Time{}, err
+		return 0, err
 	}
 	defer s.unlock()
 	if _, err := s.tokenLocked(ctx); err != nil {
-		return time.Time{}, err
+		return 0, err
 	}
 	lease, err := s.acquireLeaseLocked(ctx)
 	if err != nil {
-		return time.Time{}, err
+		return 0, err
 	}
 	if lease != nil {
 		defer lease.Close()
 		s.reloadLocked()
 	}
-	if s.service != nil && s.service.Valid() && time.Until(s.service.ValidUntil) > lead {
-		return s.service.ValidUntil, nil
+	if s.service != nil && s.service.Valid() && s.service.Remaining() > lead {
+		return s.service.Remaining(), nil
 	}
-	s.service, s.services = nil, nil
-	token, err := s.serviceTokenLocked(ctx, lease != nil)
+	token, err := s.serviceTokenLocked(ctx, lease != nil, true)
 	if err != nil {
-		return time.Time{}, err
+		return 0, err
 	}
-	return token.ValidUntil, nil
+	return token.Remaining(), nil
 }
 
 // serviceDeviceIDLocked returns the account's stable, undashed service device ID derived from its XUID,

@@ -364,25 +364,32 @@ func (s *Account) ServiceToken(ctx context.Context) (*service.Token, error) {
 		defer lease.Close()
 		s.reloadLocked()
 	}
-	return s.serviceTokenLocked(ctx, lease != nil)
+	return s.serviceTokenLocked(ctx, lease != nil, false)
 }
 
-// serviceTokenLocked returns the shared service token, refreshing it when invalid; publish persists a change.
-func (s *Account) serviceTokenLocked(ctx context.Context, publish bool) (*service.Token, error) {
+// serviceTokenLocked returns the shared service token, refreshing it when invalid, or exchanging a
+// replacement when replace is set; a failure keeps the current token. publish persists a change.
+func (s *Account) serviceTokenLocked(ctx context.Context, publish, replace bool) (*service.Token, error) {
 	if err := s.ensureEnvironmentLocked(ctx); err != nil {
 		return nil, err
 	}
-	if s.services == nil {
-		s.services = s.deps.services(s.environment, sessionTickets{s}, s.service, s.serviceDeviceIDLocked())
+	source := s.services
+	if source == nil || replace {
+		seed := s.service
+		if replace {
+			seed = nil
+		}
+		source = s.deps.services(s.environment, sessionTickets{s}, seed, s.serviceDeviceIDLocked())
 	}
 	before, session := s.service, sessionFingerprint(s.session.Snapshot())
-	token, err := s.services.ServiceToken(ctx)
+	token, err := source.ServiceToken(ctx)
 	if err != nil || token == nil || !token.Valid() {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
 		return nil, errors.New("authentication: refresh service credential")
 	}
+	s.services = source
 	if token == before {
 		s.diagnostic("reuse", "service", "valid")
 		return token, nil
@@ -783,7 +790,11 @@ func (s *Account) restore(state *derivedState) error {
 		s.environment = nil // a restored environment is checked against discovery once more
 	}
 	s.cachedEnv = cachedEnv
-	s.service = serviceToken
+	// The in-memory copy of an unchanged token keeps the service clock its validity is judged by.
+	if s.service == nil || cachedEnv == nil || state.ServiceToken == nil ||
+		s.service.AuthorizationHeader != state.ServiceToken.AuthorizationHeader {
+		s.service = serviceToken
+	}
 	s.services = nil
 	return nil
 }

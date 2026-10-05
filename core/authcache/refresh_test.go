@@ -5,7 +5,12 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"regexp"
 	"sync/atomic"
@@ -89,9 +94,9 @@ func TestRefreshAheadReplacesServiceTokenBeforeExpiry(t *testing.T) {
 	deps := countingServiceDeps(&exchanges, nil)
 	account := newAccount(context.Background(), path, oauth2.StaticTokenSource(oauthToken), nil, deps)
 	defer account.Close()
-	expiry, err := account.refreshServiceAhead(context.Background(), serviceRefreshLead)
-	if err != nil || exchanges.Load() != 1 || time.Until(expiry) <= serviceRefreshLead {
-		t.Fatalf("refresh: err=%v exchanges=%d expiry_in=%v", err, exchanges.Load(), time.Until(expiry))
+	remaining, err := account.refreshServiceAhead(context.Background(), serviceRefreshLead)
+	if err != nil || exchanges.Load() != 1 || remaining <= serviceRefreshLead {
+		t.Fatalf("refresh: err=%v exchanges=%d remaining=%v", err, exchanges.Load(), remaining)
 	}
 	if _, err := account.refreshServiceAhead(context.Background(), serviceRefreshLead); err != nil || exchanges.Load() != 1 {
 		t.Fatalf("fresh token was refreshed again: err=%v exchanges=%d", err, exchanges.Load())
@@ -179,4 +184,106 @@ func TestKeepFreshRunsOncePerAccount(t *testing.T) {
 		t.Fatal(err)
 	}
 	<-first
+}
+
+// A failed early exchange keeps the still-valid token in memory and on disk.
+func TestFailedEarlyRefreshKeepsTheValidToken(t *testing.T) {
+	path := filepath.Join(derivedTestDir(t), "derived")
+	oauthToken := testOAuthToken("account-a")
+	writeDerivedState(t, path, oauthToken, time.Now().Add(serviceRefreshLead/2))
+	deps := derivedDeps{
+		discover: func(context.Context) (*service.AuthorizationEnvironment, error) { return testEnvironment(), nil },
+		services: fakeServices(func(context.Context, *service.AuthorizationEnvironment, xsapi.TokenAndSignaturer) (*service.Token, error) {
+			return nil, errors.New("exchange unavailable")
+		}),
+	}
+	account := newAccount(context.Background(), path, oauth2.StaticTokenSource(oauthToken), nil, deps)
+	defer account.Close()
+	if _, err := account.refreshServiceAhead(context.Background(), serviceRefreshLead); err == nil {
+		t.Fatal("failed exchange reported success")
+	}
+	token, err := account.ServiceToken(context.Background())
+	if err != nil || token.AuthorizationHeader != testServiceToken(time.Time{}).AuthorizationHeader {
+		t.Fatalf("valid token was dropped after a failed refresh: err=%v", err)
+	}
+	if state, err := loadDerived(path); err != nil || state.ServiceToken == nil || !state.ServiceToken.Valid() {
+		t.Fatalf("persisted token was cleared: err=%v", err)
+	}
+}
+
+// A hung exchange ends at the attempt deadline instead of wedging the refresher.
+func TestRefreshAttemptIsBoundedByItsDeadline(t *testing.T) {
+	path := filepath.Join(derivedTestDir(t), "derived")
+	oauthToken := testOAuthToken("account-a")
+	writeDerivedState(t, path, oauthToken, time.Now().Add(-time.Minute))
+	deps := derivedDeps{
+		discover: func(context.Context) (*service.AuthorizationEnvironment, error) { return testEnvironment(), nil },
+		services: fakeServices(func(ctx context.Context, _ *service.AuthorizationEnvironment, _ xsapi.TokenAndSignaturer) (*service.Token, error) {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}),
+	}
+	account := newAccount(context.Background(), path, oauth2.StaticTokenSource(oauthToken), nil, deps)
+	defer account.Close()
+	attempt, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := account.refreshServiceAhead(attempt, serviceRefreshLead)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("hung exchange reported success")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("refresh attempt outlived its deadline")
+	}
+}
+
+// A local clock ahead of the service must not make a fresh token look due for refresh.
+func TestRefreshScheduleUsesTheServiceClock(t *testing.T) {
+	serviceNow := time.Now().UTC().Add(-90 * time.Minute).Truncate(time.Second)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Date", serviceNow.Format(http.TimeFormat))
+		_ = json.NewEncoder(w).Encode(map[string]any{"result": map[string]any{
+			"authorizationHeader": skewedServiceJWT(t, serviceNow, serviceNow.Add(time.Hour)),
+			"validUntil":          serviceNow.Add(time.Hour),
+		}})
+	}))
+	defer server.Close()
+	serviceURI, _ := url.Parse(server.URL)
+	path := filepath.Join(derivedTestDir(t), "derived")
+	oauthToken := testOAuthToken("account-a")
+	writeDerivedState(t, path, oauthToken, time.Now().Add(-time.Minute))
+	var exchanges atomic.Int32
+	deps := derivedDeps{
+		discover: func(context.Context) (*service.AuthorizationEnvironment, error) { return testEnvironment(), nil },
+		services: fakeServices(func(ctx context.Context, _ *service.AuthorizationEnvironment, _ xsapi.TokenAndSignaturer) (*service.Token, error) {
+			exchanges.Add(1)
+			env := &service.AuthorizationEnvironment{ServiceURI: serviceURI, HTTPClient: server.Client()}
+			return env.Token(ctx, service.TokenConfig{User: service.UserConfig{Token: "playfab-token"}})
+		}),
+	}
+	account := newAccount(context.Background(), path, oauth2.StaticTokenSource(oauthToken), nil, deps)
+	defer account.Close()
+	for attempt := range 3 {
+		remaining, err := account.refreshServiceAhead(context.Background(), serviceRefreshLead)
+		if err != nil || remaining < 50*time.Minute {
+			t.Fatalf("attempt %d: err=%v remaining=%v, want the service-clock lifetime", attempt, err, remaining)
+		}
+	}
+	if exchanges.Load() != 1 {
+		t.Fatalf("exchanges = %d, want one despite the skewed local clock", exchanges.Load())
+	}
+}
+
+func skewedServiceJWT(t *testing.T, issuedAt, expiry time.Time) string {
+	t.Helper()
+	payload, err := json.Marshal(map[string]any{"pmid": "6a1c9a1e-0000-4000-8000-000000000000", "iat": issuedAt.Unix(), "exp": expiry.Unix()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return "MCToken header." + base64.RawURLEncoding.EncodeToString(payload) + ".signature"
 }
