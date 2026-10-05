@@ -217,6 +217,20 @@ bedrock-local-server … -extension-key <seed file> -extension-audience <host:po
   the client's verifiers; regenerate them with
   `go test ./extension -run TestGoFixturesAreCurrent -update-go-fixtures`.
 
+### Intro cinematic (developer)
+
+`scripts/showcase-media.sh <client-user-data> <world>` fetches the CC BY 3.0 Sintel trailer into
+`.local/showcase`, transcodes it to the client media profile, builds and seeds the `showcase`
+client part (`examples/client-parts/showcase-screen`) and prints the run commands.
+`-extension-media <dir>` (with the `-extension` flags) serves `<dir>` over HTTPS at
+`-extension-media-addr` (IPv4 loopback, default `127.0.0.1:19443`), adds that origin and surface
+GPU memory to the offer, and writes a fresh CA to `<world>/extension-media-ca.pem`. The client
+fetches loopback media only with `CINNABAR_DEV_SERVER_EXPERIENCES=1` and
+`CINNABAR_DEV_MEDIA_CA` naming that file. `/intro` plays the video on a screen ahead of the
+caller and `/intro stop` skips it; other code calls `cinema.Play` and `cinema.Skip`, whose callback
+fires once when the client reports the end or a stop, on skip, at once without a client part, or
+after the duration plus thirty seconds from the first frame.
+
 ## Limits
 
 - `crates/experience-runtime/src/limits.rs` is the only source of the guest limits: fuel, epoch

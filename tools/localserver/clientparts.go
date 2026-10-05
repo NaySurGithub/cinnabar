@@ -10,6 +10,7 @@ import (
 	"github.com/df-mc/dragonfly/server/world"
 	"github.com/google/uuid"
 
+	"github.com/hashimthearab/rust-mcbe/tools/localserver/cinema"
 	"github.com/hashimthearab/rust-mcbe/tools/localserver/experience"
 	"github.com/hashimthearab/rust-mcbe/tools/localserver/extension"
 )
@@ -34,12 +35,21 @@ func startClientParts(cfg settings, log *slog.Logger) (*extension.Server, error)
 	if err != nil {
 		return nil, err
 	}
+	var mediaOrigins []string
+	if cfg.extensionMedia != "" {
+		origin, err := cinema.Origin(cfg.extensionMediaAddr)
+		if err != nil {
+			return nil, err
+		}
+		mediaOrigins = []string{origin}
+	}
 	ext, err := extension.NewServer(extension.Config{
-		Key:      key,
-		Audience: cfg.extensionAudience,
-		Revision: revision,
-		Bundles:  bundles,
-		Log:      log,
+		Key:          key,
+		Audience:     cfg.extensionAudience,
+		Revision:     revision,
+		Bundles:      bundles,
+		MediaOrigins: mediaOrigins,
+		Log:          log,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("-extension-audience or -extension-cxb: %w", err)
@@ -57,11 +67,32 @@ func startClientParts(cfg settings, log *slog.Logger) (*extension.Server, error)
 	return ext, nil
 }
 
+// startCinema serves -extension-media on loopback HTTPS, writing its CA into the world directory,
+// and installs the intro Cinema timed by the showcase bundle's descriptor.
+func startCinema(cfg settings, ext *extension.Server, log *slog.Logger) (*cinema.Cinema, *cinema.MediaServer, error) {
+	duration, err := cinema.Duration(cfg.extensionCXB)
+	if err != nil {
+		return nil, nil, fmt.Errorf("-extension-media: %w", err)
+	}
+	caPath := filepath.Join(cfg.dir, cinema.CAFile)
+	media, err := cinema.ServeMedia(cfg.extensionMedia, cfg.extensionMediaAddr, caPath, log)
+	if err != nil {
+		return nil, nil, err
+	}
+	c := cinema.New(ext, duration)
+	cinema.SetDefault(c)
+	log.Info("client part media served", "addr", cfg.extensionMediaAddr, "ca", caPath, "intro", duration)
+	return c, media, nil
+}
+
 // deliverClientMessages passes each client part message to the Experience whose id is the bundle
-// id, as that player's callback; a player who has left, or a server without that Experience,
-// drops it.
-func deliverClientMessages(ext *extension.Server, players func(uuid.UUID) (*world.EntityHandle, bool), host *experience.Host, log *slog.Logger) {
+// id, as that player's callback, except the intro screen's events, which go to cin; a player who
+// has left, or a server without that Experience, drops it.
+func deliverClientMessages(ext *extension.Server, players func(uuid.UUID) (*world.EntityHandle, bool), host *experience.Host, cin *cinema.Cinema, log *slog.Logger) {
 	ext.OnClientMessage(func(player uuid.UUID, exp, channel string, schema uint16, payload []experience.Scalar) {
+		if exp == cinema.BundleID && cin != nil && cin.Receive(player, channel, schema, payload) {
+			return
+		}
 		handle, ok := players(player)
 		if !ok || host == nil || !host.DeliverClientMessage(handle, exp, channel, schema, payload) {
 			log.Debug("client part message dropped", "experience", exp, "channel", channel, "schema", schema)

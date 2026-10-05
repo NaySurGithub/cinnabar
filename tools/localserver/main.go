@@ -25,6 +25,7 @@ import (
 
 	"github.com/df-mc/dragonfly/server/world"
 
+	"github.com/hashimthearab/rust-mcbe/tools/localserver/cinema"
 	"github.com/hashimthearab/rust-mcbe/tools/localserver/experience"
 	"github.com/hashimthearab/rust-mcbe/tools/localserver/extension"
 	"github.com/hashimthearab/rust-mcbe/tools/localserver/showcase"
@@ -51,9 +52,17 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	logger := slog.New(slog.NewTextHandler(stderr, nil))
 	// The offer's marker pack must be written before the resource packs load.
 	var ext *extension.Server
+	var cin *cinema.Cinema
 	if cfg.extensionKey != "" {
 		if ext, err = startClientParts(cfg, logger); err != nil {
 			return err
+		}
+		if cfg.extensionMedia != "" {
+			var media *cinema.MediaServer
+			if cin, media, err = startCinema(cfg, ext, logger); err != nil {
+				return err
+			}
+			defer media.Close()
 		}
 	} else if err := extension.RemoveMarkerPack(cfg.resourcesDir()); err != nil {
 		return err
@@ -81,6 +90,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		return err
 	}
 	show.Configure(&conf)
+	if cin != nil {
+		show.SetIntro(cin)
+	}
 	if ext != nil {
 		for i, listen := range conf.Listeners {
 			conf.Listeners[i] = ext.Listener(listen)
@@ -117,7 +129,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		}
 	}
 	if ext != nil {
-		deliverClientMessages(ext, srv.Player, host, logger)
+		deliverClientMessages(ext, srv.Player, host, cin, logger)
 	}
 	registerChatCommands()
 	showcase.RegisterCommands(show)

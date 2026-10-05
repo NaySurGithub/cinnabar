@@ -24,6 +24,7 @@ members = [
     "crates/particles",
     "examples/mods/hello",
     "examples/mods/time-changer",
+    "examples/client-parts/showcase-screen",
     "examples/mods/showcase-camera",
     "examples/mods/effects",
     "crates/protocol",

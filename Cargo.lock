@@ -1777,13 +1777,14 @@ dependencies = [
  "server-experience",
  "tempfile",
  "toml 0.9.12+spec-1.1.0",
+ "url",
  "wit-component",
  "zip",
 ]
 
 [[package]]
 name = "cinnabar-mcp"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "developer-control",
  "image",
@@ -2545,7 +2546,7 @@ dependencies = [
 
 [[package]]
 name = "developer-control"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "crossbeam-channel",
  "serde",
@@ -4110,7 +4111,7 @@ checksum = "4facc753ae494aeb6e3c22f839b158aebd4f9270f55cd3c79906c45476c47ab4"
 
 [[package]]
 name = "mcp-stdio"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "serde_json",
 ]
@@ -5952,6 +5953,7 @@ version = "0.1.6"
 dependencies = [
  "anyhow",
  "dav1d",
+ "libc",
  "matroska-demuxer",
  "opus",
  "protocol",
@@ -6013,6 +6015,14 @@ name = "showcase-camera-mod"
 version = "0.1.6"
 dependencies = [
  "mod-api",
+]
+
+[[package]]
+name = "showcase-screen"
+version = "0.1.6"
+dependencies = [
+ "mod-api",
+ "serde_json",
 ]
 
 [[package]]

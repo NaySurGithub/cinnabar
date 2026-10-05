@@ -21,6 +21,6 @@ mod resolve_snapshot;
 mod screens;
 mod selection_wheel;
 mod server_pack;
+mod showcase_pack;
 mod support;
 mod tooltip;
-mod showcase_pack;
