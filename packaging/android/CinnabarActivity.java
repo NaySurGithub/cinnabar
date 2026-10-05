@@ -28,9 +28,7 @@ public final class CinnabarActivity extends NativeActivity {
 
     /** Called before launching the browser; the Go auth reader ends this lease on EOF. */
     public void setAuthenticationActive(boolean active) {
-        android.content.Intent service = new android.content.Intent(this, AuthenticationService.class);
-        if (active) startForegroundService(service);
-        else stopService(service);
+        AuthenticationService.setActive(this, active);
     }
 
     public void showFailure(String title, String message) {
