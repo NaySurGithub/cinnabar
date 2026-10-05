@@ -66,14 +66,16 @@ impl WorldStream {
             forward: self.view_forward,
         };
         let wakeups = &self.lighting.priority_wakeups;
+        let mut local_ingress = false;
         let probe_near =
             self.lighting
                 .jobs
                 .ingress(view, self.poll_deadline, |key, revision, pending| {
+                    local_ingress |= scheduler::light_column_is_near(view, key);
                     (0, pending.urgent || wakeups.get(&key) == Some(&revision))
                 });
 
-        let mut near = if probe_near {
+        let mut near = if probe_near || local_ingress {
             scheduler::near_light_columns(view, self.authority.current_dimension())
                 .filter_map(|key| self.near_light_column_candidate(key, view))
                 .collect::<BinaryHeap<_>>()

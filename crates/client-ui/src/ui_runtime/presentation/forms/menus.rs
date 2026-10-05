@@ -184,6 +184,7 @@ impl UiPresentationRuntime {
             .collect();
         let state = ViewState {
             scroll,
+            scroll_state: self.menu_scrolls.touch_view().scroll_state.clone(),
             hovered: key_of(view.hovered).or_else(|| key_of(view.focused_action)),
             pressed: key_of(view.pressed),
             focused: view.field.and_then(|field| {

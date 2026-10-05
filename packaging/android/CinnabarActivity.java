@@ -2,10 +2,19 @@ package @APPLICATION_ID@;
 
 import android.app.NativeActivity;
 import android.content.Context;
+import android.os.Build;
+import android.os.Bundle;
+import android.view.Gravity;
+import android.widget.FrameLayout;
+import android.window.OnBackInvokedCallback;
+import android.window.OnBackInvokedDispatcher;
+import java.util.concurrent.atomic.AtomicBoolean;
 import android.text.InputType;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowInsets;
+import android.view.WindowManager;
 import android.view.inputmethod.BaseInputConnection;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
@@ -17,10 +26,72 @@ public final class CinnabarActivity extends NativeActivity {
     private final ArrayBlockingQueue<String> textInput = new ArrayBlockingQueue<>(128);
     private View inputView;
     private boolean numericInput;
+    private final AtomicBoolean backRequested = new AtomicBoolean();
+    private OnBackInvokedCallback backCallback;
+    private boolean imeVisible;
+    private boolean editorEnabled;
+    private int editorBottom;
+
+    @Override protected void onCreate(Bundle state) {
+        super.onCreate(state);
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS);
+        getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING);
+        getWindow().getDecorView().setOnApplyWindowInsetsListener((view, insets) -> {
+            updateKeyboardLayout(insets);
+            return view.onApplyWindowInsets(insets);
+        });
+        getWindow().getDecorView().getViewTreeObserver()
+                .addOnGlobalLayoutListener(this::updateKeyboardLayout);
+        if (Build.VERSION.SDK_INT >= 33) {
+            backCallback = this::requestBack;
+            getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
+                    OnBackInvokedDispatcher.PRIORITY_DEFAULT, backCallback);
+        }
+    }
+
+    @Override public void onBackPressed() { requestBack(); }
+
+    private void requestBack() {
+        if (imeVisible && inputView != null) {
+            ((InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE))
+                    .hideSoftInputFromWindow(inputView.getWindowToken(), 0);
+        } else {
+            backRequested.set(true);
+        }
+    }
+
+    @Override public boolean dispatchKeyEvent(KeyEvent event) {
+        if (event.getKeyCode() == KeyEvent.KEYCODE_BACK) {
+            if (event.getAction() == KeyEvent.ACTION_UP && !event.isCanceled()) {
+                requestBack();
+            }
+            return true;
+        }
+        return super.dispatchKeyEvent(event);
+    }
+
+    public boolean pollBackRequested() { return backRequested.getAndSet(false); }
+
+    /** The transparent editor occupies the same window pixels as the rendered text box. */
+    public void setTextInputBounds(int left, int top, int right, int bottom) {
+        runOnUiThread(() -> {
+            if (inputView == null) return;
+            FrameLayout.LayoutParams bounds = new FrameLayout.LayoutParams(
+                    Math.max(1, right - left), Math.max(1, bottom - top), Gravity.TOP | Gravity.LEFT);
+            bounds.leftMargin = Math.max(0, left);
+            bounds.topMargin = Math.max(0, top);
+            inputView.setLayoutParams(bounds);
+            editorBottom = bottom;
+            updateKeyboardLayout();
+        });
+    }
 
     @Override protected void onDestroy() {
         // Bevy owns a process-wide AndroidApp OnceLock. Finish native teardown
         // before ending this client process so a later launch gets a fresh app.
+        if (Build.VERSION.SDK_INT >= 33 && backCallback != null) {
+            getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(backCallback);
+        }
         super.onDestroy();
         setAuthenticationActive(false);
         android.os.Process.killProcess(android.os.Process.myPid());
@@ -92,17 +163,48 @@ public final class CinnabarActivity extends NativeActivity {
                 inputView.setFocusableInTouchMode(true);
                 addContentView(inputView, new ViewGroup.LayoutParams(1, 1));
             }
+            editorEnabled = enabled;
             numericInput = numeric;
             if (enabled) {
                 inputView.requestFocus();
                 manager.restartInput(inputView);
                 manager.showSoftInput(inputView, InputMethodManager.SHOW_IMPLICIT);
             } else if (inputView != null) {
-                manager.hideSoftInputFromWindow(inputView.getWindowToken(), 0);
                 inputView.clearFocus();
+                manager.hideSoftInputFromWindow(inputView.getWindowToken(), 0);
                 textInput.clear();
             }
+            updateKeyboardLayout();
         });
+    }
+
+    /** NativeActivity owns the window surface; moving its content view cannot pan it. */
+    private void updateKeyboardLayout() {
+        updateKeyboardLayout(getWindow().getDecorView().getRootWindowInsets());
+    }
+
+    private void updateKeyboardLayout(WindowInsets insets) {
+        View decor = getWindow().getDecorView();
+        if (insets == null) return;
+        int bottom = Build.VERSION.SDK_INT >= 30
+                ? insets.getInsets(WindowInsets.Type.ime()).bottom
+                : Math.max(0, insets.getSystemWindowInsetBottom() - insets.getStableInsetBottom());
+        boolean visible = Build.VERSION.SDK_INT >= 30
+                ? insets.isVisible(WindowInsets.Type.ime()) : bottom > 0;
+        if (imeVisible && !visible && editorEnabled && hasWindowFocus()) {
+            backRequested.set(true);
+        }
+        imeVisible = visible;
+        int[] origin = new int[2];
+        decor.getLocationOnScreen(origin);
+        int keyboardTop = origin[1] + decor.getHeight() - bottom;
+        int pan = visible && editorEnabled ? Math.max(0, editorBottom - keyboardTop) : 0;
+        WindowManager.LayoutParams attributes = getWindow().getAttributes();
+        if (attributes.y != -pan) {
+            attributes.gravity = Gravity.TOP | Gravity.LEFT;
+            attributes.y = -pan;
+            getWindow().setAttributes(attributes);
+        }
     }
 
     /** Returns one ordered commit, using standard text controls for editing keys. */

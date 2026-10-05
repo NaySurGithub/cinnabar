@@ -1,4 +1,5 @@
 mod remapping;
+mod touch;
 
 use bevy::{
     ecs::message::{MessageCursor, Messages},
@@ -329,13 +330,14 @@ pub(crate) fn drive_menu_input(
     mut modifiers: Local<MenuModifiers>,
     consent: Option<Res<crate::server_experiences::input::ConsentInput>>,
     mouse_messages: Option<Res<Messages<MouseButtonInput>>>,
-    mut gui_scale_drag: Local<GuiScaleDrag>,
+    (mut gui_scale_drag, mut menu_touch): (Local<GuiScaleDrag>, Local<touch::MenuTouch>),
 ) {
     if consent.is_some_and(|consent| consent.0) {
         keyboard_messages.clear();
         menu.pressed = None;
         menu.hovered = None;
         menu.pointer_down = false;
+        menu_touch.cancel(&mut presentation);
         *modifiers = MenuModifiers::default();
         gui_scale_drag.captured = false;
         gui_scale_drag.left_held = false;
@@ -374,6 +376,7 @@ pub(crate) fn drive_menu_input(
         runtime.server_forms().owns_input()
             && (!menu.is_visible() || runtime.server_forms().settings_form_active())
     }) {
+        menu_touch.cancel(&mut presentation);
         gui_scale_drag.captured = false;
         gui_scale_drag.left_held = false;
         keyboard_messages.clear();
@@ -381,6 +384,7 @@ pub(crate) fn drive_menu_input(
     }
     menu.pressed = None;
     if !window.focused {
+        menu_touch.cancel(&mut presentation);
         gui_scale_drag.captured = false;
         gui_scale_drag.left_held = false;
         if !menu.is_visible() && menu.settings_options.value("pause_menu_on_focus_lost") != 0 {
@@ -414,6 +418,7 @@ pub(crate) fn drive_menu_input(
         }
     }
     if !menu.is_visible() {
+        menu_touch.cancel(&mut presentation);
         gui_scale_drag.captured = false;
         // Gameplay/chat handled these messages already. In particular, do not
         // replay the Escape that opens pause as "back" on the following frame.
@@ -431,6 +436,7 @@ pub(crate) fn drive_menu_input(
     }
 
     if menu.key_remap.is_some() {
+        menu_touch.cancel(&mut presentation);
         remapping::capture(
             &mut menu,
             &mut keyboard_messages,
@@ -466,7 +472,7 @@ pub(crate) fn drive_menu_input(
     if on_scrollbar {
         menu.hovered = None;
     }
-    let press = |menu: &mut MenuRuntime, action| {
+    let press = |menu: &mut MenuRuntime, action, presentation: &UiPresentationRuntime| {
         if let Some(sound) = presentation.menu_sound(action) {
             crate::audio::ui_control_sound(sound);
         }
@@ -520,17 +526,12 @@ pub(crate) fn drive_menu_input(
         && !gui_scale_drag.captured
         && let Some(action) = menu.hovered
     {
-        press(&mut menu, action);
+        press(&mut menu, action, &presentation);
         caret_press = pointer.zip(action.text_field());
     }
-    for touch in touches.iter_just_pressed() {
-        let position = touch.position();
-        if let Ok(position) = UiPoint::new(position.x, position.y)
-            && let Some(action) = presentation.hit_test_menu(position)
-        {
-            press(&mut menu, action);
-            caret_press = action.text_field().map(|field| (position, field));
-        }
+    if let Some((position, action)) = menu_touch.step(&touches, &menu, &mut presentation) {
+        press(&mut menu, action, &presentation);
+        caret_press = action.text_field().map(|field| (position, field));
     }
     if let Some((point, field)) = caret_press
         && menu.field == Some(field)

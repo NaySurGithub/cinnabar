@@ -1,7 +1,7 @@
 //! Menu scroll views: offsets kept across frames, the areas the last frame
 //! drew (window-logical), and wheel, scrollbar-drag and track-press input.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, time::Instant};
 
 use ui::{UiPoint, UiRect};
 
@@ -62,6 +62,9 @@ pub struct MenuScrolls {
     drag: Option<(String, f32)>,
     screen: Option<String>,
     focused: Option<crate::menu::MenuAction>,
+    touch: Option<(String, UiPoint)>,
+    motion: json_ui::ViewState,
+    clock: Option<Instant>,
 }
 
 impl MenuScrolls {
@@ -72,7 +75,16 @@ impl MenuScrolls {
             self.drag = None;
             self.screen = Some(screen);
             self.focused = None;
+            self.touch = None;
+            self.motion = json_ui::ViewState::default();
+            self.clock = None;
         }
+        let now = Instant::now();
+        let dt = self
+            .clock
+            .map_or(0.0, |last| now.duration_since(last).as_secs_f64());
+        self.clock = Some(now);
+        self.step_touch(dt);
     }
 
     /// Reveals a newly focused fallback control without overriding later wheel movement.
@@ -107,6 +119,97 @@ impl MenuScrolls {
         offset
     }
 
+    /// A touch owns its initial view until release, including outside its viewport.
+    pub fn begin_touch(&mut self, point: UiPoint) -> bool {
+        let Some(area) = self.at(point).cloned() else {
+            return false;
+        };
+        let metrics = Self::touch_metrics(&area);
+        if !metrics.gesture {
+            return false;
+        }
+        self.motion
+            .scroll
+            .insert(area.key.clone(), f64::from(area.offset));
+        self.motion.begin_scroll_touch(&area.key, &metrics);
+        self.touch = Some((area.key, point));
+        true
+    }
+
+    pub fn move_touch(&mut self, point: UiPoint) {
+        let Some((key, previous)) = self.touch.clone() else {
+            return;
+        };
+        let Some(area) = self.areas.iter().find(|area| area.key == key) else {
+            return;
+        };
+        let delta = [
+            f64::from((point.x() - previous.x()) / area.scale),
+            f64::from((point.y() - previous.y()) / area.scale),
+        ];
+        self.motion
+            .scroll_touch_moved(&key, &Self::touch_metrics(area), delta);
+        self.touch = Some((key, point));
+    }
+
+    /// Returns whether the gesture still counts as a tap.
+    pub fn end_touch(&mut self) -> bool {
+        self.touch
+            .take()
+            .is_none_or(|(key, _)| self.motion.end_scroll_touch(&key))
+    }
+
+    pub fn cancel_touch(&mut self) {
+        if let Some((key, _)) = self.touch.take() {
+            self.motion.scroll_state.remove(&key);
+        }
+    }
+
+    fn touch_metrics(area: &ScrollArea) -> json_ui::ScrollMetrics {
+        area.engine.as_ref().map_or_else(
+            || json_ui::ScrollMetrics {
+                offset: f64::from(area.offset),
+                content: f64::from(area.viewport.height() / area.scale + area.max),
+                viewport: f64::from(area.viewport.height() / area.scale),
+                gesture: true,
+                touch_mode: true,
+                ..Default::default()
+            },
+            |(metrics, _)| metrics.clone(),
+        )
+    }
+
+    fn step_touch(&mut self, dt: f64) {
+        if !self
+            .motion
+            .scroll_state
+            .values()
+            .any(|state| state.motion.is_some() || state.bar_fade.is_some_and(|alpha| alpha > 0.0))
+        {
+            return;
+        }
+        let report = json_ui::LayoutReport {
+            scrolls: self
+                .areas
+                .iter()
+                .map(|area| (area.key.clone(), Self::touch_metrics(area)))
+                .collect(),
+            ..Default::default()
+        };
+        self.motion.step_scrolls(&report, dt);
+        for key in self.motion.scroll_state.keys() {
+            let offset = self.motion.scroll_offset(key);
+            if let Some(area) = self.areas.iter_mut().find(|area| area.key == *key) {
+                area.offset = offset as f32;
+                self.offsets.insert(key.clone(), area.offset);
+            }
+        }
+    }
+
+    pub(super) fn touch_view(&self) -> &json_ui::ViewState {
+        &self.motion
+    }
+
     pub fn offsets(&self) -> &HashMap<String, f32> {
         &self.offsets
     }
@@ -123,6 +226,7 @@ impl MenuScrolls {
     }
 
     fn set(&mut self, key: &str, offset: f32) {
+        self.motion.scroll_state.remove(key);
         if let Some(area) = self.areas.iter_mut().find(|area| area.key == key) {
             area.offset = offset.clamp(0.0, area.max);
             self.offsets.insert(key.to_owned(), area.offset);
@@ -221,6 +325,22 @@ impl MenuScrolls {
 }
 
 impl super::UiPresentationRuntime {
+    pub fn begin_menu_touch(&mut self, point: UiPoint) -> bool {
+        self.menu_scrolls.begin_touch(point)
+    }
+
+    pub fn move_menu_touch(&mut self, point: UiPoint) {
+        self.menu_scrolls.move_touch(point);
+    }
+
+    pub fn end_menu_touch(&mut self) -> bool {
+        self.menu_scrolls.end_touch()
+    }
+
+    pub fn cancel_menu_touch(&mut self) {
+        self.menu_scrolls.cancel_touch();
+    }
+
     /// Scrolls the menu view under `point`; `true` when one took the wheel.
     pub fn scroll_menu(&mut self, point: UiPoint, notches: f32, pixels: bool) -> bool {
         self.menu_scrolls.wheel(point, notches, pixels)
@@ -260,6 +380,61 @@ mod tests {
 
     fn point(x: f32, y: f32) -> UiPoint {
         UiPoint::new(x, y).unwrap()
+    }
+
+    #[test]
+    fn touch_pan_uses_virtual_pixels_flings_and_never_counts_as_a_tap() {
+        let mut scrolls = MenuScrolls::default();
+        let mut view = area();
+        view.engine = Some((
+            json_ui::ScrollMetrics {
+                content: 200.0,
+                viewport: 50.0,
+                gesture: true,
+                touch_mode: true,
+                ..Default::default()
+            },
+            [0.0, 0.0],
+        ));
+        scrolls.set_areas(vec![view]);
+        assert!(!scrolls.begin_touch(point(150.0, 50.0)));
+        assert!(scrolls.begin_touch(point(50.0, 80.0)));
+        for index in 1..=20 {
+            scrolls.move_touch(point(50.0, 80.0 - index as f32 * 4.0));
+            scrolls.step_touch(1.0 / 60.0);
+        }
+        let held = scrolls.offsets()["list"];
+        assert!(held > 20.0 && held < 50.0, "scaled pan: {held}");
+        assert!(!scrolls.end_touch());
+        for _ in 0..600 {
+            scrolls.step_touch(1.0 / 60.0);
+        }
+        assert!(
+            scrolls.offsets()["list"] > held,
+            "release flings the content"
+        );
+        assert!(scrolls.offsets()["list"] <= 150.0);
+        assert!(scrolls.motion.scroll_state["list"].motion.is_none());
+        assert!(scrolls.begin_touch(point(50.0, 50.0)));
+        assert!(scrolls.end_touch(), "stationary finger remains a tap");
+    }
+
+    #[test]
+    fn touch_capture_survives_leaving_viewport_and_cancels_on_navigation() {
+        let mut scrolls = MenuScrolls::default();
+        scrolls.set_areas(vec![area()]);
+        assert!(scrolls.begin_touch(point(50.0, 80.0)));
+        scrolls.move_touch(point(50.0, -40.0));
+        scrolls.step_touch(0.1);
+        assert!(scrolls.offsets()["list"] > 0.0);
+        assert!(!scrolls.end_touch());
+        scrolls.begin_frame("new screen".into());
+        assert!(scrolls.offsets().is_empty());
+        assert!(scrolls.motion.scroll_state.is_empty());
+        assert!(scrolls.begin_touch(point(50.0, 50.0)));
+        scrolls.cancel_touch();
+        assert!(scrolls.motion.scroll_state.is_empty());
+        assert!(scrolls.end_touch());
     }
 
     // Wheel, track press and thumb drag each move the view under the pointer,

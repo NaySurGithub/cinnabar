@@ -1,6 +1,7 @@
 use super::*;
 
 pub(super) const NEAR_CAMERA_RADIUS: i32 = 4;
+const NEAR_LIGHT_COLUMN_RADIUS: i32 = NEAR_CAMERA_RADIUS + 1;
 
 /// One scheduling lane: ready work first, deferred work once ready drains.
 #[derive(Default)]
@@ -256,7 +257,7 @@ pub(super) fn near_light_columns(
     view: SchedulerView,
     dimension: i32,
 ) -> impl Iterator<Item = SubChunkKey> {
-    let radius = NEAR_CAMERA_RADIUS + 1;
+    let radius = NEAR_LIGHT_COLUMN_RADIUS;
     let [x, y, z] = view
         .position
         .map(|value| floor_to_i32(value).div_euclid(16));
@@ -270,6 +271,14 @@ pub(super) fn near_light_columns(
             ))
         })
     })
+}
+
+/// Fresh local column work must compete with propagation wakeups even at a stationary view.
+pub(super) fn light_column_is_near(view: SchedulerView, key: SubChunkKey) -> bool {
+    let [x, _, z, _] = view.cell();
+    let radius = NEAR_LIGHT_COLUMN_RADIUS as u64;
+    i64::from(key.x).abs_diff(i64::from(x)) <= radius
+        && i64::from(key.z).abs_diff(i64::from(z)) <= radius
 }
 
 #[cfg(test)]

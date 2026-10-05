@@ -219,3 +219,51 @@ fn near_light_column_keeps_its_nearest_members_priority_for_high_dependencies() 
         assert!(!stream.lighting.jobs.in_flight.contains_key(&far));
     }
 }
+
+/// Initial nearby columns arriving after the camera settles cannot wait behind a far light wave.
+#[test]
+fn stationary_spawn_light_competes_with_far_propagation_wakeups() {
+    let mut stream = lit_stream(0);
+    let view = SchedulerView {
+        position: [8.0, 81.62, 8.0],
+        forward: None,
+    };
+    stream
+        .lighting
+        .jobs
+        .refresh
+        .refresh(view, &mut stream.lighting.jobs.lanes, None, |_, _| true);
+    let near = SubChunkKey::new(0, 0, 5, 0);
+    let range = vanilla_dimension_range(0).unwrap();
+    let top = SubChunkKey::new(
+        0,
+        0,
+        range.base_sub_chunk_y + range.sub_chunk_count as i32 - 1,
+        0,
+    );
+    let far = SubChunkKey::new(0, scheduler::NEAR_CAMERA_RADIUS * 2, 5, 0);
+    for key in [near, top, far] {
+        stream
+            .authority
+            .commit_sub_chunk(key, super::uniform_sub_chunk(2))
+            .unwrap();
+        install_current_light(&mut stream, key, 0, 0, false);
+        stream.mark_light_dirty_exact(key).unwrap();
+    }
+    stream
+        .lighting
+        .priority_wakeups
+        .insert(far, stream.lighting.jobs.pending[&far].revision);
+    assert_eq!(stream.dispatch_light_jobs(view.position, 1), 1);
+    assert!(
+        stream.lighting.jobs.in_flight.contains_key(&top),
+        "near spawn must execute its top skylight dependency before a far propagation wakeup"
+    );
+    let completion = stream
+        .lighting
+        .rx
+        .recv_timeout(Duration::from_secs(2))
+        .unwrap();
+    assert_eq!(completion.key, top);
+    stream.accept_light_completion(completion);
+}

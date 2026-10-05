@@ -131,6 +131,16 @@ impl UiPresentationRuntime {
         self.form_presentation.menu_caret.spots.extend(spots);
     }
 
+    /// Painted window-logical bounds for the platform's invisible text editor.
+    pub fn menu_text_input_bounds(&self, field: MenuField) -> Option<UiRect> {
+        self.form_presentation
+            .menu_caret
+            .spots
+            .iter()
+            .find(|spot| spot.field == field)
+            .map(|spot| spot.bounds)
+    }
+
     /// The byte of `text` a press at `point` inside `field` puts its caret at,
     /// measured as the last menu frame drew the box's text.
     pub fn menu_caret_at(&mut self, point: UiPoint, field: MenuField, text: &str) -> Option<usize> {

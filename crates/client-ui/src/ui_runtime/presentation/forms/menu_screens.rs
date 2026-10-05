@@ -131,6 +131,7 @@ pub use launcher::menu::menu_reference;
 pub(super) fn screen_data(view: &MenuView, translate: Translate<'_>) -> Option<MenuScreenData> {
     let mut data = DataSource::new();
     data.set_strict(true);
+    data.set_global("#gesture_control_enabled", Scalar::Bool(true));
     let mut context = base_context();
     let reference = if let Some(progress) = &view.local.progress {
         local_world_progress(&mut data, translate, progress);

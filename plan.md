@@ -5321,14 +5321,31 @@ An experimental Android NativeActivity package runs the Rust renderer and the Go
 core/local-world server from immutable APK libraries. First-run consent, pinned
 asset acquisition and carrier compilation run before the game window. Private
 storage, browser links, clipboard and soft-keyboard input have Android adapters.
+The invisible native editor follows the painted menu field in physical window
+pixels; the native surface follows the keyboard inset to keep that field visible. Legacy Back and API 33+ Back
+invocation feed the existing cancel route; dismissing the IME clears editor focus.
+An API 35 x86_64 emulator at 1280×720 and density 240 captured the address
+field above the open IME, first Back dismissing it, second Back returning to
+Servers, and edge Back returning to Home. Galaxy S21 acceptance remains open.
+Server-list touch movement and release use the JSON-UI scroll integrator,
+including fling and tap suppression. The same emulator scrolled through an overflow list without activating a row;
+fallback scroll geometry and Galaxy S21 acceptance remain incomplete.
+Newly arrived nearby lighting competes with distant propagation even after
+the camera settles; a regression exercises the spawn column skylight dependency.
+A fresh Microsoft-authenticated join to `zenomc.org:19132` on 2026-10-05
+rendered lobby terrain and the scoreboard on the emulator. Full terrain completion,
+join timing and Galaxy S21 acceptance remain incomplete. This native debug witness
+disabled Vulkan debug naming with a private APK startup wrapper after the
+emulator driver crashed in its debug-name callback; the wrapper is excluded from
+repository and CI packaging.
 
 Android graphics diagnostics publish adapter identity and the requested present
 mode without creating a second surface for Bevy's native window. The effective
 present mode remains unavailable and unproven until it can be read from the
 renderer-owned surface. An API 35 x86_64 emulator running preview `6b72c9c45` reached
 Zeno's lobby with the Microsoft account from the authorized shared Lunar cache,
-without the previous native-window panic. Visible terrain holes remain, and the
-Galaxy S21 device run and complete join/render acceptance remain unverified.
+without the previous native-window panic. That run showed terrain holes; the Galaxy S21 device run and complete
+join/render acceptance remain unverified.
 
 The same emulator kept the fresh sign-in helper and foreground service active
 across 36 seconds in the background: helper CPU and payload-free I/O counters

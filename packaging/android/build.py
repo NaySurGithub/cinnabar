@@ -150,6 +150,7 @@ def build_apk(args: argparse.Namespace) -> Path:
         </activity>
         <activity android:name=".{RUNTIME['activity']}" android:exported="false" android:screenOrientation="landscape"
             android:launchMode="singleTask"
+            android:enableOnBackInvokedCallback="true"
             android:configChanges="orientation|keyboardHidden|screenSize|screenLayout|uiMode|density">
             <meta-data android:name="android.app.lib_name" android:value="{CLIENT_LIBRARY}" />
         </activity>

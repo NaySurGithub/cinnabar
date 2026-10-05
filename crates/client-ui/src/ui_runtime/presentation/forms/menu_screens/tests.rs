@@ -48,6 +48,56 @@ fn reference(view: &MenuView) -> Option<&'static str> {
 }
 
 #[test]
+fn server_screen_bindings_enable_touch_pan_without_local_carriers() {
+    let source = r##"{"namespace":"test","scroll":{"type":"scroll_view","size":[100,100],
+        "scroll_content":"content","scroll_view_port":"viewport","scrollbar_track":"track",
+        "scrollbar_box":"box","scroll_box_and_track_panel":"bars",
+        "bindings":[{"binding_name":"#gesture_control_enabled"}],
+        "controls":[{"viewport":{"type":"panel","size":[100,100],"controls":[
+            {"content":{"type":"panel","size":[100,400]}}]}},
+            {"bars":{"type":"panel","size":[10,100],"controls":[
+                {"track":{"type":"scroll_track","size":[10,100]}},
+                {"box":{"type":"scrollbar_box","size":[10,25],"draggable":"vertical"}}]}}]}}"##;
+    let catalog = json_ui::Catalog::from_files([
+        ("ui/_global_variables.json", "{}".as_bytes()),
+        (
+            "ui/_ui_defs.json",
+            r#"{"ui_defs":["ui/test.json"]}"#.as_bytes(),
+        ),
+        ("ui/test.json", source.as_bytes()),
+    ])
+    .unwrap();
+    let screen = screen_data(&view(MenuScreen::Servers), &|_| None).unwrap();
+    let resolved = json_ui::resolve(&catalog, "test.scroll", &screen.context)
+        .control
+        .unwrap();
+    let library = json_ui::CatalogLibrary {
+        catalog: &catalog,
+        context: &screen.context,
+    };
+    let bound = json_ui::bind(&resolved, &screen.data, &library);
+    let env = json_ui::LayoutEnv {
+        text: &super::super::tests::FixedText,
+        textures: &super::super::tests::NoTextures,
+    };
+    let (_, report) = json_ui::layout_with(&bound, [100.0, 100.0], &env, &Default::default());
+    let (key, metrics) = report
+        .scrolls
+        .iter()
+        .next()
+        .expect("complete scroll references");
+    let mut state = json_ui::ViewState::default();
+    state.begin_scroll_touch(key, metrics);
+    state.scroll_touch_moved(key, metrics, [0.0, -40.0]);
+    state.step_scrolls(&report, 0.1);
+    assert!(
+        state.scroll_offset(key) > 0.0,
+        "the server screen accepts the finger pan"
+    );
+    assert!(!state.end_scroll_touch(key), "dragging is not a row press");
+}
+
+#[test]
 fn the_pause_store_button_names_the_server_store() {
     assert_eq!(server_store_text(&|_| None), "Server Store");
 }

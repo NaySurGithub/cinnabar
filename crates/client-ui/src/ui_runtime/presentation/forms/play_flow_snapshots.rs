@@ -191,12 +191,12 @@ fn the_disconnect_screen_has_a_way_back() {
 
 // An overflowing server list scrolls under the wheel, bringing hidden rows into reach.
 #[test]
-fn the_server_list_scrolls_under_the_wheel() {
+fn the_server_list_accepts_touch_pan_and_scrolls_under_the_wheel() {
     let player_runtime = player_state::PlayerState::new(1);
 
     let Some(mut presentation) = engine_presentation() else {
         eprintln!(
-            "skipping the_server_list_scrolls_under_the_wheel: fixture unavailable; requires installed local carriers (make assets)"
+            "skipping the_server_list_accepts_touch_pan_and_scrolls_under_the_wheel: fixture unavailable; requires installed local carriers (make assets)"
         );
         return;
     };
@@ -237,6 +237,15 @@ fn the_server_list_scrolls_under_the_wheel() {
     );
     let first = row(&before, 0).unwrap().min();
     let point = ui::UiPoint::new(first.x() + 4.0, first.y() + 4.0).unwrap();
+    assert!(
+        presentation.begin_menu_touch(point),
+        "the native view enables touch gestures"
+    );
+    presentation.move_menu_touch(ui::UiPoint::new(point.x(), point.y() - 40.0).unwrap());
+    assert!(
+        !presentation.end_menu_touch(),
+        "dragging a server row suppresses its tap"
+    );
     assert!(presentation.scroll_menu(point, -100.0, false));
     let (after, input) = frame(&mut presentation);
     super::snapshot::write(&input, "flow-servers-scrolled");
