@@ -315,9 +315,8 @@ WIT cannot express the rules below; the runtime (`crates/experience-runtime`) an
   `provisionalFocusRange` (`tools/localserver/experience/limits.go`) from the player's eyes to
   the block's centre. That bound is provisional, labeled incomplete in `plan.md`: it should be
   the distance at which vanilla Bedrock closes an open container's screen, the player's pick
-  range (`GameMode::getPickRange`, per input mode, survival or creative) from the eyes to the
-  block's centre. The reconstruction does not give those constants, so it is Dragonfly's
-  survival reach for using a block. Commit and the
+  range (per input mode, survival or creative) from the eyes to the block's centre. Those
+  constants are not yet known, so it is Dragonfly's survival reach for using a block. Commit and the
   stale check are unchanged: if the focus block or its data changed after the snapshot, the
   result is discarded.
 - **No ambient time or randomness.** `callback-info.tick` is the integer world tick.
@@ -404,6 +403,15 @@ bedrock-local-server … -extension-key <seed file> -extension-audience <host:po
   envelope and fragments, which `tools/cxb/tests/fixtures.rs` runs through the client's
   verifiers; regenerate them with
   `go test ./extension -run TestGoFixturesAreCurrent -update-go-fixtures`.
+
+### Client part media (developer)
+
+`-extension-media <dir>` (with the `-extension` flags) serves `<dir>` over HTTPS at
+`-extension-media-addr` (IPv4 loopback, default `127.0.0.1:19443`), adds that origin and surface
+GPU memory to the offer, and writes a fresh CA to `<world>/extension-media-ca.pem`. The client
+fetches loopback media only with `CINNABAR_DEV_SERVER_EXPERIENCES=1` and `CINNABAR_DEV_MEDIA_CA`
+naming that file. `cinnabar-cxb media` strips tags from a profile WebM and writes its descriptor;
+`cinnabar-cxb build --assets <dir>` indexes it into a bundle.
 
 ## Limits
 
