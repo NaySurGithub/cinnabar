@@ -183,6 +183,7 @@ class Smoke:
                           if line.startswith(self.package + '/')), '')
         if not re.fullmatch(r'[A-Za-z0-9_.]+/[A-Za-z0-9_.]+', component):
             raise RuntimeError('Cannot resolve the installed launcher Activity')
+        self.launcher_component = component
         started = self.adb('shell', 'am', 'start', '-W', '-n', component, timeout=30)
         if b'Error:' in started.stdout:
             raise RuntimeError(started.stdout.decode(errors='replace'))
@@ -365,7 +366,6 @@ class Smoke:
             self.click_observed_tap(self.args.auth_start, 'auth-start', 'home', 'Sign In')
         else:
             self.click_text('Sign In', 'auth-start')
-        component = self.package + '/.' + self.activity
         try:
             end = min(self.deadline - 75, time.monotonic() + 45)
             helper = None
@@ -391,7 +391,9 @@ class Smoke:
                                               'foreground_service': b'isForeground=true' in services}
             if not self.result['background_auth']['foreground_service'] or after <= before:
                 raise RuntimeError('Auth helper stopped running while the Activity was backgrounded')
-            self.adb('shell', 'am', 'start', '-W', '-n', component)
+            self.adb('shell', 'am', 'start', '-W', '-a', 'android.intent.action.MAIN',
+                     '-c', 'android.intent.category.LAUNCHER', '-f', '0x10200000',
+                     '-n', self.launcher_component, timeout=30)
             self.click_text('Cancel', 'auth-cancel')
             end = min(self.deadline - 15, time.monotonic() + 20)
             while time.monotonic() < end:
