@@ -81,8 +81,9 @@ impl AccountStore {
         self.directory.join("pending-token.json")
     }
 
+    /// UI reads report a busy account operation instead of waiting on its credentials.
     pub fn list(&self) -> io::Result<Vec<AccountProfile>> {
-        let _lease = self.lease()?;
+        let _lease = self.read_lease()?;
         let mut profiles: Vec<_> = self.index()?.profiles.into_values().collect();
         profiles.sort_by(|a, b| {
             a.gamertag
@@ -94,7 +95,7 @@ impl AccountStore {
     }
 
     pub fn active_id(&self) -> io::Result<Option<String>> {
-        let _lease = self.lease()?;
+        let _lease = self.read_lease()?;
         Ok(self.index()?.active)
     }
 
@@ -224,6 +225,11 @@ impl AccountStore {
     fn lease(&self) -> io::Result<File> {
         private_directory(&self.directory)?;
         lease(&self.directory.join("store.lock"))
+    }
+
+    fn read_lease(&self) -> io::Result<File> {
+        private_directory(&self.directory)?;
+        try_lease(&self.directory.join("store.lock"))
     }
 
     fn index(&self) -> io::Result<Index> {
@@ -675,6 +681,26 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.directory);
         }
+    }
+
+    #[test]
+    fn account_picker_reads_do_not_wait_for_a_busy_store() {
+        let fixture = Fixture::new();
+        let busy = fixture.store.lease().unwrap();
+        let store = fixture.store.clone();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let reader = std::thread::spawn(move || {
+            sender.send((store.list(), store.active_id())).unwrap();
+        });
+        let result = receiver.recv_timeout(std::time::Duration::from_secs(1));
+        // Release before asserting so a regression cannot leave a blocked test thread.
+        drop(busy);
+        reader.join().unwrap();
+        let (profiles, active) = result.expect("account reads waited for the store lock");
+        assert_eq!(profiles.unwrap_err().kind(), io::ErrorKind::WouldBlock);
+        assert_eq!(active.unwrap_err().kind(), io::ErrorKind::WouldBlock);
+        assert!(fixture.store.list().unwrap().is_empty());
+        assert!(fixture.store.active_id().unwrap().is_none());
     }
 
     #[test]

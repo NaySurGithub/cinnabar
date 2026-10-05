@@ -5359,6 +5359,15 @@ sign-in dialog; its Close action stopped the helper and service while the native
 app stayed open. This witnesses background execution, not a completed fresh
 Microsoft approval or a direct count of HTTP authentication requests.
 
+Saved-account list and active-account reads now report a busy store immediately
+instead of waiting for another account operation during native startup. A held-lock
+regression proves both reads remain responsive and recover after release; credential
+writes retain their exclusive locks. An interrupted sign-in helper returned to a
+responsive menu when reopened on the API 35 emulator before this change. The reported
+Galaxy S21 hang on the application logo and its cause remain unverified. The rebuilt
+client reached Home and opened Settings on the same emulator with an independently
+held account-store lock; the holder and kernel lock were observed during the frame pass.
+
 Joystick + Crosshair controls use JSON-UI artwork and the same painted hit bounds.
 Movement, look and action fingers retain independent owners until lift/cancel;
 unclaimed contacts do not imply movement. Short action taps survive a frame
