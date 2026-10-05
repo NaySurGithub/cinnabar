@@ -1,0 +1,17 @@
+{
+  "format_version": "1.8.0",
+  "render_controllers": {
+    "controller.render.cinnabar_hollow_warden": {
+      "geometry": "Geometry.default",
+      "materials": [ { "*": "Material.default" } ],
+      "textures": [ "Texture.default" ]
+    },
+    "controller.render.cinnabar_hollow_warden_glow": {
+      "geometry": "Geometry.default",
+      "materials": [ { "*": "Material.glow" } ],
+      "textures": [ "Texture.glow" ],
+      "ignore_lighting": true,
+      "color": { "r": 1.0, "g": 1.0, "b": 1.0, "a": "query.hurt_time > 0 ? 1.0 : v.glow_alpha" }
+    }
+  }
+}
