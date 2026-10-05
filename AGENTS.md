@@ -6,6 +6,7 @@ Cinnabar is a Rust Bedrock client plus a Go core. Every system (UI, rendering, c
 | --- | --- |
 | `docs/agents/multi-agent-workflow.md` | Worktrees, build limits, checks |
 | `docs/agents/live-testing.md` | Running the client or BDS, capturing frames, closing a visual/performance gate |
+| `docs/agents/client-mcp.md` | Scripting the client or recording video through the MCP server |
 
 ## Performance: as fast as we can make it
 
@@ -13,7 +14,7 @@ Parity covers what the player sees and how the game behaves, never how we comput
 
 ## Parity sources
 
-Vanilla behaviour, constants, geometry, formulas, layouts and vanilla packs may be used directly, as long as we write our own code. Never paste decompiled source. Committed files (code, comments, docs, commit messages, PR text) never name where behaviour was reverse-engineered from: no decompilation repos or paths, reconstruction line references, function addresses, RVAs or executable hashes. Describe the vanilla behaviour itself, for example as a "Vanilla rules" table. Vanilla pack file paths are fine.
+Vanilla behaviour, constants, geometry, formulas, layouts and vanilla packs may be used directly, as long as we write our own code. Never paste decompiled source. Committed files (code, comments, docs, commit messages, PR text) never name where behaviour was reverse-engineered from: no decompilation repos or paths, reconstruction line references, function addresses, RVAs or executable hashes. Describe the vanilla behaviour itself, for example as a "Vanilla rules" table. Vanilla pack file paths are fine. The one exception is `docs/agents/vanilla-refs-map.md`, the agent index mapping files to the vanilla code they match; add references there, never in code or other docs.
 
 ## UI
 
