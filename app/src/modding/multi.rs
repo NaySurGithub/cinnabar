@@ -1,13 +1,10 @@
-//! Several local mods in one frame. Load order resolves every conflict; cues cross between mods.
+//! Several local mods in one frame. Load order resolves every conflict.
 
-use std::{
-    collections::VecDeque,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 use mod_host::{
-    CameraDelta, ControlFrame, GameplayCameraRig, MAX_CUE_INBOX, MAX_LOADED_MODS, ModCue,
-    ModGrants, ModHost,
+    CameraDelta, ControlFrame, GameplayCameraRig, MAX_LOADED_MODS, ModCue, ModGrants, ModHost,
+    mod_render::RenderOutput,
 };
 use serde::Deserialize;
 
@@ -20,7 +17,6 @@ const MAX_SET_BYTES: usize = 16 * 1024;
 /// A mod after the first, loaded only from an explicit set.
 pub(super) struct Companion {
     pub host: ModHost,
-    pub inbox: VecDeque<ModCue>,
 }
 
 #[derive(Deserialize)]
@@ -85,13 +81,6 @@ impl ModRuntime {
         }
     }
 
-    fn inbox_mut(&mut self, index: usize) -> &mut VecDeque<ModCue> {
-        match index {
-            0 => &mut self.inbox,
-            _ => &mut self.companions[index - 1].inbox,
-        }
-    }
-
     /// The first mod in load order that publishes a panel owns the panel and its events.
     pub(super) fn panel_owner(&self) -> usize {
         (0..self.host_count())
@@ -109,25 +98,9 @@ impl ModRuntime {
         keys
     }
 
-    pub(super) fn take_inbox(&mut self, index: usize) -> Vec<ModCue> {
-        self.inbox_mut(index).drain(..).collect()
-    }
-
-    /// Queues `cues` for every other mod holding the events grant, dropping the oldest on overflow.
-    pub(super) fn route_cues(&mut self, from: usize, cues: &[ModCue]) {
-        if cues.is_empty() {
-            return;
-        }
-        for index in (0..self.host_count()).filter(|&index| index != from) {
-            if !self.host(index).grants().events {
-                continue;
-            }
-            let inbox = self.inbox_mut(index);
-            inbox.extend(cues.iter().cloned());
-            while inbox.len() > MAX_CUE_INBOX {
-                inbox.pop_front();
-            }
-        }
+    /// Every mod's render output with its generation, in load order.
+    pub(super) fn render_outputs(&self) -> impl Iterator<Item = (&RenderOutput, u64)> {
+        (0..self.host_count()).map(|index| self.host(index).render())
     }
 }
 
@@ -171,7 +144,7 @@ pub(super) struct Merged {
 
 impl Merged {
     /// Consumes `host`'s committed output, in load order.
-    pub fn absorb(&mut self, host: &mut ModHost) -> Vec<ModCue> {
+    pub fn absorb(&mut self, host: &mut ModHost) {
         let interaction = host.take_interaction();
         self.attack_reach = self.attack_reach.or(interaction.attack_reach);
         self.attack_pulse |= interaction.attack_pulse;
@@ -183,9 +156,7 @@ impl Merged {
         if let Some(label) = host.label() {
             self.labels.push(label.to_owned());
         }
-        let cues = host.take_cues();
-        self.cues.extend(cues.iter().cloned());
-        cues
+        self.cues.extend(host.take_cues());
     }
 
     /// Labels in load order, joined and cut to the host's plain-text limit.

@@ -1,0 +1,48 @@
+//! Hands committed mod render output to the renderer; depth sampling follows its grant.
+
+use crate::camera::FlyCamera;
+use bevy::{prelude::*, render::render_resource::TextureUsages};
+use render::ModRenderScene;
+
+/// Republishes only when some mod's generation changed, so steady frames extract nothing.
+pub(super) fn publish(scene: Option<ResMut<ModRenderScene>>, runtime: &mut super::ModRuntime) {
+    let Some(mut scene) = scene else { return };
+    let generations: Vec<u64> = runtime
+        .render_outputs()
+        .map(|(_, generation)| generation)
+        .collect();
+    if let [generation] = generations[..] {
+        if scene.generation() != generation {
+            scene.apply(runtime.host(0).render().0, generation);
+        }
+        return;
+    }
+    if runtime.render_sources == generations {
+        return;
+    }
+    let merged = mod_host::mod_render::merge(runtime.render_outputs().map(|(output, _)| output));
+    let generation = scene.generation().wrapping_add(1);
+    scene.apply(&merged, generation);
+    runtime.render_sources = generations;
+}
+
+/// Scene depth becomes sampleable once a mod holds both render grants.
+pub(super) fn grant_depth_sampling(
+    runtime: Option<Res<super::ModRuntime>>,
+    mut cameras: Query<&mut Camera3d, With<FlyCamera>>,
+) {
+    if !runtime.is_some_and(|runtime| {
+        (0..runtime.host_count()).any(|index| {
+            let grants = runtime.host(index).grants();
+            grants.render && grants.render_depth
+        })
+    }) {
+        return;
+    }
+    for mut camera in &mut cameras {
+        let usage = TextureUsages::from(camera.depth_texture_usages);
+        if !usage.contains(TextureUsages::TEXTURE_BINDING) {
+            camera.depth_texture_usages = (usage | TextureUsages::TEXTURE_BINDING).into();
+        }
+    }
+}

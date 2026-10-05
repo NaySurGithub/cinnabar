@@ -12,9 +12,11 @@ mod settings;
 
 #[cfg(feature = "execution")]
 pub use mod_api::{
-    MAX_CAMERA_DELTA_RADIANS, MAX_CONTROL_KEYS, MAX_CUE_INBOX, MAX_GAMEPLAY_MOBS,
-    MAX_GAMEPLAY_PLAYERS, MAX_LOADED_MODS, MAX_MOB_RANGE_BLOCKS, MAX_MOB_TYPE_BYTES,
+    MAX_CAMERA_DELTA_RADIANS, MAX_CONTROL_KEYS, MAX_GAMEPLAY_MOBS, MAX_GAMEPLAY_PLAYERS,
+    MAX_INCOMING_CUES, MAX_LOADED_MODS, MAX_MOB_RANGE_BLOCKS, MAX_MOB_TYPE_BYTES,
 };
+#[cfg(feature = "execution")]
+pub use mod_render;
 #[cfg(feature = "execution")]
 pub use runtime::cinnabar::extension::gameplay::{
     CameraRig as GameplayCameraRig, Mob as GameplayMob, Player as GameplayPlayer,
@@ -22,7 +24,7 @@ pub use runtime::cinnabar::extension::gameplay::{
 };
 #[cfg(feature = "execution")]
 pub use runtime::cinnabar::extension::{
-    events::Cue as ModCue, input::Controls as ControlFrame, panel::Event as ControlEvent,
+    input::Controls as ControlFrame, panel::Event as ControlEvent,
 };
 
 /// Successfully committed local interaction requests, consumed once per frame.
@@ -31,6 +33,14 @@ pub use runtime::cinnabar::extension::{
 pub struct InteractionOutput {
     pub attack_reach: Option<f32>,
     pub attack_pulse: bool,
+}
+
+/// One committed local presentation cue; it carries no authority.
+#[cfg(feature = "execution")]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ModCue {
+    pub name: String,
+    pub values: Vec<f32>,
 }
 
 /// Committed local actor rotation; yaw turns left and pitch turns up, in radians.
@@ -82,8 +92,10 @@ pub struct ModGrants {
     pub entities: bool,
     /// Command names this instance may request; empty denies command requests.
     pub commands: Vec<String>,
-    /// Allows reading cues other loaded mods emit.
-    pub events: bool,
+    /// Allows sandboxed post passes and bounded world primitives.
+    pub render: bool,
+    /// Lets render passes read scene depth.
+    pub render_depth: bool,
 }
 
 /// A developer-selected component with transactional reload and trap quarantine.
@@ -132,20 +144,7 @@ impl ModHost {
         mobs: Vec<GameplayMob>,
         controls: ControlFrame,
     ) -> Result<()> {
-        self.frame_with_inbox(pressed, snapshot, mobs, Vec::new(), controls)
-    }
-
-    /// Also offers other mods' cues, readable once and only with the events grant.
-    pub fn frame_with_inbox(
-        &mut self,
-        pressed: bool,
-        snapshot: Option<GameplaySnapshot>,
-        mobs: Vec<GameplayMob>,
-        inbox: Vec<ModCue>,
-        controls: ControlFrame,
-    ) -> Result<()> {
-        self.instance
-            .frame(pressed, snapshot, mobs, inbox, controls)?;
+        self.instance.frame(pressed, snapshot, mobs, controls)?;
         self.queue_settings();
         Ok(())
     }
@@ -203,6 +202,16 @@ impl ModHost {
         self.instance.take_camera_delta()
     }
 
+    /// Cues the next frame callback can poll, typically last frame's from every loaded mod.
+    pub fn deliver_cues(&mut self, cues: Vec<ModCue>) {
+        self.instance.deliver_cues(cues);
+    }
+
+    /// Committed render output and a process-unique generation that changes with it.
+    pub fn render(&self) -> (&mod_render::RenderOutput, u64) {
+        self.instance.render()
+    }
+
     /// Returns only the last successfully committed plain-text label.
     pub fn label(&self) -> Option<&str> {
         self.instance.label()
@@ -211,10 +220,6 @@ impl ModHost {
     /// Returns the committed visual override without entering the guest.
     pub fn time_override(&self) -> Option<u32> {
         self.instance.time_override()
-    }
-
-    pub fn grants(&self) -> &ModGrants {
-        &self.grants
     }
 
     /// Whether this guest can still receive callbacks.

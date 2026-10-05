@@ -1,0 +1,58 @@
+{
+  "format_version": "1.10.0",
+  "minecraft:client_entity": {
+    "description": {
+      "identifier": "cinnabar:hollow_warden",
+      "materials": {
+        "default": "warden",
+        "glow": "warden_bioluminescent_layer"
+      },
+      "textures": {
+        "default": "textures/entity/hollow_warden",
+        "glow": "textures/entity/hollow_warden_glow"
+      },
+      "geometry": {
+        "default": "geometry.warden"
+      },
+      "scripts": {
+        "pre_animation": [
+          "v.speed = math.min(0.5, 3.0 * q.modified_move_speed);",
+          "v.stride = q.modified_distance_moved * 49.39;",
+          "v.t = q.life_time * 20;",
+          "v.modified_bob_sin = math.sin(v.t * 5.73);",
+          "v.modified_bob_cos = math.cos(v.t * 5.73);",
+          "v.head_x_rot = 68.75 * math.cos(v.stride + 90) * math.min(0.35, v.speed);",
+          "v.head_z_rot = 17.19 * math.sin(v.stride) * v.speed;",
+          "v.body_x_rot = 57.3 * math.cos(v.stride) * math.min(0.35, v.speed);",
+          "v.body_z_rot = 5.73 * math.sin(v.stride) * v.speed;",
+          "v.left_leg_x_rot = 57.3 * math.cos(v.stride) * v.speed;",
+          "v.right_leg_x_rot = 57.3 * math.cos(v.stride + 180) * v.speed;",
+          "v.left_arm_x_rot = -45.84 * math.cos(v.stride) * v.speed;",
+          "v.right_arm_x_rot = -45.84 * math.sin(v.stride) * v.speed;",
+          "v.glow_alpha = 0.65 + 0.35 * math.sin(v.t * 9.0);"
+        ],
+        "animate": [
+          "base_pose",
+          "move",
+          "bob",
+          "look_at_target",
+          "attack_controller"
+        ]
+      },
+      "animations": {
+        "base_pose": "animation.humanoid.base_pose.v1.0",
+        "move": "animation.warden.move",
+        "bob": "animation.warden.bob",
+        "look_at_target": "animation.warden.look_at_target.default",
+        "melee_attack": "animation.warden.attack",
+        "attack_controller": "controller.animation.warden.melee_attacking",
+        "roar": "animation.warden.roar"
+      },
+      "render_controllers": [
+        "controller.render.cinnabar_hollow_warden",
+        "controller.render.cinnabar_hollow_warden_glow"
+      ],
+      "enable_attachables": false
+    }
+  }
+}

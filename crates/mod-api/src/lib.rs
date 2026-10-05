@@ -33,10 +33,29 @@ pub const MAX_COMMANDS_PER_SECOND: usize = 10;
 pub const MAX_CUES_PER_FRAME: usize = 16;
 pub const MAX_CUE_NAME_BYTES: usize = 32;
 pub const MAX_CUE_VALUES: usize = 8;
-/// Cues retained for one mod between its frames; older ones are dropped first.
-pub const MAX_CUE_INBOX: usize = 64;
+
+/// Cues delivered to one callback from every loaded local mod.
+pub const MAX_INCOMING_CUES: usize = 64;
 /// Local mods running at once.
 pub const MAX_LOADED_MODS: usize = 4;
+
+/// Render capability budgets, per instance or per committed callback.
+pub const MAX_RENDER_PASSES: usize = 8;
+pub const MAX_PASS_NAME_BYTES: usize = 32;
+pub const MAX_PASS_PARAMS: usize = 16;
+pub const MAX_SHADER_BYTES: usize = 16 * 1024;
+/// Worst-case texture reads and IR expressions one fragment may execute, helpers included.
+pub const MAX_SHADER_TEXTURE_SAMPLES: u32 = 32;
+pub const MAX_SHADER_EXPRESSIONS: u32 = 4096;
+pub const MAX_RENDER_DECALS: usize = 64;
+pub const MAX_RENDER_RIBBONS: usize = 32;
+pub const MAX_RIBBON_POINTS: usize = 64;
+pub const MAX_RENDER_BEAMS: usize = 16;
+pub const MAX_RENDER_BILLBOARDS: usize = 512;
+/// Largest decal radius, ribbon or beam width, or billboard side, in blocks.
+pub const MAX_PRIMITIVE_EXTENT_BLOCKS: f32 = 64.0;
+/// Primitives farther than this from the origin of either axis are rejected.
+pub const MAX_PRIMITIVE_COORDINATE: f32 = 30_000_000.0;
 
 pub mod bindings {
     wit_bindgen::generate!({

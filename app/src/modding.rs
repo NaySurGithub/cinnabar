@@ -33,7 +33,9 @@ const ENTITIES_ENV: &str = "CINNABAR_MOD_ENTITIES";
 #[cfg(feature = "local-mods")]
 const COMMANDS_ENV: &str = "CINNABAR_MOD_COMMANDS";
 #[cfg(feature = "local-mods")]
-const EVENTS_ENV: &str = "CINNABAR_MOD_EVENTS";
+const RENDER_ENV: &str = "CINNABAR_MOD_RENDER";
+#[cfg(feature = "local-mods")]
+const RENDER_DEPTH_ENV: &str = "CINNABAR_MOD_RENDER_DEPTH";
 #[cfg(feature = "local-mods")]
 const DEMO_KEY: KeyCode = KeyCode::F8;
 #[cfg(feature = "local-mods")]
@@ -54,7 +56,8 @@ pub(crate) struct ModCueFeed(pub Vec<mod_host::ModCue>);
 struct ModRuntime {
     host: ModHost,
     companions: Vec<multi::Companion>,
-    inbox: std::collections::VecDeque<mod_host::ModCue>,
+    /// Per-mod render generations behind the last merged scene.
+    render_sources: Vec<u64>,
     last_reload: Instant,
     controls: mod_host::ControlFrame,
     reload_on_main: bool,
@@ -113,7 +116,8 @@ fn configure(app: &mut App, path: Option<&Path>) {
                     .collect()
             })
             .unwrap_or_default(),
-        events: std::env::var(EVENTS_ENV).is_ok_and(|value| value == "1"),
+        render: std::env::var(RENDER_ENV).is_ok_and(|value| value == "1"),
+        render_depth: std::env::var(RENDER_DEPTH_ENV).is_ok_and(|value| value == "1"),
     };
     configure_with_grants(app, path, grants);
 }
@@ -137,12 +141,7 @@ fn configure_set(app: &mut App, mods: Vec<(std::path::PathBuf, ModGrants)>) {
             .ok()
     });
     let Some(host) = hosts.next() else { return };
-    let companions: Vec<_> = hosts
-        .map(|host| multi::Companion {
-            host,
-            inbox: std::collections::VecDeque::new(),
-        })
-        .collect();
+    let companions: Vec<_> = hosts.map(|host| multi::Companion { host }).collect();
     let controls = host.grants().controls
         || companions
             .iter()
@@ -151,7 +150,7 @@ fn configure_set(app: &mut App, mods: Vec<(std::path::PathBuf, ModGrants)>) {
         .insert_resource(ModRuntime {
             host,
             companions,
-            inbox: std::collections::VecDeque::new(),
+            render_sources: Vec::new(),
             last_reload: Instant::now(),
             controls: mod_host::empty_controls(),
             reload_on_main: true,
@@ -178,6 +177,8 @@ fn configure_set(app: &mut App, mods: Vec<(std::path::PathBuf, ModGrants)>) {
 #[cfg(feature = "local-mods")]
 fn configure_systems(app: &mut App, watching: bool) {
     app.init_resource::<ModCueFeed>();
+    app.add_plugins(::render::ModRenderPlugin)
+        .add_systems(Update, render::grant_depth_sampling);
     if watching {
         app.add_systems(
             Update,
@@ -228,6 +229,7 @@ fn drive_mod(
         Option<ResMut<crate::camera::CameraSettingsAuthority>>,
         Option<ResMut<ModCueFeed>>,
     ),
+    render_scene: Option<ResMut<::render::ModRenderScene>>,
 ) {
     let (Some(mut extension), Some(mut time_override), Some(mut interaction)) =
         (extension, time_override, interaction)
@@ -258,6 +260,10 @@ fn drive_mod(
         cursor.is_some_and(|cursor| crate::camera::input_is_active(window, cursor))
     });
     let frame_controls = std::mem::replace(&mut extension.controls, mod_host::empty_controls());
+    let previous_cues = outputs
+        .2
+        .as_ref()
+        .map_or_else(Vec::new, |feed| feed.0.clone());
     let owner = extension.panel_owner();
     let mut claimed = Vec::new();
     let mut merged = multi::Merged::default();
@@ -268,10 +274,10 @@ fn drive_mod(
         let mut controls = multi::claim_controls(&frame_controls, &claimed, index == owner);
         controls.gameplay = snapshot.is_some();
         claimed.extend(extension.host(index).reserved_keys().iter().cloned());
-        let inbox = extension.take_inbox(index);
         let host = extension.host_mut(index);
+        host.deliver_cues(previous_cues.clone());
         if host.is_active()
-            && let Err(error) = host.frame_with_inbox(pressed, snapshot, mobs, inbox, controls)
+            && let Err(error) = host.frame_with_world(pressed, snapshot, mobs, controls)
         {
             if index == 0
                 && let Some((generation, request_id)) = &extension.registration_request
@@ -285,9 +291,9 @@ fn drive_mod(
         if let Some(error) = host.take_settings_error() {
             eprintln!("Cinnabar extension preferences could not be saved: {error}");
         }
-        let cues = merged.absorb(host);
-        extension.route_cues(index, &cues);
+        merged.absorb(host);
     }
+    render::publish(render_scene, &mut extension);
     if let Some(watcher) = watcher.as_ref() {
         watcher.remember_settings(Some(&extension.host));
     }
@@ -444,3 +450,5 @@ mod gameplay;
 mod input;
 #[cfg(feature = "local-mods")]
 pub(crate) mod interaction;
+#[cfg(feature = "local-mods")]
+mod render;
