@@ -91,7 +91,11 @@ impl Guest for Component {
                 _ => fx.clear_view(),
             }
             if let Ok(mobs) = gameplay::read_mobs() {
-                if let Some(boss) = mobs.iter().find(|mob| mob.type_id == BOSS_TYPE) {
+                let boss = mobs.iter().find(|mob| mob.type_id == BOSS_TYPE);
+                if boss.is_none() {
+                    fx.lose_boss();
+                }
+                if let Some(boss) = boss {
                     fx.observe_boss(
                         [boss.position.x, boss.position.y, boss.position.z],
                         boss.health

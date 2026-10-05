@@ -391,7 +391,6 @@ func (c *Controller) bossFelled(tx *world.Tx) {
 		if c.participantOf(p) != nil {
 			p.SendTitle(victoryTitle())
 			p.PlaySound(soundNamed("random.levelup", 1, 0.8))
-			p.Message("§6Rest at the site of grace to face Varr again.")
 		}
 	}
 }

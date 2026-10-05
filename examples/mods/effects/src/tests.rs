@@ -66,9 +66,13 @@ fn every_pass_passes_the_host_sandbox() {
 fn idle_effects_disable_every_costly_pass_but_the_boss_aura() {
     let mut fx = Effects::new();
     fx.set_view(EYE, 0.0, 0.0, false);
+    fx.observe_boss([0.0, 64.0, 8.0], None);
     let frame = fx.step(1.0 / 60.0);
     let enabled: Vec<_> = frame.passes.iter().map(|p| p.enabled).collect();
     assert_eq!(enabled, [true, false, false, false]);
+    fx.lose_boss();
+    assert!(!fx.step(1.0 / 60.0).passes[0].enabled, "the aura outlived the boss");
+    fx.observe_boss([0.0, 64.0, 8.0], None);
     assert!(frame.primitives.decals.is_empty() && frame.primitives.billboards.is_empty());
     fx.handle_panel("aura", 0.0);
     assert!(fx.step(1.0 / 60.0).passes.iter().all(|p| !p.enabled));
