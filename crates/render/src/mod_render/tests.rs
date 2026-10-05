@@ -212,3 +212,12 @@ fn primitive_shader_resources_match_the_layout() {
     let pipeline = primitives::PrimitivePipeline::from_world(&mut World::new());
     crate::shader_test_support::assert_binding_visibility(&source, 0, &pipeline.layout);
 }
+
+#[test]
+fn sandbox_shaders_survive_bevy_shader_composition() {
+    let source = "fn effect(uv: vec2<f32>) -> vec3<f32> { return bloom(uv, 4.0, 0.5) + vec3<f32>(depth(uv)); }";
+    let shader = mod_render::shader::compose(source, true).unwrap();
+    let composed = crate::shader_source::composed(&shader, &[]);
+    assert!(composed.contains(mod_render::shader::FRAGMENT_ENTRY));
+    assert!(composed.contains(mod_render::shader::VERTEX_ENTRY));
+}
