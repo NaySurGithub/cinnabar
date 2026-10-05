@@ -5325,7 +5325,17 @@ storage, browser links, clipboard and soft-keyboard input have Android adapters.
 Android graphics diagnostics publish adapter identity and the requested present
 mode without creating a second surface for Bevy's native window. The effective
 present mode remains unavailable and unproven until it can be read from the
-renderer-owned surface. Native join/crash acceptance is pending.
+renderer-owned surface. An API 35 x86_64 emulator running preview `6b72c9c45` reached
+Zeno's lobby with the Microsoft account from the authorized shared Lunar cache,
+without the previous native-window panic. Visible terrain holes remain, and the
+Galaxy S21 device run and complete join/render acceptance remain unverified.
+
+The same emulator kept the fresh sign-in helper and foreground service active
+across 36 seconds in the background: helper CPU and payload-free I/O counters
+advanced after 15 seconds. Returning through the normal launcher retained the
+sign-in dialog; its Close action stopped the helper and service while the native
+app stayed open. This witnesses background execution, not a completed fresh
+Microsoft approval or a direct count of HTTP authentication requests.
 
 Joystick + Crosshair controls use JSON-UI artwork and the same painted hit bounds.
 Movement, look and action fingers retain independent owners until lift/cancel;
