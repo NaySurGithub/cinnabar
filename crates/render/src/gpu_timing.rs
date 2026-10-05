@@ -105,7 +105,7 @@ fn timed_nodes() -> Vec<(InternedRenderLabel, RuntimeStage)> {
         nodes.push((Node3d::Upscaling.intern(), RuntimeStage::GpuBlit));
     }
     #[cfg(feature = "enhanced")]
-    nodes.extend(crate::enhanced::timed_nodes());
+    nodes.extend(crate::enhanced::graph::timed_nodes());
     nodes
 }
 
@@ -162,6 +162,26 @@ impl Node for TimedNode {
         }
         result
     }
+}
+
+/// Times `record` as one node-level span of `stage`, for nodes that record several passes.
+pub(crate) fn timed<'w, R>(
+    world: &World,
+    context: &mut RenderContext<'w>,
+    stage: RuntimeStage,
+    record: impl FnOnce(&mut RenderContext<'w>) -> R,
+) -> R {
+    let span = world
+        .get_resource::<GpuTimestamps>()
+        .and_then(|timestamps| timestamps.open_pass(stage));
+    if let Some(span) = &span {
+        mark(context, span.queries, span.begin);
+    }
+    let result = record(context);
+    if let Some(span) = &span {
+        mark(context, span.queries, span.begin + 1);
+    }
+    result
 }
 
 /// Writes one timestamp with an empty compute pass, valid between any two passes.

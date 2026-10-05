@@ -200,6 +200,64 @@ bounded local outline font for the personal panel. It is rasterized once per
 selected font into an isolated atlas alias with filtered sampling. Panel sizing follows display DPI
 independently of the game GUI scale; vanilla and server glyph ownership are preserved.
 
+## Mobs, camera rig, commands and cues
+
+`CINNABAR_MOD_ENTITIES=1` grants `gameplay.read-mobs`: up to
+`mod_api::MAX_GAMEPLAY_MOBS` non-player actors within `MAX_MOB_RANGE_BLOCKS` of the
+eye, nearest first, with type ID and replicated health. `gameplay.set-camera-rig`
+(camera grant) retains a third-person boom in camera-local blocks plus roll and FOV
+change, swept against blocks like the vanilla boom; it presents third-person-back
+until `none`, a trap or a reload. `CINNABAR_MOD_COMMANDS=ability` (comma-separated)
+lets `gameplay.request-command` send `/ability ...` as a vanilla player command
+request; any other command is refused, and requests are capped by
+`MAX_COMMANDS_PER_FRAME` and `MAX_COMMANDS_PER_SECOND`. `events.emit` publishes bounded presentation cues in the app's
+`ModCueFeed`. `input.read-controls` also reports held keys. All of these commit only
+after a successful callback; `examples/mods/showcase-camera` uses every one.
+## Custom rendering
+
+`render` is a separate local grant (`CINNABAR_MOD_RENDER=1`, or `"render": true` in
+`local-mod.json`); depth reads also need `render_depth`. Budgets live in `mod_api`.
+
+- **Post passes.** `register-pass` takes WGSL that defines
+  `fn effect(uv: vec2<f32>) -> vec3<f32>` against a host prelude (`scene`, `param`,
+  `blur`, `bloom`, `world_to_uv`, and `depth` or `world_position` with depth). naga
+  validates the composed module. The guest may not declare resources, overrides or entry
+  points, and may not loop. Worst-case texture reads and expressions per pixel, with call
+  sites expanded, must fit the budget. A rejection returns the reason to the guest. Passes
+  run by `(order, name)` after post-processing and before the HUD, each reading the
+  previous colour. `update-pass` retains an enable flag and 16 floats, and disabled passes
+  cost nothing. Each slot is timed as `gpu_mod_pass_N`.
+- **World primitives.** `draw` appends decals, ribbons, beams and billboards for the
+  current callback. Each successful callback replaces the drawn set. One premultiplied,
+  depth-tested draw without depth writes runs in the transparent phase, timed as
+  `gpu_mod_primitives`.
+- Both commit only after a successful callback. A trap, reload, revocation or unload
+  clears them.
+
+### Effects showcase
+
+`examples/mods/effects` draws boss telegraphs, slash trails, a boss aura, charge, beam,
+flash-step, meteor and flight effects, low-health and death grades, impact frames and
+phase-2 distortion. It follows `events.poll()` cues from the showcase camera mod
+(`ability.*`, `lockon.on`) and the boss from `read-mobs` (half health starts phase 2).
+Run alone, keys 1–4 and a double Space trigger abilities, and F7 opens a panel that stands
+in for server events. `tuning.rs` holds the constants. Other mods can embed it by
+disabling its default `component` feature and calling `Effects::trigger`.
+
+```sh
+cargo build -p effects-mod --target wasm32-unknown-unknown --release --locked
+cargo run -p mod-host --locked -- pack \
+  target/wasm32-unknown-unknown/release/effects_mod.wasm /tmp/cinnabar-effects.wasm
+cargo run -p mod-host --locked -- probe-render /tmp/cinnabar-effects.wasm
+CINNABAR_MOD_COMPONENT=/tmp/cinnabar-effects.wasm CINNABAR_MOD_RENDER=1 \
+CINNABAR_MOD_CONTROLS=1 CINNABAR_MOD_PLAYERS=1 CINNABAR_MOD_ENTITIES=1 \
+  cargo run -p bedrock-client --features local-mods --locked
+```
+
+For live reload, edit `tuning.rs` or `shaders.rs`, rebuild, pack to a sibling file and
+rename it over `/tmp/cinnabar-effects.wasm`. The client swaps the instance within half a
+second. A shader rejected after an edit shows its error as the mod's HUD label.
+
 ## Attach a local component to a running client
 
 A `local-mods` build watches `local-mod.json` in `InstallLayout.user_config_root`
@@ -218,7 +276,11 @@ A `local-mods` build watches `local-mod.json` in `InstallLayout.user_config_root
     "camera": true,
     "controls": true,
     "interaction": true,
-    "settings": true
+    "settings": true,
+    "entities": false,
+    "commands": []
+    "render": false,
+    "render_depth": false
   }
 }
 ```

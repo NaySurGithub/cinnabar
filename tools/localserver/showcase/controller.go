@@ -142,7 +142,14 @@ func (c *Controller) Join(p *player.Player) {
 	p.Handle(&handler{c: c})
 }
 
-func (c *Controller) leave(p *player.Player) {
+// leave undoes the showcase's changes to a player quitting or leaving its world.
+func (c *Controller) leave(p *player.Player, quit bool) {
+	if part := c.lookup(p.UUID()); part != nil {
+		c.restorePlayer(p, part)
+	}
+	if !quit {
+		return
+	}
 	c.mu.Lock()
 	delete(c.players, p.UUID())
 	c.mu.Unlock()
@@ -165,8 +172,8 @@ func (c *Controller) participantOf(p *player.Player) *participant {
 // Enable builds the arena at the player's feet and starts the fight; a player whose session
 // predates the pack is sent back through the same address to load it.
 func (c *Controller) Enable(tx *world.Tx, p *player.Player) error {
-	if tx.World() != c.w {
-		return errors.New("the showcase runs in the overworld")
+	if err := c.owns(tx); err != nil {
+		return err
 	}
 	arena := Arena{Origin: cube.PosFromVec3(p.Position())}
 	if err := writeMarker(c.dir, arena); err != nil {
@@ -176,10 +183,15 @@ func (c *Controller) Enable(tx *world.Tx, p *player.Player) error {
 	c.arena = &arena
 	tx.World().SetSpawn(cube.PosFromVec3(arena.PlayerSpawn()))
 	c.startFight(tx)
-	p.Teleport(arena.PlayerSpawn())
+	for e := range tx.Players() {
+		q := e.(*player.Player)
+		if part := c.lookup(q.UUID()); part != nil {
+			c.returnToGrace(q, part)
+		}
+	}
 	giveAbilityItems(p)
+	c.packs.Offer()
 	if part := c.lookup(p.UUID()); part != nil && !part.hasPack {
-		c.packs.Offer()
 		p.Message("§6Loading the showcase pack, reconnecting…")
 		addr := c.transfer
 		tx.World().DoAfter(time.Second, func(tx *world.Tx) {
@@ -192,6 +204,14 @@ func (c *Controller) Enable(tx *world.Tx, p *player.Player) error {
 				}
 			}
 		})
+	}
+	return nil
+}
+
+// owns reports an error unless tx is the showcase's world.
+func (c *Controller) owns(tx *world.Tx) error {
+	if tx == nil || tx.World() != c.w {
+		return errors.New("the showcase runs in the overworld")
 	}
 	return nil
 }
@@ -253,7 +273,8 @@ func (c *Controller) stopFight(tx *world.Tx) {
 }
 
 func (c *Controller) tick(tx *world.Tx) {
-	if c.arena == nil {
+	// A paused local world freezes the fight with it.
+	if c.arena == nil || tx.World().Paused() {
 		return
 	}
 	c.now += dt

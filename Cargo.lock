@@ -632,6 +632,7 @@ dependencies = [
  "client-world",
  "crossbeam-channel",
  "ctrlc",
+ "developer-control",
  "diagnostics",
  "fontdue",
  "futures-lite",
@@ -1782,6 +1783,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "cinnabar-mcp"
+version = "0.1.6"
+dependencies = [
+ "developer-control",
+ "image",
+ "mcp-stdio",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "cipher"
 version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2533,6 +2545,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "developer-control"
+version = "0.1.6"
+dependencies = [
+ "crossbeam-channel",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
 name = "devtool"
 version = "0.1.6"
 dependencies = [
@@ -2664,6 +2686,14 @@ dependencies = [
  "rfc6979",
  "signature",
  "spki",
+]
+
+[[package]]
+name = "effects-mod"
+version = "0.1.6"
+dependencies = [
+ "mod-api",
+ "mod-render",
 ]
 
 [[package]]
@@ -3890,6 +3920,7 @@ dependencies = [
  "image",
  "json-ui",
  "jsonui-editor",
+ "mcp-stdio",
  "serde_json",
  "uuid",
 ]
@@ -4079,6 +4110,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4facc753ae494aeb6e3c22f839b158aebd4f9270f55cd3c79906c45476c47ab4"
 
 [[package]]
+name = "mcp-stdio"
+version = "0.1.6"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4179,6 +4217,7 @@ version = "0.1.6"
 dependencies = [
  "anyhow",
  "mod-api",
+ "mod-render",
  "serde",
  "serde_json",
  "server-experience",
@@ -4187,6 +4226,15 @@ dependencies = [
  "ui",
  "wasmtime",
  "wit-component",
+]
+
+[[package]]
+name = "mod-render"
+version = "0.1.6"
+dependencies = [
+ "bytemuck",
+ "mod-api",
+ "naga",
 ]
 
 [[package]]
@@ -5512,6 +5560,7 @@ dependencies = [
  "image",
  "meshing",
  "mod-api",
+ "mod-render",
  "naga",
  "naga_oil",
  "pack-compiler",
@@ -5962,8 +6011,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
+name = "showcase-camera-mod"
+version = "0.1.6"
+dependencies = [
+ "mod-api",
+]
+
+[[package]]
 name = "showcase-screen"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "mod-api",
  "serde_json",

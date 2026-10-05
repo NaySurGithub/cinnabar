@@ -55,6 +55,10 @@ struct Grants {
     controls: bool,
     interaction: bool,
     settings: bool,
+    entities: bool,
+    commands: Vec<String>,
+    render: bool,
+    render_depth: bool,
 }
 
 impl From<&Grants> for ModGrants {
@@ -66,6 +70,10 @@ impl From<&Grants> for ModGrants {
             controls: grants.controls,
             interaction: grants.interaction,
             settings: grants.settings,
+            entities: grants.entities,
+            commands: grants.commands.clone(),
+            render: grants.render,
+            render_depth: grants.render_depth,
         }
     }
 }
@@ -126,7 +134,7 @@ fn build_candidate_with_settings(
     let host = ModHost::prepare_snapshot_with_grants(
         &registration.component,
         &component,
-        grants,
+        grants.clone(),
         settings.map(|settings| (settings.path.as_path(), settings.json.as_str())),
     )
     .map_err(|error| format!("{error:#}"))?;
@@ -592,6 +600,8 @@ fn sync_authority(world: &mut World) {
             runtime.host.set_panel_open(false);
             runtime.host.take_interaction();
             runtime.host.take_camera_delta();
+            runtime.host.take_commands();
+            runtime.host.take_cues();
             true
         });
     if suspend {
@@ -621,6 +631,12 @@ fn clear_owned_state(world: &mut World) -> Option<ModHost> {
 }
 
 fn clear_presentation(world: &mut World) {
+    if let Some(mut camera) = world.get_resource_mut::<crate::camera::CameraSettingsAuthority>() {
+        camera.set_rig(None);
+    }
+    if let Some(mut scene) = world.get_resource_mut::<render::ModRenderScene>() {
+        scene.clear();
+    }
     if let Some(mut presentation) = world.get_resource_mut::<UiPresentationRuntime>() {
         presentation.set_mod_panel_open(false);
         let _ = presentation.set_mod_panel(None);
