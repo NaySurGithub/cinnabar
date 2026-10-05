@@ -389,9 +389,8 @@ func TestBlockStatesEnumerateCombinations(t *testing.T) {
 	}
 }
 
-// The placement traits' states follow the vanilla client's placement callbacks (26.30
-// reconstruction, BlockTrait::PlacementDirection and BlockTrait::PlacementPosition):
-// cardinal_direction from the yaw in quarters starting south; facing_direction down or up when
+// The placement traits' states follow the vanilla client's minecraft:placement_direction and
+// minecraft:placement_position traits: cardinal_direction from the yaw in quarters starting south; facing_direction down or up when
 // the block is below the placer's feet or above its head within one block horizontally, else
 // from the yaw like cardinal_direction; block_face the clicked face; vertical_half top for the
 // clicked bottom face or a click above the middle.

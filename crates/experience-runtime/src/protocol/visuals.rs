@@ -111,13 +111,8 @@ impl PlacementState {
     ];
 
     /// The block state the trait adds, and its values in the order the client enumerates them:
-    /// the `Direction::Type`, `Facing` and `VerticalHalfEnum` values that the traits' placement
-    /// callbacks set through `BlockType::trySetState` (26.30 reconstruction,
-    /// `BlockTrait::PlacementDirection::UpdateCardinalGetPlacementBlockCallback`, RVA 0x0aeab7a0,
-    /// `UpdateFacingGetPlacementBlockCallback`, RVA 0x0aed3010,
-    /// `BlockTrait::PlacementPosition::UpdateBlockFaceGetPlacementBlockCallback`, RVA 0x0aedbb80,
-    /// and `UpdateVerticalHalfGetPlacementBlockCallback`, RVA 0x0aedbc10, each
-    /// `getPlacementBlock`). The Dragonfly fork's traits list the same values.
+    /// the direction, facing and vertical half values that vanilla's placement traits set on
+    /// the placed block. The Dragonfly fork's traits list the same values.
     pub fn state(self) -> (&'static str, &'static [&'static str]) {
         const FACES: &[&str] = &["down", "up", "north", "south", "west", "east"];
         match self {

@@ -310,15 +310,11 @@ func placerOf(user item.User) placer {
 var facingByQuarter = [4]int{3, 4, 2, 5}
 
 // value is the value that the placement trait state p takes for a block placed at pos against
-// the clicked face, clicked at click, by the vanilla client's placement callbacks (26.30
-// reconstruction): cardinal_direction from the yaw in quarters starting south
-// (UpdateCardinalGetPlacementBlockCallback::getPlacementBlock, RVA 0x0aeab7a0);
-// facing_direction down when the block is below the placer's feet and up when it is above its
-// head, within one block horizontally, else from the yaw like cardinal_direction
-// (UpdateFacingGetPlacementBlockCallback::getPlacementBlock, RVA 0x0aed3010); block_face the
-// clicked face (UpdateBlockFaceGetPlacementBlockCallback::getPlacementBlock, RVA 0x0aedbb80);
-// vertical_half top for a clicked bottom face or a click above the middle of a side
-// (UpdateVerticalHalfGetPlacementBlockCallback::getPlacementBlock, RVA 0x0aedbc10). The traits'
+// the clicked face, clicked at click, as the vanilla client's placement traits set it:
+// cardinal_direction from the yaw in quarters starting south; facing_direction down when the
+// block is below the placer's feet and up when it is above its head, within one block
+// horizontally, else from the yaw like cardinal_direction; block_face the clicked face;
+// vertical_half top for a clicked bottom face or a click above the middle of a side. The traits'
 // rotation offset is 0.
 func (p placer) value(state PlacementState, pos cube.Pos, face cube.Face, click mgl64.Vec3) string {
 	quarter := int(math.Floor(p.yaw/90+0.5)) & 3
