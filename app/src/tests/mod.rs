@@ -112,8 +112,8 @@ use crate::runtime::{
     visibility::{CaveVisibilityCache, apply_added_chunk_visibility, remove_chunk_visibility},
     world::{
         ShutdownWatchdog, TeardownWatchdog, apply_committed_control, arm_shutdown_watchdog,
-        flush_sub_chunk_requests, startup_biome_tints, synchronize_biome_tints,
-        world_stream_fatal_message,
+        flush_sub_chunk_requests, hold_while_control_pending, startup_biome_tints,
+        synchronize_biome_tints, world_stream_fatal_message,
     },
 };
 use acceptance::committed_control::{

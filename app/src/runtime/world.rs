@@ -19,7 +19,7 @@ pub(crate) use dimension::advance_dimension_transfer;
 mod player_list_tests;
 mod shutdown_watchdog;
 mod sub_chunk_requests;
-pub(crate) use sub_chunk_requests::flush_sub_chunk_requests;
+pub(crate) use sub_chunk_requests::{flush_sub_chunk_requests, hold_while_control_pending};
 
 #[cfg(feature = "acceptance")]
 use acceptance::committed_control::{
@@ -611,7 +611,10 @@ pub(crate) fn drive_world_stream(
             stream,
             OUTBOUND_SEND_BUDGET_PER_FRAME,
             |chunk, base_sub_chunk_y, count, packet| {
-                network.send_sub_chunk_request(chunk, base_sub_chunk_y, count, packet)
+                hold_while_control_pending(
+                    network.send_sub_chunk_request(chunk, base_sub_chunk_y, count, packet),
+                    || network.closed_command_has_pending_control(),
+                )
             },
         )
         .err()

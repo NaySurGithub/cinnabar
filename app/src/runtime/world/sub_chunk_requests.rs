@@ -1,6 +1,19 @@
 use bevy::log::debug;
 use chunk_pipeline::WorldStream;
 
+/// A send that finds the channel closed while a transfer or disconnect is pending reports a full
+/// queue instead, so the request waits for the next session rather than ending this one.
+pub(crate) fn hold_while_control_pending(
+    result: Result<(), crate::runtime::network::session::PacketSendError>,
+    pending: impl FnOnce() -> bool,
+) -> Result<(), crate::runtime::network::session::PacketSendError> {
+    use crate::runtime::network::session::PacketSendError;
+    match result {
+        Err(PacketSendError::Closed(packet)) if pending() => Err(PacketSendError::Full(packet)),
+        result => result,
+    }
+}
+
 pub(crate) fn flush_sub_chunk_requests(
     stream: &mut WorldStream,
     budget: usize,

@@ -60,7 +60,7 @@ func bosses(tx *world.Tx) int {
 
 func TestEnableBuildsTheArenaSpawnsTheBossAndPersists(t *testing.T) {
 	withArena(t, func(c *Controller, tx *world.Tx, p *player.Player, _ *participant) {
-		if _, ok := tx.Block(c.arena.Grace()).(block.Campfire); !ok {
+		if _, ok := tx.Block(c.arena.Grace()).(block.RespawnAnchor); !ok {
 			t.Fatalf("grace block is %T", tx.Block(c.arena.Grace()))
 		}
 		if n := bosses(tx); n != 1 {

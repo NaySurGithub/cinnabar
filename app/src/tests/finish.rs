@@ -988,6 +988,52 @@ fn network_session_fatal_is_retained_when_command_sender_closes_in_same_frame() 
     assert_eq!(stream.stats().awaiting_sub_chunk_responses, 0);
 }
 
+// A transfer closes the command channel before the world stream stops asking for sub-chunks.
+#[test]
+fn closed_sub_chunk_send_during_a_transfer_waits_instead_of_ending_the_session() {
+    let mut stream = chunk_pipeline::WorldStream::new(WorldBootstrap {
+        local_player_unique_id: 1,
+        dimension: 0,
+        local_player_runtime_id: 1,
+        player_position: [0.0; 3],
+        world_spawn_position: [0; 3],
+        air_network_id: 12_530,
+        block_network_ids_are_hashes: false,
+    });
+    stream
+        .submit(
+            1,
+            WorldEvent::LevelChunk(LevelChunkEvent {
+                dimension: 0,
+                x: 0,
+                z: 0,
+                mode: LevelChunkMode::LimitedRequests { highest: 1 },
+                payload: overworld_biome_payload(),
+            }),
+        )
+        .unwrap();
+    complete_world_stream_decodes(&mut stream);
+    let closed = |packet| {
+        Err(crate::runtime::network::session::PacketSendError::Closed(
+            packet,
+        ))
+    };
+
+    let sent = flush_sub_chunk_requests(&mut stream, 1, |_, _, _, packet| {
+        hold_while_control_pending(closed(packet), || true)
+    });
+    assert_eq!(sent, Ok(0));
+    assert_eq!(stream.pending_request_count(), 1);
+
+    let ended = flush_sub_chunk_requests(&mut stream, 1, |_, _, _, packet| {
+        hold_while_control_pending(closed(packet), || false)
+    });
+    assert!(
+        ended.is_err(),
+        "a closed channel with nothing pending still ends the session"
+    );
+}
+
 #[test]
 fn exact_light_fatal_message_is_stage_independent() {
     let fatal = WorldStreamFatalError::LightSolve {
