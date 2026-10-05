@@ -267,3 +267,51 @@ fn stationary_spawn_light_competes_with_far_propagation_wakeups() {
     assert_eq!(completion.key, top);
     stream.accept_light_completion(completion);
 }
+
+/// Fresh nearby geometry must compete with blocked work after the camera settles.
+#[test]
+fn stationary_spawn_mesh_competes_with_blocked_far_work() {
+    let mut stream = lit_stream(1);
+    let view = SchedulerView {
+        position: [8.0; 3],
+        forward: None,
+    };
+    stream
+        .mesh_jobs
+        .refresh
+        .refresh(view, &mut stream.mesh_jobs.lanes, None, |_, _| true);
+    for x in [
+        scheduler::NEAR_CAMERA_RADIUS + 1,
+        scheduler::NEAR_CAMERA_RADIUS + 2,
+    ] {
+        let key = SubChunkKey::new(1, x, 0, 0);
+        stream
+            .authority
+            .commit_sub_chunk(key, super::uniform_sub_chunk(2))
+            .unwrap();
+        stream.resident.insert(key);
+        let revision = stream.mark_dirty_exact(key, Instant::now());
+        stream.mesh_jobs.lanes[RESIDENT_MESH_LANE]
+            .ready
+            .push(PendingSchedulerCandidate::new(key, revision, view, false));
+    }
+    stream.mesh_jobs.scan.clear();
+    let near = SubChunkKey::new(1, 0, 0, 0);
+    stream
+        .authority
+        .commit_sub_chunk(near, super::uniform_sub_chunk(2))
+        .unwrap();
+    install_current_light(&mut stream, near, 0, 0, false);
+    stream.mark_dirty_exact(near, Instant::now());
+    stream.poll_deadline = Some(Instant::now() - Duration::from_secs(1));
+
+    assert_eq!(
+        stream.dispatch_mesh_jobs(view.position, 1),
+        1,
+        "fresh nearby geometry must dispatch before blocked far meshes consume the slice"
+    );
+    assert!(stream.mesh_jobs.in_flight.contains_key(&near));
+    let completion = stream.mesh_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert_eq!(completion.key, near);
+    stream.accept_mesh_completion(completion);
+}

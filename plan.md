@@ -5332,6 +5332,11 @@ including fling and tap suppression. The same emulator scrolled through an overf
 fallback scroll geometry and Galaxy S21 acceptance remain incomplete.
 Newly arrived nearby lighting competes with distant propagation even after
 the camera settles; a regression exercises the spawn column skylight dependency.
+Fresh nearby solid mesh arrivals also re-enter the bounded near-camera probe
+after a settled view; a regression proves dispatch ahead of blocked distant work.
+The corrected pipeline rendered continuous flat-world ground and touch camera
+movement on the same emulator. The latest Zeno retest was rejected with
+"Already logged in"; it does not establish full lobby terrain completion.
 A fresh Microsoft-authenticated join to `zenomc.org:19132` on 2026-10-05
 rendered lobby terrain and the scoreboard on the emulator. Full terrain completion,
 join timing and Galaxy S21 acceptance remain incomplete. This native debug witness
