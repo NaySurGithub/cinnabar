@@ -104,6 +104,10 @@ func Run(ctx context.Context, config Config) error {
 		exchange, cancel := context.WithTimeout(ctx, completeSignInTimeout)
 		_ = config.CompleteSignIn(exchange, config.Path, signedIn)
 		cancel()
+		// A completion failure leaves the exchange to the first join; a cancelled sign-in is not success.
+		if ctx.Err() != nil {
+			return fail(writer, "cancelled", "Sign-in was cancelled.")
+		}
 	}
 	return emit(writer, event{Version: 1, Kind: "authenticated", Method: method})
 }

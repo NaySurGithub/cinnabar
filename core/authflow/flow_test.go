@@ -258,3 +258,27 @@ func TestSignInCompletesJoinPrerequisitesBeforeReportingSuccess(t *testing.T) {
 		t.Fatal("declined sign-in succeeded")
 	}
 }
+
+// Cancelling sign-in while its completion runs reports cancellation, never success.
+func TestCancellationDuringSignInCompletionIsNotReportedAsSuccess(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	var output bytes.Buffer
+	err := Run(ctx, Config{
+		Path: filepath.Join(t.TempDir(), "token.json"), Writer: &output, Refresh: staticRefresh,
+		DeviceAuth: func(context.Context) (*oauth2.DeviceAuthResponse, error) {
+			return &oauth2.DeviceAuthResponse{VerificationURI: "https://login.example.test/device", UserCode: "ABCD-1234"}, nil
+		},
+		DeviceToken: func(context.Context, *oauth2.DeviceAuthResponse) (*oauth2.Token, error) {
+			return validToken("access", "refresh"), nil
+		},
+		CompleteSignIn: func(exchange context.Context, _ string, _ oauth2.TokenSource) error {
+			cancel()
+			<-exchange.Done()
+			return exchange.Err()
+		},
+	})
+	events := decodeEvents(t, output.Bytes())
+	if last := events[len(events)-1]; err == nil || last.Kind != "error" || last.Stage != "cancelled" {
+		t.Fatalf("Run err=%v last event=%+v, want a cancelled sign-in", err, last)
+	}
+}
