@@ -301,3 +301,55 @@ fn secondary_presses_fire_the_secondary_mapping() {
         None
     );
 }
+
+/// A list 100 GUI units wide whose 50-unit viewport scrolls 400 units of content, at the top
+/// left, named `demo.list`, beside an unnamed one; it needs nothing from the vanilla pack.
+const LIST: &str = r#"{"namespace": "demo",
+    "terminal": {"type": "panel", "size": ["100%", "100%"], "controls": [
+        {"list@demo.view": {"scroll_view_name": "demo.list"}},
+        {"other@demo.view": {"offset": [0, 100]}}]},
+    "view": {"type": "scroll_view", "size": [100, 50],
+        "anchor_from": "top_left", "anchor_to": "top_left",
+        "scroll_speed": 18, "always_handle_pointer": true,
+        "scroll_view_port": "viewport", "scroll_content": "content",
+        "scrollbar_track": "track", "scrollbar_box": "box", "scroll_box_and_track_panel": "bar",
+        "controls": [
+            {"viewport": {"type": "panel", "size": [90, 50],
+                "anchor_from": "top_left", "anchor_to": "top_left", "clips_children": true,
+                "controls": [{"content": {"type": "panel", "size": [90, 400],
+                    "anchor_from": "top_left", "anchor_to": "top_left"}}]}},
+            {"bar": {"type": "panel", "size": [10, 50], "offset": [90, 0],
+                "anchor_from": "top_left", "anchor_to": "top_left", "controls": [
+                {"track": {"type": "scroll_track", "size": [10, 50],
+                    "anchor_from": "top_left", "anchor_to": "top_left"}},
+                {"box": {"type": "scrollbar_box", "size": [10, 10], "draggable": "vertical",
+                    "anchor_from": "top_left", "anchor_to": "top_left"}}]}}]}}"#;
+
+/// A named scroll view reports its range when first drawn and each time it changes, and only
+/// then; an unnamed one reports nothing.
+#[test]
+fn named_scroll_views_report_their_range_on_change() {
+    let mut modal = screen::Modal::default();
+    modal.open(Some("ui/terminal.json".into()));
+    let files = Arc::new(files(&[("ui/terminal.json", LIST)]));
+    let mut presentation = drawn(&modal, &files, [1280, 720]);
+    let first = presentation.experience_modal_scrolls();
+    let [(view, range)] = first.as_slice() else {
+        panic!("{first:?}");
+    };
+    assert_eq!(view, "demo.list");
+    assert_eq!(
+        (range.offset, range.viewport, range.content),
+        (0.0, 50.0, 400.0)
+    );
+    assert!(presentation.experience_modal_scrolls().is_empty());
+    let scale = presentation.experience_modal_size().unwrap().scale as f32;
+    presentation.hover_experience_modal(Some([10.0 * scale, 10.0 * scale]));
+    presentation.scroll_experience_modal(2.0);
+    redraw(&mut presentation, &modal, &files, [1280, 720]);
+    let scrolled = presentation.experience_modal_scrolls();
+    let [(view, range)] = scrolled.as_slice() else {
+        panic!("{scrolled:?}");
+    };
+    assert_eq!((view.as_str(), range.offset), ("demo.list", 36.0));
+}

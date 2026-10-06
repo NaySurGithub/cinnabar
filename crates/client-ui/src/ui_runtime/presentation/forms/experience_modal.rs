@@ -59,6 +59,8 @@ pub(super) struct ModalScreen {
     reported: BTreeMap<String, String>,
     /// The control a secondary press went down on.
     secondary: Option<String>,
+    /// Each named scroll view's range last reported, by `scroll_view_name`.
+    scrolled: BTreeMap<String, screen::ScrollRange>,
 }
 
 /// What one frame of input did to the modal's edit boxes.
@@ -101,6 +103,7 @@ impl UiPresentationRuntime {
                 pending_texts: Vec::new(),
                 reported: BTreeMap::new(),
                 secondary: None,
+                scrolled: BTreeMap::new(),
             });
         }
         let screen = slot.as_mut().expect("modal installed");
@@ -110,6 +113,7 @@ impl UiPresentationRuntime {
             screen.frame = None;
             screen.dispatcher = Dispatcher::default();
             screen.reported.clear();
+            screen.scrolled.clear();
         }
         if screen.revision != Some(modal.modal.revision) {
             screen.revision = Some(modal.modal.revision);
@@ -219,6 +223,39 @@ impl UiPresentationRuntime {
             screen.reported.insert(name.clone(), text.clone());
             out.edits.retain(|(control, _)| *control != name);
             out.edits.push((name, text));
+        }
+        out
+    }
+
+    /// Each scroll view with a `scroll_view_name` whose range changed since the last call, as
+    /// the last drawn frame laid it out: how far it is scrolled and its viewport's and content's
+    /// lengths, in GUI units. A view is reported when first drawn, then on each change.
+    pub fn experience_modal_scrolls(&mut self) -> Vec<(String, screen::ScrollRange)> {
+        let Some(screen) = self.form_presentation.experience_modal.as_mut() else {
+            return Vec::new();
+        };
+        let Some(frame) = &screen.frame else {
+            return Vec::new();
+        };
+        let mut out: Vec<(String, screen::ScrollRange)> = Vec::new();
+        for region in frame.hits.iter() {
+            let (HitKind::ScrollView, Some(name)) = (region.kind, &region.control_name) else {
+                continue;
+            };
+            let Some(metrics) = frame.report.scrolls.get(&region.key) else {
+                continue;
+            };
+            let range = screen::ScrollRange {
+                offset: metrics.offset,
+                viewport: metrics.viewport,
+                content: metrics.content,
+            };
+            if !range.valid() || screen.scrolled.get(name) == Some(&range) {
+                continue;
+            }
+            screen.scrolled.insert(name.clone(), range);
+            out.retain(|(view, _)| view != name);
+            out.push((name.clone(), range));
         }
         out
     }

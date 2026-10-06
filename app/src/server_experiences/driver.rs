@@ -154,6 +154,9 @@ fn drive(
         focused && !wants_prompt && service.live.is_some() && presentation.experience_modal_shown();
     if let Some(live) = service.live.as_mut() {
         live.set_modal_size(presentation.experience_modal_size());
+        for (view, range) in presentation.experience_modal_scrolls() {
+            live.scroll_changed(&view, range);
+        }
     }
     if modal_focus {
         let notches = wheel_events
