@@ -140,6 +140,9 @@ pub(super) struct FormPresentation {
     mod_screens: Option<mod_screens::ModScreens>,
     /// A player mod's template over the HUD; carried across the per-frame reset.
     mod_hud_layer: Option<mod_hud_layer::ModHudLayer>,
+    /// A mod's text services and the language and GUI scale they follow; carried across the
+    /// per-frame reset.
+    mod_text: Option<(([usize; 3], u32), Arc<mod_hud_layer::ModText>)>,
     /// The last container screen's layout; carried across the per-frame reset.
     container_cache: Option<containers::ScreenCache>,
     /// Immutable creative rows reused across hover and scroll frames.
@@ -472,6 +475,7 @@ impl UiPresentationRuntime {
             experience_modal: state.experience_modal,
             mod_screens: state.mod_screens,
             mod_hud_layer: state.mod_hud_layer,
+            mod_text: state.mod_text,
             container_cache: state.container_cache,
             book_cache: state.book_cache,
             ready_menu: state.ready_menu,

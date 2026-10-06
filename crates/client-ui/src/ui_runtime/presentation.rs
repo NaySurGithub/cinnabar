@@ -525,6 +525,7 @@ impl UiPresentationRuntime {
         let logical_height = physical_size[1] as f32 / dpi_scale.get();
         let metrics =
             TextMetrics::for_viewport(physical_size, dpi_scale, self.gui_scale_preference);
+        self.observe_mod_text(runtime, metrics);
         // The gameplay HUD lays out in Java GUI pixels; it fails closed to no
         // HUD when the safe viewport cannot contain the fixed-width hotbar.
         let safe_area = self.safe_area;

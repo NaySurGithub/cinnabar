@@ -1,4 +1,5 @@
-//! Publishes the current gameplay pick to the native outline/highlight overlay passes.
+//! Resolves the crosshair pick once per frame, publishes it as [`CrosshairTarget`], and draws
+//! its block in the native outline/highlight overlay passes.
 use bevy::{ecs::system::SystemParam, prelude::*};
 use render::{BlockSelectionFrame, BlockSelectionTarget, CrackShape, crack_shape_from_template};
 use sim::PaletteWorld;
@@ -16,6 +17,27 @@ use crate::{
 };
 use client_ui::ui_runtime::UiRuntime;
 
+/// The client's crosshair pick this frame, resolved once for every reader: the block the
+/// outline highlights and, when a reader asks for it, the actor an attack would hit.
+#[derive(Resource, Default)]
+pub(crate) struct CrosshairTarget {
+    /// Some reader needs the actor pick; the outline alone needs only the block.
+    pub(crate) wants_actor: bool,
+    pub(crate) pick: Option<CrosshairPick>,
+}
+
+/// One frame's pick along the interaction ray.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct CrosshairPick {
+    pub(crate) origin: sim::Vec3,
+    pub(crate) direction: sim::Vec3,
+    /// The block reach the ray was cast with.
+    pub(crate) reach: f64,
+    pub(crate) block: Option<sim::BlockHit>,
+    /// The actor an attack would hit: in reach and clearly in front of the block.
+    pub(crate) actor: Option<gameplay::melee::ActorHit>,
+}
+
 #[derive(SystemParam)]
 struct SelectionContext<'w> {
     player: Res<'w, crate::player_runtime::PlayerRuntime>,
@@ -32,12 +54,23 @@ struct SelectionContext<'w> {
 /// Updates after the completed pose and interaction authorities have been published.
 pub(crate) fn configure(app: &mut App) {
     app.init_resource::<BlockSelectionFrame>()
+        .init_resource::<CrosshairTarget>()
         .add_systems(Update, publish.in_set(ClientFrameSet::WorldPublication));
 }
 
 /// A missing, stale or menu-owned ray clears last frame's target immediately.
-fn publish(context: SelectionContext, mut frame: ResMut<BlockSelectionFrame>) {
-    let target = target(&context.player, &context);
+fn publish(
+    context: SelectionContext,
+    mut frame: ResMut<BlockSelectionFrame>,
+    mut crosshair: ResMut<CrosshairTarget>,
+) {
+    let pick = pick(&context.player, &context, crosshair.wants_actor);
+    let target = pick
+        .as_ref()
+        .and_then(|pick| outline(&context.player, &context, pick));
+    if crosshair.pick != pick {
+        crosshair.pick = pick;
+    }
     frame.update(
         target.as_ref(),
         context.camera.transform().translation,
@@ -51,14 +84,13 @@ fn publish(context: SelectionContext, mut frame: ResMut<BlockSelectionFrame>) {
     );
 }
 
-/// Resolves reviewed visual bounds from the same shapes that admitted the pick.
-/// Vanilla stairs deliberately outline a full
-/// unit box: unioning its slab/step/inner collision pieces preserves that native
-/// wire outline. Model highlighting below uses the separate actual surface.
-fn target(
+/// The interaction ray's block hit with the game mode's reach and, when `actor` is asked
+/// for, the actor an attack would hit, by the melee rule.
+fn pick(
     player_runtime: &crate::player_runtime::PlayerRuntime,
     context: &SelectionContext,
-) -> Option<BlockSelectionTarget> {
+    actor: bool,
+) -> Option<CrosshairPick> {
     if context.menu.is_visible()
         || context.ui.ui_focused(player_runtime)
         || context.world.fatal_error.is_some()
@@ -73,11 +105,8 @@ fn target(
         return None;
     }
     let mode = protocol_input_mode(context.input.snapshot()?.input_mode);
-    let reach = if player_runtime
-        .facts
-        .game_mode_capabilities()?
-        .creative_reach
-    {
+    let capabilities = player_runtime.facts.game_mode_capabilities()?;
+    let reach = if capabilities.creative_reach {
         creative_reach(mode)
     } else {
         survival_reach(mode)
@@ -89,9 +118,50 @@ fn target(
         stream.current_dimension(),
     );
     let vector = |value: Vec3| sim::Vec3::new(value.x as f64, value.y as f64, value.z as f64);
-    let hit = world
-        .block_interaction_ray_current(vector(ray.origin()), vector(ray.direction()), reach)
-        .ok()??;
+    let (origin, direction) = (vector(ray.origin()), vector(ray.direction()));
+    let block = world
+        .block_interaction_ray_current(origin, direction, reach)
+        .ok()
+        .flatten();
+    let actor = actor
+        .then(|| {
+            gameplay::melee::pick_actor(
+                stream.authority().remote_actors(),
+                context.ui.gameplay_hud().mount_unique_id(),
+                ray.origin().to_array(),
+                ray.direction().to_array(),
+                reach,
+            )
+        })
+        .flatten()
+        .and_then(|hit| {
+            let distance = block.as_ref().map(|block| block.distance);
+            match gameplay::melee::classify(Some(hit), distance, capabilities.attack_reach) {
+                gameplay::melee::Crosshair::Actor(hit) => Some(hit),
+                _ => None,
+            }
+        });
+    Some(CrosshairPick {
+        origin,
+        direction,
+        reach,
+        block,
+        actor,
+    })
+}
+
+/// Resolves reviewed visual bounds from the same shapes that admitted the pick.
+/// Vanilla stairs deliberately outline a full
+/// unit box: unioning its slab/step/inner collision pieces preserves that native
+/// wire outline. Model highlighting below uses the separate actual surface.
+fn outline(
+    player_runtime: &crate::player_runtime::PlayerRuntime,
+    context: &SelectionContext,
+    pick: &CrosshairPick,
+) -> Option<BlockSelectionTarget> {
+    let stream = context.world.stream.as_ref()?;
+    let registry = context.collisions.registry(stream.network_id_mode());
+    let hit = pick.block.as_ref()?;
     if !context.collisions.selection_overlay_visible(
         stream.network_id_mode(),
         hit.runtime_id,

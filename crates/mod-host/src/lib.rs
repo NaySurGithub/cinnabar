@@ -23,9 +23,9 @@ pub use runtime::cinnabar::session::items::{ItemKey as GuestItemKey, Stack as Gu
 #[cfg(feature = "execution")]
 pub use runtime::cinnabar::session::target::{
     ActorHit as TargetActorHit, Block as TargetBlock, BlockHit as TargetBlockHit,
-    BlockPos as TargetBlockPos, BlockState as TargetBlockState, HarvestFacts as TargetHarvest,
-    Hit as TargetHit, LiquidHit as TargetLiquidHit, Look as TargetLook,
-    MiningState as TargetMining, StateValue as TargetStateValue,
+    BlockPos as TargetBlockPos, BlockState as TargetBlockState, GameMode as TargetGameMode,
+    HarvestFacts as TargetHarvest, Hit as TargetHit, LiquidHit as TargetLiquidHit,
+    Look as TargetLook, MiningState as TargetMining, StateValue as TargetStateValue,
 };
 #[cfg(feature = "execution")]
 pub use screens::{DataSource, KeyModifiers, LoadedPackage, ModEvent, ModScreens};

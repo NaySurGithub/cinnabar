@@ -1185,6 +1185,22 @@ cross-platform runtime acceptance. Loaded player data is not line-of-sight or
 visibility evidence. No aim-assist algorithm is installed and no vanilla parity
 gate is closed; see `docs/modding-spike.md` for the contract and opt-in switches.
 
+2026-10-05 modding HUD layer and crosshair target (`player-mod`, Spyglass platform N1–N5):
+experimental, non-parity extension. A package granted `hud` draws one JSON-UI template over
+the gameplay HUD from its own bound data and revision (one owner by load order, chosen apart
+from the screen owner), hidden with hide-GUI, loading and every screen but chat. A package
+granted `target` reads `cinnabar:session/target`: the crosshair pick resolved once per frame
+(`CrosshairTarget`, which the block outline also reads), the nearest liquid surface on the
+same ray, the local break in progress and the targeted block's harvest facts; `text` gives
+translations and the HUD font's width. Changes arrive as the optional exports
+`target-changed` and `hud-changed`. Provisional, labeled incomplete: a block's display name
+and picked item are its own identifier as an item, not vanilla's pick-block rules; harvest
+facts come from the destroy table's provisional tool classes; `hud-layout.boss-bars` is
+always none (the laid-out boss bar area is not yet reported); the break's partial tick is
+the time since its progress last moved; Adventure mode counts every block as unbreakable.
+The melee press and the nametag pick still cast their own rays. Not yet verified on a
+rendered frame. See `docs/modding-spike.md`.
+
 2026-10-04 modding screens (`player-mod` world, BEI platform P1–P5): experimental,
 non-parity extension. The world joins `cinnabar:extension@0.1.0` beside `extension`.
 `CINNABAR_MOD_PACKAGE` or a `CINNABAR_MOD_SET` package entry loads a hashed package

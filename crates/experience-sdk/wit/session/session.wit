@@ -174,12 +174,21 @@ interface target {
         actor(actor-hit),
     }
 
+    enum game-mode {
+        survival,
+        creative,
+        adventure,
+        spectator,
+    }
+
     record look {
         hit: option<hit>,
         /// The nearest liquid surface on the same ray within block reach.
         liquid: option<liquid-hit>,
         /// The eye is inside a liquid.
         eye-in-liquid: bool,
+        /// The local player's game mode.
+        game-mode: game-mode,
     }
 
     /// The local player's block break in progress.

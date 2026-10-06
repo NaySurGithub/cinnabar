@@ -78,6 +78,8 @@ struct ModRuntime {
     suspended: bool,
     /// The screen owner's input and layout between frames, and which mod that is.
     screens: screens::ScreenState,
+    /// The crosshair look and text last handed to the packages.
+    target: target::TargetState,
 }
 
 /// Installs the developer extension only when its component path is explicit.
@@ -218,6 +220,7 @@ fn install(app: &mut App, hosts: Vec<ModHost>) {
             registration_request: None,
             suspended: false,
             screens: screens::ScreenState::default(),
+            target: target::TargetState::default(),
         })
         .init_resource::<interaction::ModInteraction>();
     if controls && let Some(path) = std::env::var_os(font::FONT_ENV) {
@@ -267,7 +270,14 @@ fn configure_systems(app: &mut App, watching: bool) {
             .before(crate::environment::update_atmosphere_frame),
     );
     app.init_resource::<packet_delay::RealPositionSnapshot>()
-        .add_systems(Update, packet_delay::publish_packet_delay.after(drive_mod));
+        .add_systems(Update, packet_delay::publish_packet_delay.after(drive_mod))
+        .add_systems(
+            Update,
+            target::publish
+                .after(ClientFrameSet::WorldPublication)
+                .after(drive_mod)
+                .before(ClientFrameSet::UiPublication),
+        );
 }
 
 /// Runs the bounded guest and publishes only its validated presentation output.
@@ -537,3 +547,5 @@ pub(crate) mod packet_delay;
 mod render;
 #[cfg(feature = "local-mods")]
 mod screens;
+#[cfg(feature = "local-mods")]
+mod target;

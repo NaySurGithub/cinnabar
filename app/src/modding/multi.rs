@@ -139,6 +139,17 @@ impl ModRuntime {
         }))
     }
 
+    /// The mod whose package draws over the HUD, by the screen owner's rule.
+    pub(super) fn hud_owner(&self) -> Option<usize> {
+        screen_owner((0..self.host_count()).map(|index| {
+            let host = self.host(index);
+            (
+                host.package().is_some() && host.is_active() && host.grants().hud,
+                host.hud().template.is_some(),
+            )
+        }))
+    }
+
     /// Every loaded mod's reserved keys, kept away from ordinary gameplay.
     /// Every mod's label in load order, joined and cut to the plain-text limit.
     pub(super) fn merged_label(&mut self) -> Option<&str> {

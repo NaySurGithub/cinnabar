@@ -421,7 +421,8 @@ namespace. A build script calls `experience_sdk::declarations::generate_mod("mod
 `templates::*` and `keys::*` with `experience_sdk::include_declarations!()`.
 `CINNABAR_MOD_PACKAGE` grants what the manifest asks for, plus the environment opt-ins a bare
 component gets; in a set, each package permission needs both the manifest's ask and the entry's
-grant (`screen`, `items`, `recipes`, `keys`). `inventory` has no import yet.
+grant (`screen`, `items`, `recipes`, `keys`, `hud`, `target`). `inventory` has no import
+yet.
 
 **Screens.** `screen.set-overlay(template)` draws one template beside every container screen.
 It is laid out over the whole root after the container screen. The host drops every node and
@@ -441,11 +442,33 @@ the view's bounds, in GUI units; opening, closing or resizing the view delivers
 `screen-changed`. Templates,
 data binding (`set-collection`, `set-value`, `set-text`) and their limits are the client part
 modal's (server-experiences.md, Modal screens); `focus-text` selects an edit box. Rows bind
-`#item_id_aux` (network id << 16 | aux) and `item_renderer` draws the item. The mod's atlas
-has its own four dynamic texture pages. With several mods loaded, one owns the screens: the
+`#item_id_aux` (network id << 16 | aux) and `item_renderer` draws the item. The screen
+owner's atlas has two dynamic texture pages and the HUD owner's another two. With several mods loaded, one owns the screens: the
 earliest in load order with an overlay or view, else the earliest granted `screen`. Only it
 draws and receives screen input and keys; every package granted `items` or `recipes` reads
 the session.
+
+**HUD layer.** `hud-layer.set-template(template)` draws one template over the gameplay HUD,
+bound from the layer's own data (`hud-layer.set-collection`, `set-value`) and revision, so a
+HUD change never rebuilds the screens. The writes need `hud` and share the callback's call
+and output budgets. The host hides the layer with hide-GUI, during loading and under every
+screen but chat, which it draws over; it is never hit-tested. One package draws it: the
+earliest active one granted `hud` with a template, else the earliest granted `hud`, chosen
+apart from the screen owner. `hud-layer.layout()` and `hud-changed(layout)` give the HUD
+root's size and GUI scale (`none` while hidden); `boss-bars` is not reported yet.
+`frame-seconds` gives the frame's duration for animation.
+
+**Crosshair target.** `cinnabar:session/target` (permission `target`) reads the client's own
+pick, resolved once per frame for the block outline and every reader: the block it outlines
+(identifier, states, name, picked item, hardness, face, distance) or the actor an attack
+would hit (type, localized type name, nametag, a dropped item's stack, replicated health),
+the nearest liquid surface on the same ray within block reach, whether the eye is in a
+liquid, and the game mode. `mining` gives the local break in progress and `harvest(candidates)`
+the targeted block's harvest facts against candidate tools. A changed look moves
+`target.revision` and delivers `target-changed`; mining progress is read in `frame`.
+`cinnabar:session/text` gives translations in the active language and the HUD font's width.
+Gameplay keys come from `input.read-controls` and `reserve-keys` (the `controls` grant); a
+modifier key's own press is its physical name (`ShiftLeft`, `ShiftRight`), not a modifier.
 
 **Session data.** `cinnabar:session@0.1.0` (`crates/experience-sdk/wit/session/session.wit`)
 is read-only. `items` gives the creative content in its order, then the registry's other
@@ -472,7 +495,8 @@ rule `action` uses. Modifiers must match exactly, so `o` with `["ctrl"]` is Ctrl
 reaches the mod during gameplay.
 
 **Callbacks.** `player-mod` exports `screen-changed`, `action`, `secondary-action`,
-`scrolled`, `text-changed`, `key`, `data-changed` and `view-closed` beside `init` and `frame`.
+`scrolled`, `text-changed`, `key`, `data-changed`, `view-closed`, `target-changed` and
+`hud-changed` beside `init` and `frame`.
 Each event export is optional: the host type-checks every one a component exports (refusing
 one of another signature) and never calls one it lacks, so new events arrive as new exports
 without breaking built mods. `data-changed(sources)` lists what changed (`items`, `recipes`);
@@ -488,14 +512,15 @@ vanilla's session measured 27.7M in the probe), after the Experience runtime's
 keeps 100,000; any other component's instantiation and `init` keep the frame budget. A
 session that outgrows the load budget calls for a host-side query API
 (items and recipes on demand) rather than a larger copy. One frame's events are
-coalesced: the latest layout first, one data change naming every source, then the rest in order with the latest
-text per edit box. A trap or exhausted fuel quarantines the mod and removes its overlay and
+coalesced: the latest screen and HUD layouts first, one data change naming every source,
+one target change, then the rest in order with the latest text per edit box. A trap or exhausted fuel quarantines the mod and removes its overlay and
 view; a refused template does too. An undeclared action or key is refused without
 quarantine. Reload re-reads the whole package and delivers the current layout and data to
 the new instance.
 
 Verification: `cargo test -p mod-host --locked --lib` (real components for every callback,
 fuel, traps, caps, revisions, permissions and reload), `cargo test -p experience-sdk --lib`
-(the manifest) and `cargo test -p client-ui --lib mod_screens session_data` (clipping, the
-lifted held stack, hit filtering, session data). The overlay has not been checked on a
+(the manifest), `cargo test -p client-ui --lib mod_screens mod_hud_layer session_data`
+(clipping, the lifted held stack, hit filtering, the HUD layer's hiding, session data) and
+`cargo test -p sim --test it liquid_ray`. The overlay has not been checked on a
 rendered frame yet; see `plan.md`.

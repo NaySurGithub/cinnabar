@@ -3,7 +3,7 @@
 use super::screens::{action, probe, probe_with, text, value};
 use crate::{
     HarvestRules, ModEvent, TargetBlock, TargetBlockHit, TargetBlockPos, TargetFrame,
-    TargetHarvest, TargetHit, TargetLook, TargetMining, TextSource,
+    TargetGameMode, TargetHarvest, TargetHit, TargetLook, TargetMining, TextSource,
 };
 use server_experience::screen::{GuiSize, HudLayout, Rect, Value};
 use std::sync::Arc;
@@ -28,6 +28,7 @@ fn stone(name: &str) -> TargetLook {
         })),
         liquid: None,
         eye_in_liquid: false,
+        game_mode: TargetGameMode::Survival,
     }
 }
 

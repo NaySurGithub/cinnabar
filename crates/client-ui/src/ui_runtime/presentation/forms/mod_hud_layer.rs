@@ -197,9 +197,19 @@ impl UiPresentationRuntime {
             .map_or(&[], |layer| layer.art.pages())
     }
 
-    /// The client's language and the HUD font's measure at `metrics`, for a mod's `text`.
-    pub fn mod_text(&self, runtime: &UiRuntime, metrics: TextMetrics) -> ModText {
-        ModText {
+    /// Follows the language and GUI scale a mod's `text` reads, replacing the services only
+    /// when either changed.
+    pub(in super::super) fn observe_mod_text(&mut self, runtime: &UiRuntime, metrics: TextMetrics) {
+        let key = (runtime.text_generation(), metrics.scale.get().to_bits());
+        if self
+            .form_presentation
+            .mod_text
+            .as_ref()
+            .is_some_and(|(current, _)| *current == key)
+        {
+            return;
+        }
+        let text = ModText {
             translator: runtime.translator(),
             font: Arc::clone(&self.font),
             metrics,
@@ -208,7 +218,17 @@ impl UiPresentationRuntime {
                 MEASURE_CACHE_ENTRIES,
                 MEASURE_CACHE_BYTES,
             )),
-        }
+        };
+        self.form_presentation.mod_text = Some((key, Arc::new(text)));
+    }
+
+    /// The client's language and the HUD font's measure, for a mod's `text`; the same `Arc`
+    /// until either changes.
+    pub fn mod_text(&self) -> Option<Arc<ModText>> {
+        self.form_presentation
+            .mod_text
+            .as_ref()
+            .map(|(_, text)| Arc::clone(text))
     }
 }
 
