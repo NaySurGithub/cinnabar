@@ -16,6 +16,7 @@ mod liquid;
 mod liquid_contact_native;
 mod liquid_exit_native;
 mod liquid_native;
+mod liquid_ray;
 mod modes;
 mod palette_world;
 mod prediction;

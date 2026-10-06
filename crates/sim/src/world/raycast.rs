@@ -266,7 +266,11 @@ impl PaletteWorld<'_> {
     }
 }
 
-fn validate_ray(origin: Vec3, direction: Vec3, max_distance: f64) -> Result<Vec3, WorldQueryError> {
+pub(super) fn validate_ray(
+    origin: Vec3,
+    direction: Vec3,
+    max_distance: f64,
+) -> Result<Vec3, WorldQueryError> {
     let coordinate_min = f64::from(i32::MIN) + 2.0;
     let coordinate_max = f64::from(i32::MAX) - 2.0;
     if !origin.is_finite()
@@ -480,15 +484,15 @@ const fn max_face(axis: usize) -> u8 {
     }
 }
 
-struct TraversalState {
-    cell: [i32; 3],
+pub(super) struct TraversalState {
+    pub(super) cell: [i32; 3],
     step: [i32; 3],
     next: [f64; 3],
     delta: [f64; 3],
 }
 
 impl TraversalState {
-    fn new(origin: Vec3, direction: Vec3) -> Result<Self, WorldQueryError> {
+    pub(super) fn new(origin: Vec3, direction: Vec3) -> Result<Self, WorldQueryError> {
         let cell = [
             origin.x.floor() as i32,
             origin.y.floor() as i32,
@@ -516,11 +520,11 @@ impl TraversalState {
         })
     }
 
-    fn next_crossing(&self) -> f64 {
+    pub(super) fn next_crossing(&self) -> f64 {
         self.next[0].min(self.next[1]).min(self.next[2])
     }
 
-    fn advance(&mut self, crossing: f64) -> Result<Vec<[i32; 3]>, WorldQueryError> {
+    pub(super) fn advance(&mut self, crossing: f64) -> Result<Vec<[i32; 3]>, WorldQueryError> {
         let axes = (0..3)
             .filter(|&axis| simultaneous_crossing(self.next[axis], crossing))
             .collect::<Vec<_>>();

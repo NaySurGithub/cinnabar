@@ -803,3 +803,22 @@ fn instant_plants_publish_the_carried_destroy_effect_once() {
         }
     }
 }
+
+#[test]
+fn the_destroy_in_progress_reports_its_progress_and_rate() {
+    // Dirt by hand: 1 / 0.5 / 30 per tick.
+    let dirt = target([1, 2, 3], "minecraft:dirt", None);
+    let rate = 1.0 / 0.5 / 30.0;
+    let mut machine = DestroyMachine::default();
+    assert_eq!(machine.destroy_progress(), None);
+    held(&mut machine, &dirt, Server);
+    let started = machine.destroy_progress().unwrap();
+    assert_eq!((started.position, started.progress), ([1, 2, 3], 0.0));
+    assert!((started.per_tick - rate).abs() < 1e-6);
+    held(&mut machine, &dirt, Server);
+    held(&mut machine, &dirt, Server);
+    let progress = machine.destroy_progress().unwrap();
+    assert!((progress.progress - 2.0 * rate).abs() < 1e-6);
+    machine.step(DestroyInput::Released, STILL, Server);
+    assert_eq!(machine.destroy_progress(), None);
+}

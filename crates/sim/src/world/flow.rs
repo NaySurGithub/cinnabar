@@ -61,6 +61,42 @@ impl LiquidCell {
     }
 }
 
+/// The liquid in `block` and the runtime id that holds it, by vanilla's liquid lookup: the
+/// extra layer unless it is air, then the primary layer.
+pub(super) fn liquid_cell(
+    world: &PaletteWorld<'_>,
+    block: [i32; 3],
+) -> Result<Option<(u32, LiquidCell)>, WorldQueryError> {
+    let ids = world.runtime_ids_at(block)?;
+    let runtime_id = ids
+        .get(1)
+        .copied()
+        .filter(|id| *id != world.registry.air_runtime_id)
+        .unwrap_or(ids[0]);
+    let physics = world
+        .registry
+        .physics(runtime_id)
+        .ok_or(WorldQueryError::UnknownRuntimeId { runtime_id, block })?;
+    let material = if physics.flags.contains(BlockPhysicsFlags::WATER) {
+        LiquidMaterial::Water
+    } else if physics.flags.contains(BlockPhysicsFlags::LAVA) {
+        LiquidMaterial::Lava
+    } else {
+        return Ok(None);
+    };
+    // A water-like block without native LiquidDepth (including bubble
+    // columns) keeps its material but provides no current authority.
+    let depth = physics.flow.and_then(|facts| facts.liquid_depth);
+    Ok(Some((
+        runtime_id,
+        LiquidCell {
+            material,
+            depth: depth.unwrap_or_default(),
+            depth_known: depth.is_some(),
+        },
+    )))
+}
+
 struct Samples<'a, 'world> {
     world: &'a PaletteWorld<'world>,
     chunks: BTreeSet<ChunkKey>,
@@ -74,33 +110,7 @@ impl Samples<'_, '_> {
 
     fn liquid(&mut self, block: [i32; 3]) -> Result<Option<LiquidCell>, WorldQueryError> {
         self.record(block);
-        let ids = self.world.runtime_ids_at(block)?;
-        // Vanilla's liquid lookup: extra layer unless it is air, then primary.
-        let runtime_id = ids
-            .get(1)
-            .copied()
-            .filter(|id| *id != self.world.registry.air_runtime_id)
-            .unwrap_or(ids[0]);
-        let physics = self
-            .world
-            .registry
-            .physics(runtime_id)
-            .ok_or(WorldQueryError::UnknownRuntimeId { runtime_id, block })?;
-        let material = if physics.flags.contains(BlockPhysicsFlags::WATER) {
-            LiquidMaterial::Water
-        } else if physics.flags.contains(BlockPhysicsFlags::LAVA) {
-            LiquidMaterial::Lava
-        } else {
-            return Ok(None);
-        };
-        // A water-like block without native LiquidDepth (including bubble
-        // columns) keeps its material but provides no current authority.
-        let depth = physics.flow.and_then(|facts| facts.liquid_depth);
-        Ok(Some(LiquidCell {
-            material,
-            depth: depth.unwrap_or_default(),
-            depth_known: depth.is_some(),
-        }))
+        Ok(liquid_cell(self.world, block)?.map(|(_, cell)| cell))
     }
 
     fn primary(&mut self, block: [i32; 3]) -> Result<Option<FlowBlockFacts>, WorldQueryError> {

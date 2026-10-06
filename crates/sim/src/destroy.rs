@@ -171,7 +171,35 @@ impl BlockDestroyInfo {
         self.effective & kind.bit() != 0
     }
 
-    fn harvestable_with(&self, tool: Option<HeldTool>) -> bool {
+    /// Whether the block drops only with a correct tool; `None` without tool evidence.
+    #[must_use]
+    pub fn requires_tool(&self) -> Option<bool> {
+        match self.harvest {
+            HarvestRequirement::Hand => Some(false),
+            HarvestRequirement::Tool(_) => Some(true),
+            HarvestRequirement::Unresolved => None,
+        }
+    }
+
+    /// Whether `tool` is correct for the block's drops at its tier, or else mines it faster.
+    /// A tool of a harvesting kind below the required tier does not suit it.
+    #[must_use]
+    pub fn suits(&self, tool: HeldTool) -> bool {
+        match self.harvest {
+            HarvestRequirement::Unresolved => false,
+            HarvestRequirement::Tool(required) if self.harvests_with(tool.kind) => {
+                tool.tier.map_or(0, ToolTier::harvest_level) >= required
+            }
+            _ => {
+                self.effective_for(tool.kind)
+                    || (tool.kind == ToolKind::Sword && self.sword_speed.is_some())
+            }
+        }
+    }
+
+    /// Whether breaking the block with `tool` (none for the hand) gets its drops.
+    #[must_use]
+    pub fn harvestable_with(&self, tool: Option<HeldTool>) -> bool {
         match self.harvest {
             HarvestRequirement::Hand => true,
             HarvestRequirement::Unresolved => false,

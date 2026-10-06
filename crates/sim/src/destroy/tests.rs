@@ -259,3 +259,38 @@ fn review_extreme_effect_amplifiers_never_create_nonfinite_destroy_progress() {
         }
     }
 }
+
+fn tool(identifier: &str) -> HeldTool {
+    HeldTool::from_identifier(identifier).unwrap()
+}
+
+#[test]
+fn harvest_requirements_follow_the_table() {
+    let iron_ore = block_destroy_info("minecraft:iron_ore").unwrap();
+    assert_eq!(iron_ore.requires_tool(), Some(true));
+    assert!(!iron_ore.harvestable_with(None));
+    assert!(!iron_ore.harvestable_with(Some(tool("minecraft:wooden_pickaxe"))));
+    assert!(iron_ore.harvestable_with(Some(tool("minecraft:stone_pickaxe"))));
+    let dirt = block_destroy_info("minecraft:dirt").unwrap();
+    assert_eq!(dirt.requires_tool(), Some(false));
+    assert!(dirt.harvestable_with(None));
+    let torch = block_destroy_info("minecraft:torch").unwrap();
+    assert_eq!(torch.requires_tool(), None);
+}
+
+#[test]
+fn a_tool_suits_a_block_it_harvests_at_its_tier_or_speeds() {
+    let iron_ore = block_destroy_info("minecraft:iron_ore").unwrap();
+    assert!(!iron_ore.suits(tool("minecraft:wooden_pickaxe")));
+    assert!(!iron_ore.suits(tool("minecraft:golden_pickaxe")));
+    assert!(iron_ore.suits(tool("minecraft:stone_pickaxe")));
+    assert!(!iron_ore.suits(tool("minecraft:diamond_axe")));
+    let dirt = block_destroy_info("minecraft:dirt").unwrap();
+    assert!(dirt.suits(tool("minecraft:wooden_shovel")));
+    assert!(!dirt.suits(tool("minecraft:wooden_pickaxe")));
+    let leaves = block_destroy_info("minecraft:acacia_leaves").unwrap();
+    assert!(leaves.suits(tool("minecraft:shears")));
+    assert!(leaves.suits(tool("minecraft:wooden_hoe")));
+    let torch = block_destroy_info("minecraft:torch").unwrap();
+    assert!(!torch.suits(tool("minecraft:wooden_pickaxe")));
+}

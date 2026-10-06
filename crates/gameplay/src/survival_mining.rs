@@ -166,8 +166,20 @@ struct Destroying {
     position: [i32; 3],
     face: u8,
     progress: f64,
+    /// Progress the last step gained, or will gain, per tick.
+    per_tick: f64,
     /// The block broke; the destroy only waits for its next target.
     completed: bool,
+}
+
+/// A block break in progress, as a HUD shows it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DestroyProgress {
+    pub position: [i32; 3],
+    /// Progress at the last step, 0 to 1.
+    pub progress: f64,
+    /// Progress per tick with the held item.
+    pub per_tick: f64,
 }
 
 impl Destroying {
@@ -199,6 +211,17 @@ impl DestroyMachine {
         self.destroying
             .filter(|destroying| !destroying.completed)
             .map(|destroying| (destroying.position, destroying.face))
+    }
+
+    /// The block cracking now and how far; none once it broke or while nothing is cracking.
+    pub fn destroy_progress(&self) -> Option<DestroyProgress> {
+        self.destroying
+            .filter(|destroying| !destroying.completed)
+            .map(|destroying| DestroyProgress {
+                position: destroying.position,
+                progress: destroying.progress,
+                per_tick: destroying.per_tick,
+            })
     }
 
     /// Forgets unsent progress; an in-flight destroy is aborted on the next step.
@@ -252,6 +275,7 @@ impl DestroyMachine {
                     position: target.position,
                     face: target.face,
                     progress: 0.0,
+                    per_tick: target.rate(on_ground),
                     completed: false,
                 });
                 // Only zero hardness breaks on the start tick, then delays.
@@ -287,6 +311,7 @@ impl DestroyMachine {
                 } else {
                     self.destroying = Some(Destroying {
                         progress,
+                        per_tick: rate,
                         completed: false,
                         ..destroying
                     });
@@ -316,6 +341,7 @@ impl DestroyMachine {
                     position: target.position,
                     face: target.face,
                     progress: 0.0,
+                    per_tick: target.rate(on_ground),
                     completed: false,
                 });
             }
@@ -364,6 +390,7 @@ impl DestroyMachine {
             position: target.position,
             face: target.face,
             progress: 0.0,
+            per_tick: 0.0,
             completed: true,
         });
         payload.broken = Some(target.position);
@@ -388,6 +415,11 @@ impl SurvivalMiningRuntime {
     /// The block and face the local player is breaking, for hit particles.
     pub fn destroying_target(&self) -> Option<([i32; 3], u8)> {
         self.machine.destroying_target()
+    }
+
+    /// The local player's block break in progress.
+    pub fn destroy_progress(&self) -> Option<DestroyProgress> {
+        self.machine.destroy_progress()
     }
 
     /// Takes local destroy effects after their block actions were attached to a tick.
