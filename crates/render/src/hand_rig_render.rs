@@ -206,7 +206,8 @@ fn install(app: &mut App) {
         HAND_RIG_SHADER,
         "hand_rig.wgsl",
         crate::shader_safety::from_actor_wgsl,
-        crate::actor::ACTOR_GPU_INSTANCE_WORDS
+        crate::actor::ACTOR_GPU_INSTANCE_WORDS,
+        render_model::ACTOR_RIG_VERTEX_WORDS
     );
     let render_app = app.sub_app_mut(RenderApp);
     render_app
@@ -248,10 +249,11 @@ fn install_graph(world: &mut World) {
     if graph.get_node_state(HandRigLabel).is_err() {
         graph.add_node(HandRigLabel, runner);
     }
+    // Inside the main pass, so FXAA smooths the hand before the HUD composites over it.
     graph.add_node_edges((
         crate::ui_render::UiWorldLabel,
         HandRigLabel,
-        crate::ui_render::UiOverlayLabel,
+        bevy::core_pipeline::core_3d::graph::Node3d::EndMainPass,
     ));
 }
 

@@ -671,6 +671,9 @@ impl UiPresentationRuntime {
                         content_height,
                     )?;
                 }
+                Scene::Credits => {
+                    self.append_credits_screen(runtime, nodes, next, metrics, content, now_millis)?;
+                }
             }
         }
         if !scenes.contains(&Scene::Chat) {

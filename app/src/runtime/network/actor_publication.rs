@@ -118,6 +118,9 @@ pub(crate) fn prepare_actor_render_frame(
     client_presentation::actor_publication::prepare_actor_render_frame(
         ActorWorld {
             stream: stream.as_mut(),
+            collisions: collisions
+                .as_deref()
+                .map(|value| value as &dyn client_presentation::observations::CollisionLookup),
             entity_assets: entity_assets.as_deref(),
             pack_entities: pack_entities.clone(),
             session_items: session_items.clone(),
@@ -161,6 +164,56 @@ pub(crate) fn prepare_actor_render_frame(
             })
         },
         params,
+    );
+}
+
+/// Publishes entity-shadow casters for the bodies this frame drew.
+pub(crate) fn publish_entity_shadows(
+    world: Res<ClientWorld>,
+    player: Res<PlayerRuntime>,
+    partial_tick: Res<ActorFramePartialTick>,
+    local: Res<crate::local_player::LocalAvatarVisibilityCarrier>,
+    camera: Query<(&Transform, &Projection), With<crate::camera::FlyCamera>>,
+    frame: Res<render::ActorRenderFrame>,
+    mut drawn: Local<Vec<u64>>,
+    mut staging: Local<Vec<render_model::EntityShadow>>,
+    scene: Option<ResMut<render::EntityShadowScene>>,
+) {
+    let Some(mut scene) = scene else {
+        return;
+    };
+    let stream = world.stream.as_ref();
+    let local = stream.map(|stream| {
+        let runtime_id = stream.local_player_runtime_id();
+        client_presentation::entity_shadows::LocalShadowSource {
+            runtime_id,
+            feet: local
+                .snapshot()
+                .filter(|visibility| visibility.runtime_id() == runtime_id)
+                .map(|visibility| visibility.feet().to_array()),
+            spectator: player
+                .facts
+                .game_mode_capabilities()
+                .is_some_and(|caps| !caps.visible),
+        }
+    });
+    let view = camera
+        .single()
+        .ok()
+        .map(|(transform, projection)| render::ActorCullView {
+            clip_from_world: projection.get_clip_from_view() * transform.to_matrix().inverse(),
+            camera_position: transform.translation,
+            max_distance: render::MAX_ACTOR_RENDER_DISTANCE_BLOCKS,
+        });
+    client_presentation::entity_shadows::drawn_bodies(&frame, &mut drawn);
+    client_presentation::entity_shadows::publish_entity_shadows(
+        stream,
+        partial_tick.0,
+        local,
+        view,
+        &drawn,
+        &mut staging,
+        &mut scene,
     );
 }
 

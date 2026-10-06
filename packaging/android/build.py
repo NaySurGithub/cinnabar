@@ -112,7 +112,7 @@ def build_apk(args: argparse.Namespace) -> Path:
     output.mkdir(parents=True, exist_ok=True)
     triple, clang_triple, goarch, _ = ABIS[args.abi]
     natives = build_native(args, ndk, output, triple, clang_triple, goarch)
-    assets_dir = stage_resources(ROOT, output, next(file for name, file in natives.items() if name == f"lib{CLIENT_LIBRARY}.so"), RUNTIME)
+    assets_dir = stage_resources(ROOT, output, RUNTIME)
     version = tomllib.loads((ROOT / "Cargo.toml").read_text())["workspace"]["package"]["version"]
     major, minor, patch = (int(value) for value in version.split("."))
     version_code = major * 1_000_000 + minor * 1_000 + patch

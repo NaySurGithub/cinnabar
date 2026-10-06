@@ -8,6 +8,7 @@ mod biome;
 mod blob;
 mod block_entity;
 mod block_names;
+pub mod carriers;
 mod compiled;
 mod encoding;
 mod entity;
@@ -61,10 +62,11 @@ pub use skin_geometry::{
 pub use actor::{
     ACTOR_CARRIER_MAGIC, ACTOR_CARRIER_VERSION, ActorArtworkBinding, ActorPoseMode, ActorTexture,
     MAX_ACTOR_BINDINGS, MAX_ACTOR_CARRIER_BYTES, MAX_ACTOR_PIXEL_BYTES, MAX_ACTOR_TEXTURE_SIDE,
-    MAX_ACTOR_TEXTURES, RuntimeActorCatalog, encode_actor_catalog,
+    MAX_ACTOR_TEXTURES, RuntimeActorCatalog, actor_dissolve_mask_sources, encode_actor_catalog,
     native_actor_texture_uses_color_mask, native_actor_texture_uses_multitexture,
-    native_actor_uses_multitexture, neutral_actor_geometry_uvs_are_supported,
-    neutral_actor_material_is_supported, neutral_actor_pose_mode,
+    native_actor_uses_multitexture, neutral_actor_geometry_sampled_texels,
+    neutral_actor_geometry_uvs_are_supported, neutral_actor_material_is_supported,
+    neutral_actor_pose_mode,
 };
 pub use fire::{
     FIRE_ATTACHMENT_MASK_COUNT, FIRE_SUPPORTED_QUAD_COUNT, FIRE_TEMPLATE_COUNT,
@@ -121,18 +123,19 @@ pub use compiled::{
     MAX_TEXTURE_LAYERS, Material, material_leaf_ao_exponent,
 };
 pub use entity::{
-    CompiledEntityAssets, CompiledMolangExpression, ENTITY_BLOB_MAGIC, ENTITY_BLOB_VERSION,
-    EntityAnimationChannel, EntityAnimationClip, EntityAnimationController,
-    EntityAnimationInterpolation, EntityAnimationKeyframe, EntityAnimationLoop,
-    EntityAnimationProperty, EntityAssetKind, EntityAssetSource, EntityAssetSummary,
-    EntityAssetSymbol, EntityControllerAnimation, EntityControllerAnimationTarget,
-    EntityControllerState, EntityControllerTransition, EntityDependency, EntityDependencyKind,
-    EntityDependencyResolution, EntityGeometry, EntityGeometryBone, EntityGeometryCube,
-    EntityGeometryFaceUv, EntityGeometryFaceUvs, EntityGeometryInheritance, EntityGeometryScalar,
-    EntityGeometryTextureMesh, EntityGeometryUv, EntityRenderCandidate, EntityRenderData,
-    EntityRenderGeometry, EntityRenderLayer, EntityRenderSlot, EntityRenderVisibility,
-    EntityRigAnimationBinding, EntityRigBinding, EntityRigControllerBinding, EntityRigFallback,
-    EntityRigGeometryBinding, MAX_ENTITY_ANIMATION_CHANNELS, MAX_ENTITY_ANIMATION_CLIPS,
+    BED_GEOMETRY_IDENTIFIER, CAPE_GEOMETRY_IDENTIFIER, CompiledEntityAssets,
+    CompiledMolangExpression, ENTITY_BLOB_MAGIC, ENTITY_BLOB_VERSION, EntityAnimationChannel,
+    EntityAnimationClip, EntityAnimationController, EntityAnimationInterpolation,
+    EntityAnimationKeyframe, EntityAnimationLoop, EntityAnimationProperty, EntityAssetKind,
+    EntityAssetSource, EntityAssetSummary, EntityAssetSymbol, EntityControllerAnimation,
+    EntityControllerAnimationTarget, EntityControllerState, EntityControllerTransition,
+    EntityDependency, EntityDependencyKind, EntityDependencyResolution, EntityGeometry,
+    EntityGeometryBone, EntityGeometryCube, EntityGeometryFaceUv, EntityGeometryFaceUvs,
+    EntityGeometryInheritance, EntityGeometryScalar, EntityGeometryTextureMesh, EntityGeometryUv,
+    EntityRenderCandidate, EntityRenderData, EntityRenderGeometry, EntityRenderLayer,
+    EntityRenderMaterial, EntityRenderSlot, EntityRenderVisibility, EntityRigAnimationBinding,
+    EntityRigBinding, EntityRigControllerBinding, EntityRigFallback, EntityRigGeometryBinding,
+    LEGACY_ENTITY_GEOMETRY_PATH, MAX_ENTITY_ANIMATION_CHANNELS, MAX_ENTITY_ANIMATION_CLIPS,
     MAX_ENTITY_ANIMATION_KEYFRAMES, MAX_ENTITY_ASSET_PATH_BYTES, MAX_ENTITY_ASSET_SOURCES,
     MAX_ENTITY_ASSET_SYMBOLS, MAX_ENTITY_CATALOG_BYTES, MAX_ENTITY_CONTROLLER_ANIMATIONS,
     MAX_ENTITY_CONTROLLER_NESTING, MAX_ENTITY_CONTROLLER_STATES, MAX_ENTITY_CONTROLLER_TRANSITIONS,
@@ -164,9 +167,9 @@ pub use equipment::{
 pub use error::AssetError;
 pub use font::{
     CompiledFontCatalog, FONT_CARRIER_MAGIC, FONT_CARRIER_SCHEMA, FontCatalogError,
-    FontCatalogIdentity, FontTexturePage, GlyphMetrics, MAX_FONT_GLYPHS, MAX_FONT_PAGE_SIDE,
-    MAX_FONT_PAGES, MAX_FONT_PATH_BYTES, MAX_FONT_SOURCE_BYTES, RuntimeFontCatalog,
-    encode_font_catalog,
+    FontCatalogIdentity, FontPixels, FontTexturePage, GlyphMetrics, MAX_FONT_GLYPHS,
+    MAX_FONT_PAGE_SIDE, MAX_FONT_PAGES, MAX_FONT_PATH_BYTES, MAX_FONT_SOURCE_BYTES,
+    RuntimeFontCatalog, encode_font_catalog,
 };
 pub use fsb::{DecodedSound, FsbError, MAX_FSB_INPUT_BYTES, MAX_FSB_PCM_BYTES, decode_fsb5};
 pub use glyph_sheet::{
@@ -200,15 +203,17 @@ pub use material_keys::{MATERIAL_KEYS_SCHEMA, MAX_MATERIAL_KEYS_BYTES, MaterialK
 pub use model::{
     ANIMATION_FLAG_BLEND, Animation, BLOCK_VISUAL_VARIANT_COVERED_GRASS,
     BLOCK_VISUAL_VARIANT_MATERIAL_MASK, BLOCK_VISUAL_VARIANT_NONSEASONAL_LEAF,
-    BLOCK_VISUAL_VARIANT_SEASONAL_LEAF, BLOCK_VISUAL_VARIANT_SNOW_COVER,
-    BLOCK_VISUAL_VARIANT_TOP_SNOW, MAX_ANIMATION_FRAMES, MAX_ANIMATIONS, MAX_MODEL_QUADS,
-    MAX_MODEL_TEMPLATES, MAX_TEXTURE_PAGES, MODEL_QUAD_FLAG_CULL_FACE_MASK,
+    BLOCK_VISUAL_VARIANT_PORTAL_UNKNOWN, BLOCK_VISUAL_VARIANT_SEASONAL_LEAF,
+    BLOCK_VISUAL_VARIANT_SNOW_COVER, BLOCK_VISUAL_VARIANT_TOP_SNOW, END_GATEWAY_IDENTIFIER,
+    END_PORTAL_FRAME_IDENTIFIER, END_PORTAL_IDENTIFIER, MAX_ANIMATION_FRAMES, MAX_ANIMATIONS,
+    MAX_MODEL_QUADS, MAX_MODEL_TEMPLATES, MAX_TEXTURE_PAGES, MODEL_QUAD_FLAG_CULL_FACE_MASK,
     MODEL_QUAD_FLAG_FACE_MASK, MODEL_QUAD_FLAG_TWO_SIDED, MODEL_TEMPLATE_FLAG_COMPOUND_NEXT,
     MODEL_TEMPLATE_FLAG_FENCE_NETHER, MODEL_TEMPLATE_FLAG_FENCE_WOOD, MODEL_TEMPLATE_FLAG_FIRE,
     MODEL_TEMPLATE_FLAG_GATE_AXIS_X, MODEL_TEMPLATE_FLAG_GATE_AXIS_Z, MODEL_TEMPLATE_FLAG_KELP,
-    MODEL_TEMPLATE_FLAG_LILY_PAD, MODEL_TEMPLATE_FLAG_PANE, MODEL_TEMPLATE_FLAG_SNOW_LAYER,
-    MODEL_TEMPLATE_FLAG_STAIR, MODEL_TEMPLATE_FLAG_TRANSPARENT_CUBE, MODEL_TEMPLATE_FLAG_WALL,
-    ModelQuad, ModelTemplate, NO_ANIMATION, NO_MODEL_TEMPLATE, SEASONAL_LEAF_DEEP_OFFSET,
+    MODEL_TEMPLATE_FLAG_LILY_PAD, MODEL_TEMPLATE_FLAG_NETHER_PORTAL, MODEL_TEMPLATE_FLAG_PANE,
+    MODEL_TEMPLATE_FLAG_SNOW_LAYER, MODEL_TEMPLATE_FLAG_STAIR,
+    MODEL_TEMPLATE_FLAG_TRANSPARENT_CUBE, MODEL_TEMPLATE_FLAG_WALL, ModelQuad, ModelTemplate,
+    NETHER_PORTAL_IDENTIFIER, NO_ANIMATION, NO_MODEL_TEMPLATE, SEASONAL_LEAF_DEEP_OFFSET,
     SEASONAL_LEAF_EXPOSED_OFFSET, SEASONAL_LEAF_MATERIAL_COUNT, SNOWED_GRASS_SIDE_TEXTURE,
     TOP_SNOW_LAYER_COUNT, TexturePage, TextureRef, VisualKind, VisualSupport,
 };
@@ -255,8 +260,8 @@ pub use texture::{
 pub use ui::{
     MAX_UI_ATLAS_PAGES, MAX_UI_ATLAS_SIDE, MAX_UI_CARRIER_BYTES, MAX_UI_FILE_BYTES, MAX_UI_FILES,
     MAX_UI_KEY_BYTES, MAX_UI_SIDECARS, MAX_UI_TEXTURES, RuntimeUiAssets, UI_CARRIER_MAGIC,
-    UI_CARRIER_VERSION, UiAtlasPage, UiFile, UiNineSlice, UiSidecar, UiSidecarEntry,
-    UiTexturePlacement, UiTextureUv, encode_ui_catalog,
+    UI_CARRIER_VERSION, UI_CREDITS_FILES, UiAtlasPage, UiFile, UiNineSlice, UiSidecar,
+    UiSidecarEntry, UiTexturePlacement, UiTextureUv, encode_ui_catalog,
 };
 pub use vanilla_refs::{MAX_VANILLA_REFS_BYTES, VanillaEntityRefs, VanillaGeometryFile};
 pub use weather_textures::{

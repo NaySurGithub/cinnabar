@@ -669,6 +669,8 @@ pub(super) fn carrier_v4_fixture() -> CompiledEntityAssetsV4 {
         .into_boxed_slice(),
         render: entity::EntityRenderData {
             layers: Box::new([entity::EntityRenderLayer {
+                material: Default::default(),
+                hurt_color: None,
                 rig: 0,
                 condition: None,
                 first_slot: 0,
@@ -1156,4 +1158,14 @@ fn admitted_geometry_parents_are_shared_and_match_the_decoded_catalog() {
         cloned.geometry_parents(),
         admitted.geometry_parents()
     ));
+}
+
+/// A compiled catalog and a decode of its carrier must be indistinguishable, identity included.
+#[test]
+fn encoded_admission_reports_the_identity_of_its_carrier() {
+    let (admitted, blob) =
+        RuntimeEntityAssets::from_compiled_encoded(inherited_geometry_fixture()).unwrap();
+    let decoded = RuntimeEntityAssets::decode(&blob.unwrap()).unwrap();
+    assert!(admitted.carrier_identity().is_some());
+    assert_eq!(format!("{admitted:?}"), format!("{decoded:?}"));
 }

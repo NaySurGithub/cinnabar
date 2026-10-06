@@ -23,9 +23,9 @@ def file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def stage_resources(root: Path, destination: Path, client: Path, runtime: dict) -> Path:
-    plan = root / "app/src/first_run/plan.rs"
-    font_manifest = root / rust_constant(plan, "FONT_MANIFEST")
+def stage_resources(root: Path, destination: Path, runtime: dict) -> Path:
+    carriers = root / "crates/assets/src/carriers.rs"
+    font_manifest = root / rust_constant(carriers, "FONT_MANIFEST")
     font = json.loads(font_manifest.read_text())
     filename = font["font_file"]
     if Path(filename).name != filename or filename in ("", ".", "..") or "\\" in filename:
@@ -38,7 +38,6 @@ def stage_resources(root: Path, destination: Path, client: Path, runtime: dict) 
     archive = assets_dir / runtime["resource_archive"]
     with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as payload:
         payload.writestr("prep-kit/scripts/", "")
-        payload.writestr(f"prep-kit/{runtime['compiler_identity_asset']}", file_sha256(client) + "\n")
         target = json.loads((root / "assets/bedrock-target.json").read_text())
         physics = root / target["artifacts"]["physics_registry"]
         if file_sha256(physics) != target["hashes"]["physics_registry"]:

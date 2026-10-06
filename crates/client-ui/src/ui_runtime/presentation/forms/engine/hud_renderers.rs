@@ -276,6 +276,7 @@ pub(super) fn with_java_hud(
         .map(|(path, _, bytes)| (*path, *bytes));
     super::super::graphics_expander::install(&mut catalog);
     super::super::always_sprint_setting::install(&mut catalog);
+    super::super::vsync_setting::install(&mut catalog);
     catalog.apply_pack(kept);
     catalog.apply_pack(
         [(
@@ -285,6 +286,7 @@ pub(super) fn with_java_hud(
         .into_iter()
         .chain(super::menu_renderers::NO_COPYRIGHT_OVERLAYS),
     );
+    super::super::loading_screen::install_brand_layout(&mut catalog);
     super::super::enhanced_setting::install(&mut catalog);
     let touch_index =
         include_bytes!("../../../../../../../assets/touch-ui/ui/_ui_defs.json").as_slice();

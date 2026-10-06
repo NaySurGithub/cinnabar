@@ -1,6 +1,6 @@
 use std::{io::Write, sync::Arc};
 
-use assets::{BlockFace, NetworkIdMode, RuntimeAssets, VisualKind};
+use assets::{BlockFace, NetworkIdMode, RuntimeAssets, VisualKind, VisualSupport};
 use protocol::{
     CustomBlock, CustomBlockVisuals, CustomBlocks, CustomMaterialInstance, CustomPermutation,
     CustomStateAxis, CustomStateValue, CustomTransformation, CustomVisualComponents,
@@ -554,6 +554,7 @@ fn full_cube_block_items_carry_a_sixteen_texel_face_sheet() {
         pair("test:lucky_placer", "test:lucky"),
     ];
     let compiled = compiled();
+    assert_eq!(compiled.overlay.visuals[0].support, VisualSupport::Exact);
     assert!(
         compiled.overlay.texture.as_ref().unwrap().mips[0].size
             > u32::from(assets::BLOCK_ITEM_FACE_SIDE),
@@ -590,6 +591,106 @@ fn full_cube_block_items_carry_a_sixteen_texel_face_sheet() {
                 "face {face} texel {x},{y} is lucky's own texel"
             );
         }
+    }
+}
+
+#[test]
+fn cube_inputs_with_unrepresented_transforms_or_materials_keep_fallback_support() {
+    use super::super::item_icons::custom_block_icons;
+
+    let identity = CustomTransformation {
+        rotation: [0; 3],
+        scale: [1.0; 3],
+        translation: [0.0; 3],
+    };
+    let material = |render_method: Option<&str>,
+                    tint_method: Option<&str>|
+     -> Option<Box<[CustomMaterialInstance]>> {
+        Some(Box::new([CustomMaterialInstance {
+            name: "*".into(),
+            texture: "lucky".into(),
+            render_method: render_method.map(Into::into),
+            tint_method: tint_method.map(Into::into),
+        }]))
+    };
+    for (case, transformation, materials, thumbnail) in [
+        (
+            "rotation",
+            Some(CustomTransformation {
+                rotation: [0, 1, 0],
+                ..identity
+            }),
+            material(None, None),
+            true,
+        ),
+        (
+            "scale",
+            Some(CustomTransformation {
+                scale: [0.5; 3],
+                ..identity
+            }),
+            material(None, None),
+            true,
+        ),
+        (
+            "translation",
+            Some(CustomTransformation {
+                translation: [0.25, 0.0, 0.0],
+                ..identity
+            }),
+            material(None, None),
+            true,
+        ),
+        ("blend", None, material(Some("blend"), None), true),
+        (
+            "unknown method",
+            None,
+            material(Some("unknown"), None),
+            true,
+        ),
+        (
+            "unresolved tint",
+            None,
+            material(None, Some("grass")),
+            false,
+        ),
+    ] {
+        let blocks = CustomBlocks {
+            blocks: vec![block(
+                "test:cube",
+                1,
+                CustomBlockVisuals {
+                    base: CustomVisualComponents {
+                        geometry: Some(super::FULL_BLOCK.into()),
+                        materials,
+                        transformation,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            )]
+            .into(),
+            ..Default::default()
+        };
+        let compiled = compile_block_overlay(&view(), &blocks, false, None).unwrap();
+        assert_eq!(
+            compiled.overlay.visuals[0].support,
+            VisualSupport::VanillaFallback,
+            "{case}"
+        );
+        let icons = custom_block_icons(
+            &compiled.overlay,
+            &blocks,
+            false,
+            &[("test:cube".into(), "test:cube".into())],
+        );
+        assert_eq!(
+            icons.icons.len(),
+            usize::from(thumbnail),
+            "{case}: only an untinted fallback has a drawable thumbnail"
+        );
+        assert_eq!(icons.misses.len(), usize::from(!thumbnail), "{case}");
+        assert!(icons.block_sheets.is_empty(), "{case}");
     }
 }
 
@@ -714,4 +815,36 @@ fn review_geometry_catalog_accepts_json_escaped_identifiers() {
     let wanted = std::collections::HashSet::from(["geometry.gen"]);
     let catalog = super::geometry::geometry_catalog(&view, &wanted);
     assert!(catalog.contains_key("geometry.gen"));
+}
+
+// Icons compile beside other subscribers but only once blocks supply their thumbnails.
+#[test]
+fn join_preparation_icons_carry_the_compiled_block_sheets() {
+    let lucky = block(
+        "test:lucky",
+        1,
+        CustomBlockVisuals {
+            base: CustomVisualComponents {
+                geometry: Some("minecraft:geometry.full_block".into()),
+                materials: materials("lucky"),
+                ..CustomVisualComponents::default()
+            },
+            ..CustomBlockVisuals::default()
+        },
+    );
+    let inputs = Arc::new(super::super::pack_reload::PackInputs {
+        blocks: CustomBlocks {
+            blocks: vec![lucky].into(),
+            vanilla_blocks: Default::default(),
+            skipped: 0,
+        },
+        block_items: vec![("test:lucky".into(), "test:lucky".into())],
+        ..Default::default()
+    });
+    let application =
+        super::super::resource_packs::prepare_validated_application(view().shared_stack(), inputs);
+    assert!(application.block_overlay.is_some());
+    let icons = application.item_icons.expect("block item icons");
+    assert_eq!(icons.block_sheets.len(), 1);
+    assert_eq!(icons.block_sheets[0].identifier.as_ref(), "test:lucky");
 }

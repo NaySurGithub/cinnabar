@@ -21,7 +21,6 @@ pub(crate) struct Paths {
 pub(crate) struct Runtime {
     pub application_id: &'static str,
     pub resource_archive: &'static str,
-    pub compiler_identity_asset: &'static str,
     pub archive_limits: archive::Limits,
 }
 

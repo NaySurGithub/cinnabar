@@ -8,6 +8,8 @@ pub mod container_kinds;
 mod debug_overlay;
 pub(super) use container_kinds::supported_storage_slots;
 pub mod containers;
+pub(super) mod credits_content;
+pub mod credits_screen;
 pub mod emote_screen;
 pub mod engine;
 pub mod experience;
@@ -36,6 +38,8 @@ pub mod oreui;
 pub mod pack_harness;
 pub mod pages;
 pub mod panorama;
+#[cfg(test)]
+mod publication_tests;
 #[cfg(test)]
 pub mod regression_snapshots;
 pub mod touch;
@@ -74,6 +78,7 @@ pub mod start_feed;
 pub mod tests;
 pub mod textures;
 pub mod toast_screen;
+pub mod vsync_setting;
 
 pub use chat_screen::{CHAT_SCREEN, ChatHit};
 pub use container_data::observe_station_block;
@@ -137,6 +142,7 @@ pub(super) struct FormPresentation {
     bed: oreui::BedScreen,
     /// The sign editor's cached screen; carried across the per-frame reset.
     sign: sign_editor::SignScreen,
+    credits: credits_screen::CreditsScreen,
     /// Dev-mode OreUI originals and the look OreUI screens draw with.
     oreui_originals: Option<Arc<oreui::Originals>>,
     oreui_look: oreui::Look,
@@ -209,7 +215,18 @@ impl UiPresentationRuntime {
             "server resource-pack UI applied to the form engine"
         );
         engine.set_server_atlas(atlas, first as u16);
-        self.refresh_screen_settings();
+        // A texture-only pack may retain the catalog while changing sprite
+        // dimensions, UV metadata, or nine-slice borders used during layout.
+        self.form_presentation.hud.invalidate_textures();
+        if let Some(settings) = pack
+            .screen_settings
+            .as_ref()
+            .and_then(|settings| settings.for_inputs(engine.catalog(), engine.context()))
+        {
+            self.form_presentation.screen_settings = settings;
+        } else {
+            self.refresh_screen_settings();
+        }
         self.sync_server_ui_pages();
     }
 
@@ -443,6 +460,7 @@ impl UiPresentationRuntime {
             emote: state.emote,
             bed: state.bed,
             sign: state.sign,
+            credits: state.credits,
             oreui_originals: state.oreui_originals,
             oreui_look: state.oreui_look,
             screen_settings: state.screen_settings,
@@ -588,6 +606,7 @@ pub fn host_screen_references() -> impl Iterator<Item = &'static str> {
         NPC_SCREEN,
         toast_screen::TOAST_SCREEN,
         crate::store::SDL_SCREEN,
+        crate::ui_runtime::credits::CREDITS_SCREEN,
     ]
     .into_iter()
     .chain(loading_screen::LOADING_SCREENS)

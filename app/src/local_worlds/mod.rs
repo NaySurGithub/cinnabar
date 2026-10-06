@@ -135,39 +135,11 @@ impl LocalWorlds {
     fn dispatch(&self, effects: Vec<Effect>) {
         for effect in effects {
             if let Effect::OpenUrl(url) = effect {
-                open_url(url);
+                crate::desktop::open_url(url);
             } else if let Some(client) = &self.client {
                 client.send(effect);
             }
         }
-    }
-}
-
-/// Opens a fixed https URL in the system browser; failures are ignored.
-pub(crate) fn open_url(url: &str) {
-    #[cfg(target_os = "android")]
-    {
-        if let Err(error) = crate::android::open_url(url) {
-            bevy::log::warn!("open Android browser: {error:#}");
-        }
-    }
-    #[cfg(not(target_os = "android"))]
-    {
-        let mut command = if cfg!(target_os = "macos") {
-            std::process::Command::new("open")
-        } else if cfg!(target_os = "windows") {
-            let mut command = std::process::Command::new("cmd");
-            command.args(["/C", "start", ""]);
-            command
-        } else {
-            std::process::Command::new("xdg-open")
-        };
-        let _ = command
-            .arg(url)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn();
     }
 }
 

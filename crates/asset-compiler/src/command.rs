@@ -46,6 +46,10 @@ use output_bundle::write_output_bundle;
 mod output_validation;
 #[path = "command/particle_command.rs"]
 mod particle_command;
+#[path = "command/prepare.rs"]
+mod prepare;
+#[path = "command/prepare_plan.rs"]
+mod prepare_plan;
 #[path = "command/registry_version.rs"]
 mod registry_version;
 #[path = "command/ui_command.rs"]
@@ -425,6 +429,27 @@ pub(crate) fn run(command: Command) -> Result<(), Box<dyn std::error::Error>> {
                 out.display()
             );
         }
+        Command::Prepare {
+            root,
+            kit,
+            workspace,
+            out,
+            only,
+            check,
+            json,
+            accept_eula,
+            clouds_override,
+        } => prepare::prepare(prepare::Options {
+            root,
+            kit,
+            workspace,
+            out,
+            only,
+            check,
+            json,
+            accept_eula,
+            clouds_override,
+        })?,
         Command::VanillaPack {
             source_manifest,
             accept_eula,
@@ -849,3 +874,43 @@ fn read_bounded_with_limit(
 #[cfg(test)]
 #[path = "command/tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../build_support/lockfile.rs"]
+mod lockfile;
+
+pub(crate) fn run_prepare(
+    command: Command,
+    line: &(dyn Fn(&str) + Sync),
+    cancelled: &(dyn Fn() -> bool + Sync),
+) -> Result<(), Box<dyn std::error::Error>> {
+    match command {
+        Command::Prepare {
+            root,
+            kit,
+            workspace,
+            out,
+            only,
+            check,
+            json,
+            accept_eula,
+            clouds_override,
+        } => prepare::prepare_with(
+            prepare::Options {
+                root,
+                kit,
+                workspace,
+                out,
+                only,
+                check,
+                json,
+                accept_eula,
+                clouds_override,
+            },
+            Some(line),
+            cancelled,
+        )?,
+        _ => return Err("native preparation requires the prepare command".into()),
+    }
+    Ok(())
+}

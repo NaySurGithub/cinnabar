@@ -1,6 +1,10 @@
 use super::*;
 
 impl WorldAuthority {
+    /// Changes only the actor visual after the corresponding terrain mesh is published.
+    pub fn apply_actor_block_sync(&mut self, sync: protocol::ActorBlockSyncMessage) -> bool {
+        self.actors.apply_terrain_sync(sync)
+    }
     /// Borrows remote players and their retained profile records.
     pub fn render_players(&self) -> Vec<(&ActorSnapshot, Option<&PlayerProfile>)> {
         self.actors
@@ -51,10 +55,25 @@ impl WorldAuthority {
     /// Advances simulation ticks with one visual evaluation per tick.
     pub fn advance_actor_interpolation_ticks(&mut self, ticks: u32) {
         self.actors.advance_interpolation_ticks(ticks);
+        self.publish_actor_particles();
+        self.publish_actor_audio();
     }
     /// Advances elapsed tick state, evaluating animation once for this rendered frame.
     pub fn advance_actor_interpolation_frame(&mut self, ticks: u32) {
         self.actors.advance_interpolation_frame(ticks);
+        self.publish_actor_particles();
+        self.publish_actor_audio();
+    }
+
+    fn publish_actor_particles(&mut self) {
+        for event in self.actors.take_particle_effects() {
+            self.push_committed_particle(event);
+        }
+    }
+    fn publish_actor_audio(&mut self) {
+        for event in self.actors.take_synchronized_audio() {
+            self.push_committed_audio(event);
+        }
     }
     /// Drains decoded actor status events (hurt, death, taming, totem, ...) for particle and sound consumers.
     pub fn take_actor_status_notices(&mut self) -> Vec<crate::ActorStatusNotice> {
@@ -85,6 +104,17 @@ impl WorldAuthority {
     /// Records `(runtime_id, in_water, in_lava)` samples that back the fluid animation queries.
     pub fn set_actor_fluids(&mut self, samples: &[(u64, bool, bool)]) {
         self.actors.set_fluids(samples);
+    }
+    /// Records `(runtime_id, submerged)` breathing-point samples that hide entity shadows.
+    pub fn set_actor_breathing_liquids(&mut self, samples: &[(u64, bool)]) {
+        self.actors.set_breathing_liquids(samples);
+    }
+    /// Every actor's entity-shadow caster at `partial_tick`, local player included.
+    pub fn actor_shadow_casters(
+        &self,
+        partial_tick: f32,
+    ) -> impl Iterator<Item = crate::ActorShadowCaster> + '_ {
+        self.actors.shadow_casters(partial_tick)
     }
     /// Sets the view `[pitch, yaw]` (degrees) that camera-facing billboard rigs sample per tick.
     pub fn set_actor_camera_rotation(&mut self, rotation: [f32; 2]) {
@@ -145,9 +175,17 @@ impl WorldAuthority {
     pub fn block_entities(&self, partial_tick: f32) -> Vec<crate::BlockEntityView> {
         self.actors.block_entities(partial_tick)
     }
+    /// Retains pending block actors for visibility decisions in the terrain's render frame.
+    pub fn block_entity_candidates(&self, partial_tick: f32) -> Vec<crate::BlockEntityCandidate> {
+        self.actors.block_entity_candidates(partial_tick)
+    }
     /// End crystal beams with interpolated endpoints and actor animation age.
     pub fn crystal_beams(&self, partial_tick: f32) -> Vec<crate::CrystalBeamView> {
         self.actors.crystal_beams(partial_tick)
+    }
+    /// Dying dragon body centers and ray parameters at the supplied frame fraction.
+    pub fn dragon_death_rays(&self, partial_tick: f32) -> Vec<crate::DragonDeathView> {
+        self.actors.dragon_death_rays(partial_tick)
     }
     /// Fishing lines and leads with interpolated endpoints.
     pub fn ropes(&self, partial_tick: f32) -> Vec<crate::RopeView> {
@@ -156,6 +194,10 @@ impl WorldAuthority {
     /// Borrows one actor rig for presentation.
     pub fn actor_rig(&self, runtime_id: u64) -> Option<ActorRigSnapshot<'_>> {
         self.actors.actor_rig(runtime_id)
+    }
+    /// Render-controller values at the frame fraction, retaining completed tick poses.
+    pub fn actor_render_frame(&self, partial_tick: f32) -> crate::ActorRenderFrame<'_> {
+        self.actors.render_frame(partial_tick)
     }
     /// Full-body pose for HUD rendering, independent of the local first-person hand pose.
     pub fn actor_ui_pose(&self, runtime_id: u64) -> Option<&[crate::BoneTransform]> {

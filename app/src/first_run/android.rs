@@ -1,17 +1,15 @@
 //! Android executes the shared preparation plan in-process instead of spawning shell tools.
 
 use std::{
-    fs::{self, OpenOptions},
-    io::Write,
+    fs,
     sync::atomic::{AtomicBool, Ordering},
     time::Duration,
 };
 
-use anyhow::{Context, Result, bail};
+use anyhow::Result;
 
 use super::{
-    plan::{self, Action},
-    prepare, runner, stamp,
+    prepare,
     status::{Phase, Status},
 };
 use crate::{android::bridge, install_layout::InstallLayout};
@@ -24,7 +22,7 @@ pub(crate) fn cancelled() -> anyhow::Error {
 }
 
 pub(crate) fn is_current(layout: &InstallLayout) -> Result<bool> {
-    Ok(prepare::selection(layout)?.1.is_current())
+    Ok(prepare::selection(layout)?.is_current())
 }
 
 /// Called on the Java bootstrap worker before any NativeActivity window exists.
@@ -66,7 +64,7 @@ pub(crate) fn bootstrap(cancel: &AtomicBool) -> Result<bool> {
         }
         super::record_consent(&layout)?;
     }
-    let result = compile(&layout, cancel, &mut report);
+    let result = prepare::prepare(&layout, cancel, &mut report);
     match result {
         Ok(()) => {
             report(Status::new(Phase::Done, 0, 0, "Ready"));
@@ -78,93 +76,4 @@ pub(crate) fn bootstrap(cancel: &AtomicBool) -> Result<bool> {
             Err(error)
         }
     }
-}
-
-fn compile(
-    layout: &InstallLayout,
-    cancel: &AtomicBool,
-    report: &mut dyn FnMut(Status),
-) -> Result<()> {
-    let (steps, selection) = prepare::selection(layout)?;
-    let workspace = layout.prepare_workspace();
-    let prepared = layout.prepared_assets_dir();
-    runner::stage_kit(&layout.prep_kit(), &workspace)?;
-    if selection.needs_pack {
-        super::download::fetch_archive(&workspace, cancel, |received, total| {
-            report(Status::downloading(received, total));
-        })?;
-    }
-    let staged = workspace.join(plan::COMPILED);
-    if staged.exists() {
-        fs::remove_dir_all(&staged)?;
-    }
-    fs::create_dir_all(&staged)?;
-    if plan::carriers_present(&prepared) {
-        runner::seed(&prepared, &staged)?;
-    }
-    for output in &selection.outputs {
-        runner::clear_output(&staged, output);
-    }
-    let stale: Vec<_> = steps
-        .into_iter()
-        .zip(&selection.run)
-        .filter_map(|(step, run)| run.then_some(step))
-        .collect();
-    let mut log = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(layout.log_dir().join("first-run.log"))?;
-    let total = stale.len();
-    let skipped = runner::execute_steps(
-        &stale,
-        |step| {
-            if cancel.load(Ordering::Relaxed) {
-                return Err(Cancelled.into());
-            }
-            writeln!(log, "{}", step.label)?;
-            let result = match &step.action {
-                Action::UnpackPack => super::download::unpack(&workspace, cancel),
-                Action::Assetc(args) => {
-                    let absolute = absolute_arguments(&workspace, args)?;
-                    asset_compiler::run_args(absolute).map_err(|error| anyhow::anyhow!("{error}"))
-                }
-            };
-            if let Err(error) = &result {
-                let _ = writeln!(log, "{error:#}");
-            }
-            result
-        },
-        |index, step| report(Status::new(Phase::Running, index + 1, total, step.label)),
-    )?;
-    for label in skipped {
-        writeln!(log, "optional step skipped: {label}")?;
-    }
-    if !plan::carriers_present(&staged) {
-        bail!(
-            "required carriers are missing under {}; reopen the app to rebuild them",
-            staged.display()
-        );
-    }
-    stamp::write(&staged, &selection.identities)?;
-    runner::publish_if_active(&staged, &prepared, cancel)?;
-    let _ = fs::remove_dir_all(workspace.join(".local/assets/bedrock-samples"));
-    super::download::prune(&workspace);
-    Ok(())
-}
-
-/// Every argument after a plan flag is a workspace path; resolve it without changing JVM cwd.
-fn absolute_arguments(workspace: &std::path::Path, args: &[String]) -> Result<Vec<String>> {
-    let (command, flags) = args.split_first().context("empty asset compiler command")?;
-    if flags.len() % 2 != 0 {
-        bail!("preparation command has an incomplete flag");
-    }
-    let mut output = vec!["assetc".to_owned(), command.clone()];
-    for pair in flags.chunks_exact(2) {
-        if !pair[0].starts_with("--") {
-            bail!("invalid preparation flag {}", pair[0]);
-        }
-        output.push(pair[0].clone());
-        output.push(workspace.join(&pair[1]).to_string_lossy().into_owned());
-    }
-    Ok(output)
 }

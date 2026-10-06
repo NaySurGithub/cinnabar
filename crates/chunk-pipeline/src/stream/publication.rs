@@ -87,6 +87,7 @@ impl WorldStream {
             self.applied_mesh_generations.remove(&key);
         }
         self.revisions.clear_if_current(key, generation);
+        self.acknowledge_actor_block_syncs(key, generation);
         self.stats.phase2_stages.mesh_uploads_acknowledged = self
             .stats
             .phase2_stages
@@ -157,6 +158,10 @@ impl WorldStream {
     /// Records `(runtime_id, in_water, in_lava)` samples that back the fluid animation queries.
     pub fn set_actor_fluids(&mut self, samples: &[(u64, bool, bool)]) {
         self.authority.set_actor_fluids(samples)
+    }
+    /// Records `(runtime_id, submerged)` breathing-point samples that hide entity shadows.
+    pub fn set_actor_breathing_liquids(&mut self, samples: &[(u64, bool)]) {
+        self.authority.set_actor_breathing_liquids(samples)
     }
     /// Sets the view `[pitch, yaw]` (degrees) that camera-facing billboard rigs sample per tick.
     pub fn set_actor_camera_rotation(&mut self, rotation: [f32; 2]) {
@@ -248,6 +253,7 @@ impl WorldStream {
         self.stats.max_decode_queue_wait = Duration::ZERO;
         self.stats.max_light_queue_wait = Duration::ZERO;
         self.stats.max_mesh_queue_wait = Duration::ZERO;
+        self.stats.max_mesh_dispatch_wait = Duration::ZERO;
         self.stats.max_decode_duration = Duration::ZERO;
         self.stats.max_mesh_duration = Duration::ZERO;
         self.stats.max_light_duration = Duration::ZERO;

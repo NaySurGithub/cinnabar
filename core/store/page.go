@@ -21,13 +21,17 @@ const (
 
 var pagePattern = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,64}$`)
 
-// Home loads a known store page by its session-config name. Layout rows carry catalog queries, not
-// offers; each row is filled by running its first query the catalog search can express.
+// Home loads a known store page by its session-config name. Curated rows carry their offers inline;
+// a query row is filled by running its first query the catalog search can express.
 func (c *Client) Home(ctx context.Context, name string) (Page, error) {
 	if !pagePattern.MatchString(name) {
 		return Page{}, ErrInvalidRequest
 	}
 	cfg, err := c.sessionConfig(ctx)
+	if err != nil {
+		return Page{}, err
+	}
+	id, err := cfg.PageID(name)
 	if err != nil {
 		return Page{}, err
 	}
@@ -41,7 +45,7 @@ func (c *Client) Home(ctx context.Context, name string) (Page, error) {
 	if state.Entitlements == nil {
 		state.Entitlements = []string{}
 	}
-	layout, err := c.cfg.Market.Page(ctx, marketplace.PageByID, cfg.PageID(name), state)
+	layout, err := c.cfg.Market.Page(ctx, marketplace.PageByID, id, state)
 	if err != nil {
 		return Page{}, err
 	}
@@ -56,21 +60,31 @@ func (c *Client) Home(ctx context.Context, name string) (Page, error) {
 	c.mu.Unlock()
 
 	page := Page{ID: name, Rows: []Row{}, InventoryVersion: version}
+	var rows []Row // page order; a query row stays empty until filled
 	var pending []pendingRow
 	for _, section := range layout.Layout {
-		for _, row := range section.Rows {
-			if len(pending) >= maxPageRows {
+		for i := range section.Rows {
+			row := &section.Rows[i]
+			if len(rows) >= maxPageRows {
 				page.Truncated = true
 				break
 			}
-			if query, ok := rowQuery(row); ok {
-				pending = append(pending, pendingRow{section: section.Name, row: row, query: query})
+			if list := row.ItemList(); list != nil && len(list.Items) > 0 {
+				rows = append(rows, c.curatedRow(row, list))
+			} else if query, ok := row.SearchQuery(); ok {
+				pending = append(pending, pendingRow{slot: len(rows), row: row, query: query})
+				rows = append(rows, Row{})
 			}
 		}
 	}
-	rows, err := c.fillRows(ctx, pending)
-	if err != nil {
-		return Page{}, err
+	filled, err := c.fillRows(ctx, pending)
+	if err != nil && len(pending) == len(rows) {
+		return Page{}, err // every row was a query row and every search failed
+	}
+	if err == nil {
+		for i, p := range pending {
+			rows[p.slot] = filled[i]
+		}
 	}
 	for _, row := range rows {
 		if len(row.Offers) > 0 {
@@ -81,19 +95,29 @@ func (c *Client) Home(ctx context.Context, name string) (Page, error) {
 }
 
 type pendingRow struct {
-	section string
-	row     marketplace.Row
-	query   marketplace.Query
+	slot  int
+	row   *marketplace.Row
+	query marketplace.Query
 }
 
-// rowQuery returns the first of the row's queries the catalog search can express.
-func rowQuery(row marketplace.Row) (marketplace.Query, bool) {
-	for _, query := range row.Queries {
-		if _, ok := query.SearchFilter(); ok {
-			return query, true
+// curatedRow maps a row whose item list carries its offers inline.
+func (c *Client) curatedRow(row *marketplace.Row, list *marketplace.Component) Row {
+	out := newRow(row)
+	for i := range list.Items {
+		if offer, ok := offerFromMarketItem(&list.Items[i]); ok && len(out.Offers) < maxRowOffers {
+			offer.Owned = c.owned(offer.ID)
+			out.Offers = append(out.Offers, offer)
 		}
 	}
-	return marketplace.Query{}, false
+	return out
+}
+
+func newRow(row *marketplace.Row) Row {
+	out := Row{ID: clip(row.TelemetryID), Title: clip(row.Title()), Offers: []Offer{}}
+	if len(row.Components) > 0 {
+		out.Kind = clip(row.Components[0].Type)
+	}
+	return out
 }
 
 // fillRows runs each row's query; a failed search drops its row, and the page fails only when every
@@ -140,10 +164,7 @@ func (c *Client) fillRow(ctx context.Context, p pendingRow) (Row, error) {
 	if err != nil {
 		return Row{}, err
 	}
-	row := Row{ID: clip(p.row.TelemetryID), Title: clip(p.section), Offers: []Offer{}}
-	if len(p.row.Components) > 0 {
-		row.Kind = clip(p.row.Components[0].Type)
-	}
+	row := newRow(p.row)
 	for i := range result.Items {
 		if offer, ok := offerFromItem(&result.Items[i]); ok && len(row.Offers) < maxRowOffers {
 			offer.Owned = c.owned(offer.ID)
@@ -153,7 +174,8 @@ func (c *Client) fillRow(ctx context.Context, p pendingRow) (Row, error) {
 	return row, nil
 }
 
-// offerFromMarketItem maps a store-service catalog item; an item without an id or title is skipped.
+// offerFromMarketItem maps a store-service item, inline on a page or from a row continuation; an
+// item without an id or title is skipped.
 func offerFromMarketItem(item *marketplace.Item) (Offer, bool) {
 	id := strings.ToLower(item.ID)
 	title := clip(item.Title.Neutral())
@@ -164,11 +186,18 @@ func offerFromMarketItem(item *marketplace.Item) (Offer, bool) {
 		ID: id, Title: title, Creator: clip(item.CreatorName),
 		ContentType: clip(item.ContentType), StoreID: clip(item.StoreID),
 	}
-	for _, image := range item.Images {
+	images := item.Images
+	if item.Thumbnail != nil {
+		images = append([]marketplace.Image{*item.Thumbnail}, images...)
+	}
+	for _, image := range images {
 		if strings.EqualFold(image.Type, "Thumbnail") && strings.HasPrefix(image.URL, "https://") && len(image.URL) <= 1024 {
 			offer.ThumbnailURL = image.URL
 			break
 		}
+	}
+	if item.Rating != nil && item.Rating.TotalCount > 0 {
+		offer.Rating = &Rating{Average: item.Rating.Average, Count: item.Rating.TotalCount}
 	}
 	if price := item.Price; price != nil {
 		amount := int64(price.ListPrice)

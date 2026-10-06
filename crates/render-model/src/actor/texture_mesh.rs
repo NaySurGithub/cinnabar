@@ -1,4 +1,4 @@
-//! Native attachable raster extrusions (TextureMesh::compileQuads).
+//! Vanilla attachable raster extrusions.
 //!
 //! Unlike cubes, these meshes start in the image's X/Z plane with Y-down depth.
 
@@ -149,6 +149,7 @@ fn append_pixels(
                     uv,
                     back_uv: uv,
                     bone_index,
+                    surface: super::ActorRigSurface::SINGLE_FACE,
                 }));
                 if vertices.len() > MAX_ACTOR_RIG_VERTICES {
                     return Err(ActorRigGeometryError::CatalogCapacity);

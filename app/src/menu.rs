@@ -113,6 +113,7 @@ pub(crate) struct MenuRuntime {
     failed_video_settings_save: Option<video_settings::SavedVideoSettings>,
     render_mode: RenderMode,
     render_mode_request: Option<RenderMode>,
+    vsync_override: Option<bool>,
     display_name: String,
     launcher: bool,
     servers: Vec<SavedServer>,
@@ -162,6 +163,10 @@ pub(crate) struct MenuRuntime {
     /// Failed writes wait until this deadline while retaining the newest edits.
     settings_retry_at: Option<std::time::Instant>,
     settings_apply: bool,
+    /// In-memory option overrides (index, persisted value) that saves never write.
+    session_overrides: Vec<(usize, i32)>,
+    /// A developer controller is driving: hotkey toggles stay in memory.
+    transient_toggles: bool,
     language_choices: std::sync::Arc<[(String, String)]>,
     language_pending: bool,
     language_asset_path: PathBuf,
@@ -189,6 +194,13 @@ impl MenuRuntime {
         if self.render_mode_request.is_none() {
             self.render_mode = applied;
         }
+    }
+
+    /// Shows the VSync toggle locked to a launch-flag override.
+    #[must_use]
+    pub(crate) const fn with_vsync_override(mut self, vsync: Option<bool>) -> Self {
+        self.vsync_override = vsync;
+        self
     }
 
     /// Consume the pending Video-section change.
@@ -283,6 +295,7 @@ impl MenuRuntime {
             gui_scale_choices: self.gui_scale_choices.clone(),
             fullscreen: self.fullscreen,
             render_mode: self.render_mode,
+            vsync_override: self.vsync_override,
             display_name: self.display_name.clone(),
             servers: self.servers.clone(),
             featured: self.featured.clone(),
