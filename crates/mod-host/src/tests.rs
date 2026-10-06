@@ -1,4 +1,6 @@
 use super::*;
+mod block_highlights;
+mod fullbright;
 mod gameplay;
 mod hud;
 mod prepared_settings;

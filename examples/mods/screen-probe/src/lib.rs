@@ -5,8 +5,9 @@
 //! an ordinary event, as `data-changed` does on the load budget. `probe.hud` sets the HUD
 //! template, and `target-changed` reports the target, mining, harvest and text reads.
 
+use mod_api::PlayerMod;
 use mod_api::player_mod::{
-    DataSource, Guest, HudLayout, ScreenLayout, Stack,
+    DataSource, HudLayout, ScreenLayout, Stack,
     cinnabar::extension::{hud_layer, screen},
     cinnabar::server_experience::ui::Value,
     cinnabar::session::{items, recipes, target, text as host_text},
@@ -84,7 +85,7 @@ fn read_all() {
     report("#recipes_read", Value::Integer(recipes.into()));
 }
 
-impl Guest for Probe {
+impl PlayerMod for Probe {
     fn init() {
         let _ = screen::set_overlay(Some(declared::templates::OVERLAY));
         read_session();
@@ -260,4 +261,4 @@ impl Guest for Probe {
     }
 }
 
-mod_api::player_mod::export_player_mod!(Probe with_types_in mod_api::player_mod);
+mod_api::export_player_mod!(Probe);

@@ -11,10 +11,10 @@ From the repository root, with the Rust toolchain pinned by the repository:
 ```sh
 rustup target add wasm32-unknown-unknown
 cargo build -p hello-mod --target wasm32-unknown-unknown --locked
-cargo run -p mod-host --locked -- pack \
+cargo run -p mod-host --bin mod-host --locked -- pack \
   target/wasm32-unknown-unknown/debug/hello_mod.wasm /tmp/cinnabar-hello.wasm
-cargo run -p mod-host --locked -- probe /tmp/cinnabar-hello.wasm
-cargo run -p mod-host --locked -- bench /tmp/cinnabar-hello.wasm
+cargo run -p mod-host --bin mod-host --locked -- probe /tmp/cinnabar-hello.wasm
+cargo run -p mod-host --bin mod-host --locked -- bench /tmp/cinnabar-hello.wasm
 CINNABAR_MOD_COMPONENT=/tmp/cinnabar-hello.wasm cargo run -p bedrock-client --features local-mods --locked
 ```
 
@@ -59,9 +59,9 @@ install it separately with `rustup target add wasm32-unknown-unknown`):
 
 ```sh
 cargo build -p time-changer-mod --target wasm32-unknown-unknown --locked
-cargo run -p mod-host --locked -- pack \
+cargo run -p mod-host --bin mod-host --locked -- pack \
   target/wasm32-unknown-unknown/debug/time_changer_mod.wasm /tmp/cinnabar-time-changer.wasm
-cargo run -p mod-host --locked -- probe-environment /tmp/cinnabar-time-changer.wasm
+cargo run -p mod-host --bin mod-host --locked -- probe-environment /tmp/cinnabar-time-changer.wasm
 CINNABAR_MOD_COMPONENT=/tmp/cinnabar-time-changer.wasm cargo run -p bedrock-client --features local-mods --locked
 ```
 
@@ -138,9 +138,10 @@ callbacks (see "Mod packages and screens" below). One host linker serves both. (
 server Experience's client part is another world, `server-bundle`, which `experience-sdk`'s
 `client` feature builds; see [server-experiences.md](server-experiences.md).) The guest
 SDK uses `wit-bindgen`; the host independently generates Wasmtime bindings from
-those same files. Copy `examples/mods/hello` to start a bare mod (`mod_api::bindings`), or
-`examples/mods/screen-probe` for a package (`mod_api::player_mod`), adjust its dependency
-path, and implement its generated `Guest` trait. `pack` converts the core WASM
+those same files. Copy `examples/mods/hello` to start a bare mod (`mod_api::bindings`) and
+implement its generated `Guest` trait, or `examples/mods/screen-probe` for a package: implement
+`mod_api::PlayerMod`, overriding only the events the mod uses, and export it with
+`mod_api::export_player_mod!`. Adjust the copy's dependency path. `pack` converts the core WASM
 module and embedded WIT metadata to a component. The guest's actual imports
 declare its requirements; unknown imports fail linking. The prototype's
 grant is HUD, the demo action and environment for the developer-selected mod,
@@ -239,9 +240,9 @@ pulsing ring at the player's feet:
 
 ```sh
 cargo build -p render-sample-mod --target wasm32-unknown-unknown --locked
-cargo run -p mod-host --locked -- pack \
+cargo run -p mod-host --bin mod-host --locked -- pack \
   target/wasm32-unknown-unknown/debug/render_sample_mod.wasm /tmp/cinnabar-render.wasm
-cargo run -p mod-host --locked -- probe-render /tmp/cinnabar-render.wasm
+cargo run -p mod-host --bin mod-host --locked -- probe-render /tmp/cinnabar-render.wasm
 CINNABAR_MOD_COMPONENT=/tmp/cinnabar-render.wasm CINNABAR_MOD_RENDER=1 CINNABAR_MOD_PLAYERS=1 \
   cargo run -p bedrock-client --features local-mods --locked
 ```
@@ -502,7 +503,7 @@ one of another signature) and never calls one it lacks, so new events arrive as 
 without breaking built mods. `data-changed(sources)` lists what changed (`items`, `recipes`);
 that enum is closed, and a new kind of change arrives as a new export.
 `scrolled` reports wheel notches (a pixel wheel's pixels / 16), positive scrolling down, and
-the Ctrl, Shift and Alt held. An event callback commits the label, visual time, panel,
+the Ctrl, Shift and Alt held. An event callback commits the label, visual time, fullbright, panel,
 settings and screens; render, camera and command output is `frame`'s alone.
 
 `data-changed`, whose sources a mod copies whole across the ABI, and the `init` of a component
@@ -524,3 +525,26 @@ fuel, traps, caps, revisions, permissions and reload), `cargo test -p experience
 (clipping, the lifted held stack, hit filtering, the HUD layer's hiding, session data) and
 `cargo test -p sim --test it liquid_ray`. The overlay has not been checked on a
 rendered frame yet; see `plan.md`.
+
+## Loaded block highlights
+
+The separate `block_highlights` grant (`CINNABAR_MOD_BLOCK_HIGHLIGHTS=1`) permits
+`render.set-block-highlights`. A retained specification names up to
+`mod_api::MAX_BLOCK_HIGHLIGHT_IDENTIFIERS` canonical block identifiers, a bounded
+camera-relative range, and linear RGBA colour. The host scans only loaded primary
+block layers, caches palettes and subchunk identities, and draws full unit cubes
+through terrain without changing world or packet state. Results share the
+`mod_api::MAX_BLOCK_HIGHLIGHTS` nearest-block budget; the earliest active mod wins.
+`none`, unload, reload, or a trap clears the overlay. Output commits only after a
+successful callback; repeated unchanged input rebuilds no geometry.
+## Fullbright
+
+The separate `fullbright` grant (`CINNABAR_MOD_FULLBRIGHT=1`) permits
+`environment.set-fullbright`. Enabling it replaces the shared world light table
+with full illumination without changing time, stored lighting or server state.
+Disabling it restores the current environment. The flag is retained after
+successful callbacks and clears on traps, unload and reload. Unchanged input
+uploads no new table; inactive world sessions suppress the override.
+
+Block highlights inspect received primary block layers even while collision
+readiness is incomplete. Missing subchunks and unloaded data remain excluded.

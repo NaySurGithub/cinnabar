@@ -94,6 +94,13 @@ Agent cross-reference index: for each file, the vanilla symbols and addresses it
 - ConnectStagePacks      ConnectStage = "packs"      // ResourcePackProgressHandler
 
 ## core/proxy/targets.go
+- remoteServerNetwork / gophertunnel AddressNetwork: MinecraftGame::joinMultiplayerWithAddress (bool false via joinRemoteServerWithAddress; ConnectionType 1/2/8) -> ClientNetworkSystem::probeTransportLayer (URL list, port 0 => 19132 0x4abc) -> TransportProber::start (3 s "TransportProber::timeout") / _tryNextUrl (GET {url}/v1/join, Method variant index 2, 2xx) -> $_0 continuation: error => _joinMultiplayerAfterTransportLayerDetermined(..., 0 RakNet), success => host replaced by URL, TransportLayer 2 (NetherNet). 26.50 adds an https-only fast path and TofuServerIdentityVerifier for http:// results.
+- HTTP signaling: ClientNetherNetConnector::connect (types 1/2/8 build HttpSignalingClient, remote id from HttpSignalingClientAnon::createRandomNetworkID), HttpSignalingClient::SendSignal (POST "{}/v1/join/{}", application/sdp, body = payload after 2nd space; response => "CONNECTRESPONSE <id> <body>", error => ESessionError 0x1a), NetherNet::HttpSignalingServer::onRequest/_handleJoin (GET /v1/join => 200 "OK" in 26.30, JSON status in 26.50; 400 "Missing SDP offer in request body").
+- No fallback after selection: NetworkSystem::onOutgoingConnectionFailed only notifies; RemoteConnectorComposite::getActiveConnector picks NetherNetConnector iff session transport == 2.
+- Transfers: WorldTransferInitiator::initiateTransferToServer builds ConnectionType 8 -> WorldTransferHandler::handleTransferToServer -> ClientInstance::startExternalNetworkWorld("transferServer"), the Play-screen external-server entry.
+- Undecodable batches are dropped, not fatal (gophertunnel ErrBatchDropped): CompressedNetworkPeer::_receivePacket returns DataStatus 2 for an unknown header byte or a zlib/snappy failure; 26.50 FUN_1404b0b50 also returns 2 when the byte is neither 0xff nor the negotiated algorithm. NetworkSystem::runEvents::$_0 (26.30) and FUN_1418a075c's loop (26.50) treat any non-zero receivePacket status as "stop this connection for the tick", with no disconnect.
+- Server trust (core/proxy/server_trust.go, gophertunnel FirstUseTrust, oreui modal::server_trust_modal): FUN_1408bf550 (probe continuation) builds TofuServerIdentityVerifier (FUN_141190820/FUN_141190a20) with a callback, capturing the probed URL (the modal's %1$s); the callback FUN_1408c07a0 trusts "https://" URLs at once and otherwise pushes ServerTrustModalScreenController (FUN_1408c0c20, modal FUN_145501670: permissions.servertrust.title/message/button.trust/button.doNotTrust). TofuServerIdentityVerifier::verify (FUN_141190bb0) gets the a=identity `assertion` (empty when absent: FUN_1418cf960 returns nullopt, so verify is false) and parses {"fingerprints","token"}, taking the key from the token's cpk; known keys hit a sorted set (FUN_1411eda10 equal_range) and move to the end of the LRU vector, persisted by FUN_141190050 as {"keys":[...]} under the static key "trusted_server_public_keys" (loader FUN_14118f120); FUN_14118f8e0 inserts and evicts past 0xc80 bytes (100 keys). Negotiator side: FUN_140e246d0 hands FUN_140e0fd40's parsed a=identity (or none) to the verifier; a false result logs "Rejecting answer from %s: application declined the server identity".
+- No Minecraft-layer AES over NetherNet: EncryptedNetworkPeer::enableEncryption returns early when the inner peer isEncrypted() (WebRTCNetworkPeer::isEncrypted returns true).
 - // the Login's multiplayer token and key as the SDP identity, as vanilla's MinecraftIdentityAssertion does.
 - // transport accepts identityless answers like vanilla's ClientNegotiator::onRemoteAnswer, while
 
@@ -794,6 +801,10 @@ Agent cross-reference index: for each file, the vanilla symbols and addresses it
 ## crates/meshing/tests/it/support/liquid_contacts.rs
 - // BlockType with Air, not its opacity. Deferred model 1 instead compares material;
 
+## crates/pack-compiler/src/animation.rs
+- /// Overlay-mask sources (grass sides) use the TextureAtlas::updateTextureAtUVs /
+- /// _buildAtlasMips byte-space box mips, as every vanilla atlas tile does.
+
 ## crates/pack-compiler/src/compiler/lily_pad_textures.rs
 - // TextureAtlas::updateTextureAtUVs multiplies RGB only.
 
@@ -1236,6 +1247,17 @@ Agent cross-reference index: for each file, the vanilla symbols and addresses it
 - Immediate motion writes only the incoming vector to StateVector velocity offsets
 - 0x18/0x20. It does not call other functions or write history, input flags, ground
 - state or rotation.
+
+## crates/client-ui/src/ui_runtime/presentation/forms/oreui/modal.rs
+- Index bundle modal `Ug` (`Ug.Overlay`, `Ug.Header` over title bar `gm`, `Ug.Content`, `Ug.Text`,
+  `Ug.Buttons`) and the modal menu `SV`/`CV`/`wV`.
+
+## crates/client-ui/src/ui_runtime/presentation/forms/oreui/widgets.rs
+- `button_face`: pressable `sf`/`bf`/`hf`; menus theme `--pressableElevated*` nine-slices.
+- `menu_item`: dropdown item `bV` (classes `gV`) in `MV`; check icon `Fp`.
+
+## crates/client-ui/src/ui_runtime/presentation/forms/oreui/theme.rs
+- Role table: theme `pD` colour roles over the palette constants defined beside `Zc`.
 
 ## docs/evidence/desktop-video-settings.md
 - `GuiData::GUI_SCALE_VALUES` is `[1, 2, 3, 4, 5, 6, 7, 8]`. Desktop minimum
@@ -2174,3 +2196,241 @@ Agent cross-reference index: for each file, the vanilla symbols and addresses it
 
 ## crates/sim/src/simulator/water.rs
 - `sample_liquid_submersion`: `ActorMobilityUtils::isUnderLiquid` with MaterialType Any.
+
+
+## Camera packet family and aim-assist runtime
+
+
+Root reference corpus: ~/coding/go/lunar/refs/mcsrc-1.26.50/reference/26.30/src
+Current corpus: ~/coding/go/lunar/refs/mcsrc-1.26.50/current/1.26.50.26/src
+
+- camera/server_view/runtime.rs defaults/offsets/facing: reference by-owner/c/CameraInstructionSystemUtil.cpp _tick 3940..4360; current __unmapped/07.cpp 229990..230255 independently corroborates same field presence, entity-X negation and default/remove reset rules. Facing thresholds current/source constants: reference 0x10d972260 =0.0001 squared distance, 0x10d972268 =0.01 horizontal distance.
+- Preset values and attachment pivots: reference by-owner/c/CameraPreset.cpp and CameraPresets.cpp; CameraAttachSystemUtil::_setPivotPoint applies yaw-relative entity offset; CameraOffsetComponent active/default fields +0..+0x10 and +0x38..+0x48.
+- Packet ordering: by-owner/c/CameraPacketUtils.cpp handleInstructionPacket 30..2400: emitted event categories set line537, target829, remove-target1015, clear1172, fade1357, FOV1565, spline1876, attach2142, detach2314.
+- FOV: CameraInstructionSystemUtil.cpp 5630..5670; data reads0x10d9b2f9c=30deg,0x10dcc6bb0=110deg,0x10e47ad84=110deg radians.
+- Legacy camera: by-owner/c/ClientNetworkHandler.cpp CameraPacket handler14616? actual header14816 then body14817..15035; education guard, uniqueIDs,-1 sentinel, camera item onUse, delayed50ms tripod path. It is photography not view switching.
+- camera/easing.rs: Lens function reads easeSpring0x10d822480, mce::Math::easeInExpo0x10d822970, mce::Math::easeInOutElastic0x10d823120; selectors32; spring native sin LUT and phase ((2.5*t^3+0.2)*PI*t), damping(1-t)^2.2, envelope1+1.2*(1-t); elastic period0.3 even inout; expo no endpoint specialcase. sim/math minecraft_sin/cos is existing 65536 lookup implementation now exported for camera reuse.
+- camera/server_view/fade.rs: reference by-owner/c/CameraFadeAnimation.cpp addFade/addKeyframe/evaluate; DEFAULT_FADE_VALUES from0x... data lookup done in earlier session: [1,.5,1]. Current __recovered/CameraFadeAnimation.cpp FUN_1471f9970 actually addKeyframe (recovered name evaluate is misleading), corroborates overlap envelope and1e-4 keyframe tolerance.
+- camera/server_view/spline.rs: reference CameraSplineUtils.cpp catmullrom0x10c313c50 pointcount-1<3 rejects; linear builder pointcount-1<2 rejects; CatmullRom endpoint half-tangents and normalized edge-distance knots. CameraInstructionSystemUtil::_applySplineFromApi0x10c3409a0, _applySplineFromJson0x10c341e40, curves typebyte0/1; names case insensitive catmullrom/linear. CameraSplineSystem::calculateCameraAnimation0x10c353f80 increases elapsed before strict-duration check, source-keyframe ease, independent tracks; applyCameraAnimation0x10c354890 rawEuler quaternion initial interpretation superseded by current direct YXZ formula (all positive degree-to-radian conversion in _applySplineFromApi). Contrasted by-owner/s/StationaryCameraSystem.cpp _tickSpecificPreset0x10c35c210 lines65..68 explicitly negate pitch and180−yaw forordinaryset; setupCameraAnimation0x10c354d10 initializes tracks. Current __unmapped/07.cpp: inline apply FUN_147163c30, named apply FUN_147164750, Catmull builder FUN_1471fd040, linear builder FUN_1471fd660, calculation FUN_1471756a0, apply FUN_1471760e0 and setup FUN_1471767f0 independently mapped. Apply explicit quaternion factors are Y*X*Z. Current stationary functions FUN_147179450/FUN_147179c90 write default/instruction pose every frame, then spline overwrites while alive; duration crossing removes animation data. Instruction and spline views lack ActiveCamera filters, so inactive stationary cameras keep advancing.
+- camera/shake.rs: reference by-owner/c/CameraShakeSystem.cpp _tickComponent0x1058a38d0 lines1..253 queues,sumcap4,decay then maxfloor,expire aftereval,componentremove when bothqueuesempty. Constructor entt::basic_storage<CameraShakeComponent>::emplace_element<>0x1035b1850 initializes +0x24 decay float1.0. Current __recovered/CameraShakeComponent.cpp queueShakeEvent0x142718f00 verifies strictly-positive add semantics; function recovered as getShakeIntensity0x142718ca0 is actual vector sampler(time*param4,param5)*param6*param4*intensity. Current caller FUN_147175190 passes support fields8,0,4 respectively; support metadata FUN_14ea58f40/FUN_14ea59050/FUN_14ea59120/FUN_14ea591f0 registers frequency/amplitude/noise_multiplier; amplitude setter FUN_14ea6d650 converts degrees→radians and getter FUN_14ea6d840 uses57.295776 confirmed data14ffd5070. Thus sample(elapsed*4,10)*radians(5)*4*intensity. Current apply subtracts sampleX/Y from YXZ Euler radians and resets roll.
+- camera/shake/noise.rs: current __unmapped/0a.cpp FUN_14a772a80 at1312912 (2D SimplexNoise::_getValue), standard12 projected gradients, skew/unskew, fastfloor<=0 decrement, fourth attenuation,70scale; reference by-owner/s/SimplexNoise.cpp; CameraShakeComponent::initialize creates3 independently shuffled permutations using sharedRandom; local implementation permits independent nondeterministic seeds with equivalent shuffle distribution.
+- Native camera definitions: /Users/hashim/Coding/Go/Lunar/minecraft-apk/split_install_pack.apk entries assets/assets/resource_packs/vanilla/cameras/{first_person,third_person,third_person_front,free,follow_orbit,fixed_boom}.json; copied OUTSIDE git /tmp/camera-native-defs.txt. All shake freq10/amp5/noise4. Onlyfree stationary. Allothers camera_offset. Follow/fixed radius10,starting_rot45/45. Third radius4. Explicit starting rotation, selected-only inheritance opt-in and suppressed starting state are covered by the camera regressions. Pack manifest is adjacent1.26.31.1, not pinned1.26.50. Current argument/formula references remain independently pinned.
+
+- Target center-offset yaw rotation: reference CameraInstructionSystemUtil::_applyTarget lines316..324 copies offset unchanged; CameraTargetSystem::doDefaultTarget0x10c357200 lines160..210 rotates XZ using native sine lookup x*cos−z*sin,z*cos+x*sin, then adds actorposition. Native actor-location default/attachment interpolation remains a separate rig fidelity limitation.
+
+- Clear resets FOV: current __unmapped/07.cpp231504..231622 constructs a clear FOV instruction then FUN_147163930 for all cameras before releasing active state; old CameraInstructionSystemUtil::_tick5964..6080 removes customFOV.
+- Target defaults current FUN_147da1f40 (__unmapped/07.cpp2105564): zero24-byte settings then50.0f@8. Thus snapfalse,continuefalse,speed0,maxdistance50; free pack supplies0..360/0..180limits. Current registry FUN_140a93e80 directly copies options. Current initial target FUN_14716f830 corroborates yawcenter initial−.5*(hmax−hmin), verticalends−90. Old targetapply0x10c340140 creates positive-speed component and halfwidth. CameraTargetSystem::doDefaultTarget0x10c357200 applies1024hardrelease,distance50/outofangle range,actor removal; CameraTargetRotationSystem::targetWithRotationSpeed0x10c355120 and resetTargetCameraWithNoRotationSpeed0x10c3553e0 define snap/continue/rotateTowards.
+- Follow/fixed input/pivot: CameraAttachSystem::_handleLookInput0x10c316a00 yawwrapandclamps; fixed defaultpivot0x10c3162a0 adds90tofixedyaw. Current registry yaw limit validation FUN_140a93e80 constants DAT14ffab65c=-PI/DAT14feff2c0=PI, degrees DAT14ffab66c. Native namedpreset rejects radius,yaw,starting changes.
+- Starting flag current registry __unmapped/00.cpp2004374..2004789 copies selected apply_inherited flag@0x120 and optionalstarting@0x124/12c without merging into ancestor loop, then adds IgnoreStarting through FUN_140ac1740 if both absent/false. Current orbit constructor FUN_14097aeb0 zeros yaw/polar34/38, definition copiesonly<=21thenradius24/30; remainingactivation initialstate unresolved.
+- Collision CameraAvoidanceSystem::_tick0x10c31cea0 (oldreference)8raycorners; constants10d9fdc10/10d9e1f90=.1 confirmed. Nearclip CameraDefinition currentctorFUN_147d820a0=[80f,.025f,2500f], currentdefinitionadapterFUN_1409762c0 writesnear54, old0x009e2db0 writesnear4c usedbyoldcollision. Adjacentpack distance_constraint_min=.25. Currentcollisionbody corroboration pending.
+- Player effects getter current FUN_140a93e80 optionaltruecallsFUN_14098a860 whichget_or_emplace<PlayerStateAffectsRenderingComponent>; false cannotremoveintrinsicbasecomponent. Inheritance fieldsmergednearestfirst beforeapply, so explicitfalsecanblockancestortrue onfreebase. Listener optional1addsPlayerAudioListenerComponent, defaultcamera.
+- Current collision corroborated: source_search CameraAvoidanceSystem→adapter FUN_147275a30 callback FUN_1472061e0 (__unmapped/07.cpp332420). Same8corner loop, nearplane param2+54, minavoidanceparam3+34, desired-radius comparison. Current cornerconstant DAT14ffab644=.1f. Native extra azimuth probe array empty in available pack witness; no smoothing spring configured.
+
+## Starting rotation activation and suppression
+- Current `FUN_1471b22d0` (`__unmapped/07.cpp`, around278404) gets player view vector via `FUN_14022d030`, calls `FUN_1471b1a60`, and copies the resulting orbit angles. This corroborates reference `UpdatePlayerFromCameraSystem::handleCameraActivation` (`0x007feb40`) and `_updateFromPlayer` (`0x007fe590`): follow-orbit activation starts from player look.
+- Current registry constructor (`__unmapped/00.cpp`, around2004374–2004789) saves selected preset apply-inherited flag+0x120 and optional starting rotation+0x124/presence+0x12c before the inheritance walk; neither field participates in inheritance. Custom presets with neither flag nor explicit rotation call `FUN_140ac1740` to add IgnoreStartingValues.
+- Current fixed-boom orientation `FUN_14726c5b0` (`__unmapped/07.cpp`, around412056) get-or-emplace initializes its two angle floats to zero. Native first-use starting values remain45/45 from the adjacent pack witness; pinned pack confirmation remains open.
+
+## Inactive targets, range and player-state consumers
+- Current target instruction dispatch `FUN_147163150` is called for every view entry with StationaryCamera, target settings and instruction components (`__unmapped/07.cpp`, around231172/231240/231299). Target tick adapter around269289 has `Filter<StationaryCameraComponent>` without ActiveCamera. Remove-target uses the separate ActiveCamera+CameraTarget+CameraInstruction view. Runtime now retains and advances per-preset focus state; explicit removal addresses the active state only.
+- Current registry `FUN_140a93e80` (`__unmapped/00.cpp`, around2001470) copies optional preset+0x90/presence+0x94 into CameraTargetSettings+8. It follows continue-targeting+0x8c/+0x8d and precedes view offset+0x98/+0x9c/+0xa0, matching packet field order. The vendor calls this `block_listening_radius`; its consumer is the target range (default50), not the audio listener.
+- Current `FUN_140a9c980` is the PlayerStateAffectsRendering capability query. Current fog setup (`__unmapped/04.cpp`, around2430336) gates blindness/darkness on it; current base lightmap builder `FUN_14707f...` (`__unmapped/07.cpp`, around83067) gates night vision/conduit inputs. Compare reference `CameraTraits::usesPlayerState`0x02058980, `LevelRendererPlayer::setupFog`, and `BaseLightTextureImageBuilder`. Nausea/portal projection is not in these capability consumers.
+- Current lightmap/fog rendering now consumes a filtered copy of VisionEffects so suppressed player effects resume their current underlying strength immediately when selecting a camera that supports them. Lava fire-resistance fog remains an atmosphere-owner limitation.
+- Experimental resource preset witness `behavior_packs/experimental_creator_cameras/cameras/presets/control_scheme_camera.json` in local pocketmine bds-data declares `inherit_from=minecraft:follow_orbit` and `control_scheme=camera_relative`; this is a data preset, not an additional native rig. Version of this pack witness has not been independently pinned.
+
+## Native restrictions and portal capability
+- Current `FUN_140a93e80` (`__unmapped/00.cpp`, around2001574/2001581/2001611) rejects starting rotation, yaw limits and radius when the selected name matches the native list. Runtime suppresses those values based on selected name; custom inherited camera names retain them.
+- Adjacent shipped camera definitions put `minecraft:camera_portal_distortion` on first_person, third_person, third_person_front, fixed_boom and follow_orbit, but not free. The runtime now gates projection distortion independently of PlayerStateAffectsRendering; an integration regression proves free+player_effects=true stays undistorted and clear restores distortion. Exact-version pack component witness remains open.
+- Current boom-definition factory `FUN_147da52f0` (`__unmapped/07.cpp`, around2108055) zero-initializes all16 bytes. Thus its10/45/45 native values are pack values, not constructor constants; constructor evidence does not close the pinned-pack gap.
+- Pocketmine bds-data directory has `bedrock_server-1.26.32.2` and no resource camera entity definitions. Its experimental control-scheme preset is an adjacent witness, not pinned1.26.50 evidence.
+- Cohesive source owners after root extraction: `camera/settings.rs` retains settings authority; `camera/controls.rs` retains device/freelook/automation control; `camera/rig.rs` owns preset placement and eight-corner collision. Public camera exports unchanged.
+
+## Gameplay FOV capability
+- Current capability query `FUN_140a9b4f0` tests GameplayAffectsFovComponent; current CameraAPI call around `__unmapped/07.cpp:274969` switches between the no-gameplay FOV and gameplay FOV getter. Reference `CameraAPI::tryGetFOV`0x007f8220 and `LevelRendererPlayer::getFovWithoutGameplay`0x043a8bb0 identify the latter path as the user's FOV option, not the camera definition's constructor value.
+- Free camera definition omits GameplayAffectsFovComponent, independent of player-effects setting. Runtime now masks the gameplay multiplier while preserving its state, with actual projection regression. General gameplay FOV magnitude approximations predate this task and remain explicitly provisional in camera/fov.rs.
+
+- Current clear branch (`__unmapped/07.cpp`, around231599) calls `FUN_14716acb0(param6)` before `FUN_14716a6e0(param5)`, identical to explicit remove-target and detach branches around231100. The target helper iterates the ActiveCamera+Target+Instruction view and calls `FUN_147163070`, preserving the last target rotation in the instruction. Therefore clear removes active focus, while inactive focuses persist. Regression covers retargeting after clear not changing the released preset.
+
+Local reference root: /Users/hashim/Coding/Go/Lunar/refs/mcsrc-1.26.50/reference/26.30/src
+Current source root: /Users/hashim/Coding/Go/Lunar/refs/mcsrc-1.26.50/current/1.26.50.26/src
+Only add provenance to docs/agents/vanilla-refs-map.md.
+
+- Registry and direct command handler: by-owner/c/ClientNetworkHandler.cpp CameraAimAssistPacket handler around14503; CameraAimAssistPresetsPacket around15191; CameraAimAssistActorPriorityPacket around15270.
+- Client actor triple map: by-owner/c/CameraAimAssistActorPriorityClientComponent.cpp RVA0x04ecbd20, upsert semantics and no clearing unrelated records.
+- Category: by-owner/c/CameraAimAssistUpdateCategorySystem.cpp RVA0x0230b790, odd tick, empty hand vs item/default category, liquid item list, GameMode::getPickRange(InputMode) virtual+0x58 on player+0x9e8, including touch input2 to controller3 remap when touch option is enabled; return cachedData[0] is squared reach check in result creation.
+- Actor metadata triple usage/exclusion and eligibility: by-owner/c/CameraAimAssistFetchValidEntityTargetSystem.cpp RVA0x02305b30. Native requires mob/boat/minecart component, uses HitboxComponent/SubBBsComponent as well as AABB. Native class map and advertised custom constructor classes implemented; additional hitbox geometry still absent.
+- Frustum: by-owner/c/CameraAimAssistSystemUtil.cpp createAimAssistFrustum RVA0x0ae963e0; tangent from native SIN lookup, nearest box point and strict distance check used in fetch.
+- Occlusion/weight: by-owner/c/CameraAimAssistFilterObstructedEntitiesSystem.cpp RVA0x02306580. Distance mode internal0 includes actor-on-actor box occlusion; angle internal1 does not. Weight clamp constants read_data reference0x10d9f4ff4=-.01,0x10daa8ce8=1.1,0x10d9e1f90=.1.
+- Current block-side score independent corroboration by parent: current __unmapped/06.cpp FUN_1467b45c0 RVA0x67b45c0 adjacent RTTI FUN_1467b46f0. read_data artifact6 at DAT15027ee94=-.8726646304130554,DAT1500f2ce8=-.6981316804885864,DAT14feff2b4=1.5707963705062866. Angle cubic and squared weighted distance; strict< ties.
+- Reference block-side scorer: support/std/__func--bc8d9908b204/c.cpp RVA0x02357350. Entity scorer support/std/__dispatcher--3e41396f78de/{1,6}.cpp RVA0x02357df0/0x02356fc0 decomp drops FP return; entity score parity needs additional corroboration.
+- Block sampling: by-owner/c/CameraAimAssistCaptureBlockTargetPositionSystem.cpp RVA0x022ffa50. Odd clears cache, upper half; even subtracts ceil(halfheight) row offset and adds lower half. Columns2ceil(halfwidth),rowsceil(halfheight), union unique results.
+- Position/look cache: by-owner/c/CameraAimAssistCachePositionDataSystemImpl.cpp RVA0x022fe210 odd ticks use local actor attach eye and actor rotation; no rendered camera transform.
+- Result schedule/faces: by-owner/c/CameraAimAssistCreateResultSystem.cpp RVA0x023015a0 odd returns prior result except removed actor, even constructs/scans face scores and selects best. Face visibility offset .01.
+- Interaction direction: by-owner/s/StrictTickingSystemFunctionAdapter/e.cpp CameraAimAssistUpdateInteractDirectionSystem singleTick RVA0x02395e10 computes targetpoint-cached-eye yaw/pitch; otherwise raw actor rotation.
+- Action rotation: by-owner/c/ClientGameModeMessenger--a824a01485dc.cpp tryRotateTowardsAimAssist RVA0x04824400 writes CameraAimAssistRotationOverrideComponent and actor rotation. CameraAimAssistSystemUtil::shouldRotatePlayerOnProjectile ref RVA0x0ae99340 current __unmapped/02.cpp FUN_142d9c860 RVA0x02d9c860 corroborates matrix (0locked-relative,1camera-relative,2camera-relative-strafe,3player-relative,4player-relative-strafe; free/fixed alltrue; follow0false1true3true; unmapped false).
+- Action caller confirmation: reference client messenger vtable0x110cb3b50 slot0x60 points0x104824400; read_data confirmed. by-owner/g/GameMode.cpp _attack RVA0x0a0bba20 line638 and releaseUsingItem RVA0x0a0c14a0 line4371 both call messenger slot0x60.
+- Activation: by-owner/c/CameraPresetAimAssistActivationSystem.cpp handleCameraActivation RVA0x022fddd0: camera perspective0 unsupported, absent aim option clears, supported+aim callsset(true). CameraAimAssistSystemUtil::isAimAssistSupportedCameraType RVA0x0ae99280;setAimAssistFromClient RVA0x0ae98070 verifies aim registry ID (default minecraft:aim_assist_default), sends selected CAMERA preset name;clearAimAssistFromClient RVA0x0ae991b0 sends empty name,cleartrue,supportbool. ClientCameraAimAssistPacketPayload ctor RVA0x05dba840 clips raw camera name64bytes, storesclearfalse/supportbool.
+- Clear packet defaults only: read_data ref0x10dec4ea0=>[30,45], clearAimAssistForServerPlayer RVA0x0ae98df0? line2666 distance5.7. Not used as invented set defaults.
+
+
+- Block priorities: by-owner/p/PriorityCategory--30ce72cbb0e2.cpp getBlockPriority RVA0xae95760 maximum explicit/tag, absent baseline -1; PriorityPresetExclusionData--221daf0e3956.cpp RVA0xae94ef0 exclusions any exact/tag. BlockType tags +0x170/+0x178; addTag RVA0xac91480. Native constructors TrapDoorBlock/DoorBlock/FenceGateBlock/CropBlock/SweetBerryBushBlock/PitcherCropBlock, custom BlockDefinitionGroup.cpp6682.
+- Frustum input axis order confirmed sourcecreateAimAssistFrustum: param3.y=>halfwidth(+0x3c),param3.x=>halfheight(+0x40). right basisY cross forward,up forward cross right.
+
+- Liquid outline: LiquidBlock ctor0xab16690 vtable0x110fcd7b0; read_data +0x40=>BlockType::getOutline0x10ac8d390, +0x50=>getVisualShape0x10ac8d530 returningthis+0x188. Baseconstructor initializesBLOCK_SHAPE; initializer__GLOBAL__sub_I_unity_20_cxx.cxx0x10cea7310 setsmin0max1; read_data0x10d91db40=[1,1],lastmax0x3f800000. LiquidBlockBase::getCollisionShape0xab1b530 iszero-volume and is not outline.
+- Aim ray traversal: CameraAimAssistSystemUtil::blockHitDetect0xae95a00 initialprimary-outlineoutside-only, subsequentstepscube whenparam5false,outlinewhenparam5true,liquidextra-first,depthnonzerountargetableonlyprimaryliquid,strictaxisorderingZ/Y/X,integerstepbudget. Acceptance callbacks support/std/__func--bc8d9908b204/8.cpp0xaee4740 rejectair/liquids vs /d.cpp0xaee45e0 rejectaironly.
+- Liquid actor visibility end offset: FilterObstructedEntitiesSystem0x02306580 +0.2Y whenliquids; read_data0x10db66110=[0,.2],0x10d91daf0=0.
+
+- Default control schemes: ControlSchemeUtils::getDefaultControlScheme0xafb0ce0 firstallowedunlessinheritedvalidexplicit. Globalinitializer0xafef? Lensentryqueried0x10afefd13 builds free=[0,4,3,1,2],follow_orbit=[0,3,1],fixed_boom=[0,1,2,4,3],first/third/front=[0].
+- Native actor eligibility identifier map: ENTITY_TYPE_MAP0x1113c5128 initializedby0x109e037f0 (__cxx_global_var_init.205), paired MOV string bytes/ActorTypenumbers obtainedfunction_inspect. Stringpairctor0x109c8acb0; allnativeclassnames decoded exactly fromimmediatesand20literalvectors. Mobmask0x100,minecartmask0x80000,BoatRideable0x5a,ChestBoatRideable0xda. Constructorclasscorroboration by-owner/v/VanillaActorRegistryAnon--6a61ceb1fa90.cpp0xa23c6a0. Unknowncustom identifiers excluded/counted pendingruntimeclassdata.
+
+- Custom constructors: ActorInfo::load0x9c52940 readsid/bid (ridnotclass). ClientNetworkHandlerAvailableActorIdentifiers0x3551620 feeds ActorFactory::digestIdentifierListFromServer0x9a05b30, insertabsentonly. ActorFactory::fillFactoryData0x9a01750 initializescreateActorFromClass<Mob>,type0x100; knownnativebid overridesconstructor. ActorDefinitionIdentifier::_extractIdentifier0x99fe320 defaultnamespaceminecraft and strips<spawnevent> (lines755–855). Protocolregistry normalizes idlist/id/bid; clientworld retainscustomclasssessionmap throughdimensionchanges. JolyneGameData queuesoptionalentitydefinitions forplay sojoinregistry usesnormalhandler.
+
+- Highlight current corroboration: current1.26.50.26 __unmapped/04.cpp FUN_144edad40 lines2492215–2492535 (result+0x11d nonzero renders; debugcVar19 only constructs/disposesstrings). Description ctor FUN_146878a00; framebuilderinsert FUN_144e3eeb0. RecoveredCameraAimAssistRenderer0x147bf7b90 texturekeys match pinnedinstalledpack. Currentgeometry __unmapped/00.cpp FUN_140a9df40(block),FUN_140a9e210(entity).
+- Highlight geometry reference CameraAimAssistGraphics0x20598a0 unitquad UV0,0 at+.5,+.5; blockmatrix0x2059bd0 rotations data0x10db283f8 6x16 floats; cardinalstrictmaxZ,-Z,X,-X fortopbottom; entity0x2059e00 quatLookAtRH(-camera_direction,camera_up). Description tintdata0x10d907ff0=[1,1,1,1]; BgfxFrameExtractor highlight0xbdc1d60 uniformsTextureOpacitydata0x10daa9090=[.5,.5,.5,.5]. The pipeline and two-pass follow-up below supersede this initial single-pass observation.
+- Current block matrices independently confirmed read_data artifact6 address0x150079fe0,96f32 identical reference6xmat4. FUN_140a9df40 preserves strictdominantaxis tie order. Current release callbackFUN_144edad40 debugbranch only format/dispose; no drawsubmission forlabels.
+
+- Spectator eligibility: reference CameraAimAssistFetchValidEntityTargetSystem0x2305b30 player path actor+0x251(dead) or vtable+0x128 canInteractWithOtherEntitiesInGame; Player vtable0x110f621c0+0x128=0x10a1e56c0 confirmed read_data. Player::canInteractWithOtherEntitiesInGame0xa1e56c0 returns!Actor::isSpectator; Actor::isSpectator0x9946040 compares explicit6 or default5+world6. Legacy3/4 remain distinct for admission; existing HUD capability mapping preserved. Player branch bypasses category-zero -2 non-player sentinel.
+- Tick eye integration: CameraAimAssistCachePositionDataSystemImpl0x22fe210 uses GetAttachPositionUtility location3 and ActorRotationComponent. GetAttachPositionUtility0x6485740, _getBaseAttachPoint0x6485400 reads local offsets. Retained simulation sample/control history supplies tick positions, eye heights, raw player look without render interpolation. Missing historical remote geometry remains an owner limit.
+- Cached interaction/action direction: StrictTickingSystemFunctionAdapter/e.cpp0x2395e10 calculates resultpoint(+0x110)-cachedposition on every tick and writes pitch/yaw result+0x120; ClientGameModeMessenger0x4824400 copies result+0x120 to rotation override and ActorRotationComponent. Thus odd ticks retain target identity but refresh direction from odd cached eye; even ticks reuse it. No rendered-eye recomputation.
+- Highlight pipeline current table corroboration from root: FUN14f8eecc0 DAT1504abe88 entry2=0x06565000 sourcealpha/inversesourcealpha; FUN14cc1e1b0 DAT150402ac0 entry5=0x50 BGFX strictGreater. Reference description PassState RGBwrites7,depthwrite0,blend2; exact texture sampler default remains unproven and must stay an incomplete parity item.
+
+- Runtime update cadence: ClientNetworkHandler priority0x35497a0 onlysetEntityPriorities; presets0x3549590? sourcearound15191 invokes registryload/update. CameraAimAssistRegistryComponent load0x4ed7ac0 destroys onlypreset/categorymaps thenupdate0x4ed0650. Noentitytick/cachereset. FilterObstructedEntities0x2306580 checks even parity thenreads currentlocalmetadata136137 andtarget138/tabletoassignweight.
+
+- Even final owner validation: CameraAimAssistCreateResultSystem0x23015a0 sourcearound1170 callsViewT<ActorOwnerComponent>::tryGet beforeconstructingactorresult; missingwinningactor clearsresult ratherthanselectingrunnerup. ExistingHashMapactoriterationdoesnotreproducenativeECSorder, soequal-scoreactororderingremainsunproven.
+
+- Highlight two-pass correction: reference support/std/__dispatcher--3e41396f78de/c.cpp BgfxFrameExtractor highlight0xbdc1d60 firstpass18482–18703 setsdepthcomparison5 Greater,TextureOpacityDAT10daa9090=[.5;4]; secondpass18790–190xx depthcomparison2 Less,TextureOpacityDAT10d907ff0=[1;4]. Bothblend2,RGB7,noDepthWrite,bias(description8c-32)=-33,slope0,clamp0. Firstscissortrue,secondfalse. Existing conventionalnativeZ→BevyreverseZ mapping swapscomparisons andbias sign.
+- Bias chain proof: refMeshRendererSystem::RenderItem0xc0699c0 lines76–77 GPUState4c/50→EncoderImpla8/ac; EncoderImpl::submit0xc10fdf0 bgfx.cpp1244 Encoder+a8→Draw+68 (drawbaseframe+bc700). Metalrenderer_mtl.mm5184 dispatches setDepthBias:slopeScale:clamp: fromDraw68/6c/70. Current1.26.50.26 FUN14ef6d4d0 __unmapped/0e.cpp2778042–43 hasidenticalGPU→Encoder copy, independentlyprovingcurrenttailtype. CurrentblocktransformFUN140a9df40+callbackFUN144edad40 passresultpointunchangedwithoutgeometryepsilon. Currenttwo-passinsertionbody notindexed; refbehavior transferred withcurrentGPU-state/geometry corroboration.
+
+- Protocol spline wire layout: current artifact6 CameraSplineInstruction schema
+  binding FUN_1471fa130; plain curveType type schema doSave0x723f5f0/doLoad0x723d8b0;
+  identifier binding0x724f7b0 and load boolean binding0x724ff40. Registry easing is
+  optional, inline easing is direct. Local-server fixtures encode those layouts.
+- Protocol custom block tags: current FUN_142e87ee0 (`BlockDefinitionGroup::digestServerBlockProperties`)
+  reads root `blockTags` list at current __unmapped/02.cpp2462728 and2462987;
+  strings are retained, other tag kinds are empty. Constructor tag additions in
+  reference DoorBlock/FenceGateBlock/TrapDoorBlock use VanillaBlockTags::OneWayCollidable;
+  current catalog string0x106527a8 confirms `one_way_collidable`.
+- `sim/world/raycast/camera.rs` shares the existing DDA/corner ordering and shape
+  intersection with the authoritative interaction ray; the camera result omits
+  provenance collections. Its behavior and allocation comparisons are regression tested.
+
+- Audio listener: reference CameraTraits::isPlayerAudioListener0x020582b0 and CameraRegistry listener presence/value1 gate; current FUN_140a93e80 tests preset offsets0xcd/0xcc and creates PlayerAudioListenerComponent0xe66c48f7. Current predicate FUN_140a9c160 and LevelRendererPlayer::updateListenerState counterpart FUN_144e95380 copy rendered pose when false, player eye/look when true. Shipped camera definitions have no player-listener component, so omitted defaults to camera.
+- Target defaults: current FUN_147da1f40 builds CameraTargetSettingsDefinition0x24 bytes, zeros all, writes50f at+8; free camera JSON supplies horizontal[0,360],vertical[0,180]. Current CameraRegistry counterpart FUN_140a93e80 copies the optional horizontal and vertical float pairs directly into target settings.
+- Local body visibility: current `ClientInstance::getRenderPlayerModel` FUN_146798550 (current06.cpp1385865 diagnostic) reads CameraRenderPlayerModelComponent from RenderCamera. Callback FUN_1471f5560 (07.cpp322604) copies/removes that marker using CameraBlendState +0x28. The adjacent free-camera pack definition includes camera_render_player_model and extend_player_rendering; first_person lacks the marker. Actor body publication and HUD fallback now follow camera capabilities instead of the saved perspective.
+
+## crates/render-model/src/java_animation.rs (Java Edition 1.7.10, MCP names)
+- `java_biped`: ModelBiped.setRotationAngles; `rig_bone`/`rig_from_java_model`: ModelRenderer.render under RendererLivingEntity.doRender's scale(-1,-1,1) and 0.9375 scale.
+- `first_person_item`/`first_person_arm`: ItemRenderer.renderItemInFirstPerson and RenderPlayer.renderFirstPersonArm; `draw_item`: ItemRenderer.renderItem, renderItemIn2D, RenderBlocks.renderBlockAsItem.
+- `third_person_item`: RenderPlayer.renderEquippedItems; `java_cape_angles`/`java_cape_bone`: its cape block (field_71091_bM chase, cameraYaw, distanceWalkedModified) and ModelBiped.bipedCloak; item classes from ItemSword, ItemTool, ItemHoe, ItemFishingRod, ItemCarrotOnAStick, Item.setFull3D.
+- Executed primary witness for `java_animation/reference_tests.rs` and its numeric fixtures: official 1.7.10 client jar at `https://launcher.mojang.com/v1/objects/e80d9b3bf5085002218d4be59e668bac718abbc6/client.jar`, SHA-1 `e80d9b3bf5085002218d4be59e668bac718abbc6`, version metadata `https://piston-meta.mojang.com/v1/packages/ed5d8789ed29872ea2ef1c348302b0c55e3f3468/1.7.10.json`. Scratch harness is outside git in `../java-native-reference/validation/src/{NativeHarness,SliceHarness}.java`.
+- `NativeHarness` invokes unchanged `bhm.a(FFFFFFLsa;)V` (ModelBiped.setRotationAngles) reflectively, recording original `bix` pivots/angles for standing, walking, sneaking, riding, blocking, bow use, .37 attack, wrapped look and combined sneak/riding/use states. It then invokes unchanged ModelRenderer render routines in a hidden LWJGL 2.9.1 Pbuffer. Readback/contact sheet stays outside git. Runtime: JRE 8u504, AMD Radeon RX 9060 XT, OpenGL 4.6 compatibility profile `25.10.30.02.250923`.
+- `SliceHarness` retains original arithmetic, constants, branches and MathHelper calls from `bop.a(Lblg;F)V`'s cape stack, `bly.a(F)V`'s ordinary and empty-arm stacks and `bly.a(Lsv;Ladd;I)V`'s sprite draw suffix. Snapshot holder fields/query methods replace live player/item lookups; texture binds and draw endpoints become actual GL modelview capture. No arithmetic is rewritten. Numeric `cape.json`, `hand.json` and `arm.json` are column-major GL outputs before Cinnabar frame conversion. This validates fixed-state native transforms, not full-client gameplay, textures or lighting.
+- `actor_publication/java/clock_tests.rs` records the actual FSTORE values in the same original `bly.a(F)V` slice for 16 bow and four consumption clock states. Bow uses the unchanged 72000-duration subtraction; consumption uses integer itemInUseCount, then float subtraction of partialTicks and addition of 1. Instrumentation observes the result without rewriting those arithmetic instructions. Private `validation/out/bow-clock.json` records the float bits; no primary artifact or harness is committed.
+
+## crates/client-world/src/actor_animation/java.rs (Java Edition 1.7.10)
+- Limb swing: EntityLivingBase.moveEntityWithHeading tail and EntityOtherPlayerMP.onUpdate; hurt flail: handleHealthUpdate(2).
+- Cape chase: EntityPlayer.onUpdate tail (field_71094_bP/field_71095_bQ/field_71085_bR); bob: EntityOtherPlayerMP.onLivingUpdate and EntityPlayer.onLivingUpdate's grounded/live target; mounted reset: EntityPlayer.updateRidden. Walk distance cast order: Entity.moveEntity. Its walking trigger is disabled by EntityPlayer.canTriggerWalking while PlayerCapabilities.isFlying, freezing walked phase without stopping chasing coordinates. The local predicted flight observation enters through client-presentation/actor_feed.rs, LocalPlayerFeed and ActorTickContext.
+- Swing: EntityLivingBase.updateArmSwingProgress and swingItem. Walk accumulation and cast order: Entity.moveEntity, with EntityPlayer.canTriggerWalking.
+- Body yaw: EntityLivingBase.onUpdate and func_110146_f; equip: ItemRenderer.updateEquippedItem with Minecraft.rightClickMouse's resetEquippedProgress2.
+
+## crates/client-presentation/src/actor_publication/java/mounted.rs (Java Edition 1.7.10)
+- RendererLivingEntity.doRender's EntityLivingBase ridingEntity branch interpolates the mount's renderYawOffset, wraps and clamps head lag to ±85°, and pulls the displayed body by a fifth beyond 50°. RenderPlayer.renderEquippedItems cape code independently reads the player's original renderYawOffset.
+- Fixed body/head/pitch/relative-angle outputs in java/fixtures/mounted.json were executed from the official RendererLivingEntity bytecode with field owners rebound to fixed snapshots; arithmetic and branches remained unchanged. ActorSnapshot's mount species predicate intentionally recognizes only players and known built-in rideable living species, rather than inferring EntityLivingBase from optional health attributes.
+
+## crates/client-presentation/src/camera/java.rs (Java Edition 1.7.10)
+- EntityRenderer.setupViewBobbing and hurtCameraEffect; EntityPlayer.onLivingUpdate cameraYaw/cameraPitch (health gates and float/double cast order); EntityPlayer.updateRidden; Entity.moveEntity walked-distance cast order; EntityPlayerSP renderArmPitch/renderArmYaw.
+- `camera/java/reference_tests.rs` numeric fixtures execute the same primary jar's `blt.g(F)V` bob, `blt.f(F)V` live hurt stack with zero unavailable attack direction, and `bly.a(F)V` arm sway slice through `SliceHarness`. Only snapshot queries and renderer endpoints are substituted; actual OpenGL stacks are captured. Idle/walking/airborne bob, middle/end hurt and positive/negative hand sway states are covered.
+- Mounted yaw fixtures in `actor_publication/java/fixtures` execute the original `boh.a(Lsv;DDDFF)V` body/head interpolation and living-mount clamp block, including its unchanged private interpolation helper bytecode and `qh.g(F)F` wrap. Recorded cases exercise wrapped interpolation and both ±85° clamp extremes (resulting ±68° head/body offset).
+- Java camera sneak height: EntityPlayerSP.onLivingUpdate yOffset2 and Entity.moveEntity decay; death: EntityRenderer.hurtCameraEffect and RendererLivingEntity.rotateCorpse.
+
+## crates/render/src/hand_rig.wgsl and hand_rig_render.rs (Java Edition 1.7.10)
+- ItemRenderer.renderItemInFirstPerson calls RenderHelper.enableStandardItemLighting after pitch/yaw rotation, before arm sway. RenderHelper uses normalized (0.2F,1,-0.7F) and (-0.2F,1,0.7F), diffuse 0.6, global ambient 0.4, zero specular, and GL_FLAT. ItemRenderer enables GL_RESCALE_NORMAL before held-item and empty-arm drawing. The first-person pass retains the world lightmap multiplied into gamma RGB.
+- Primary source jar witness is the official 1.7.10 client indexed above; local inspection paths are scratchpad/je1710/src/net/minecraft/client/renderer/{ItemRenderer,RenderHelper}.java. No source files or assets are committed.
+- OpenGL 2.1 specification §2.11.3 specifies inverse-transpose normal transformation and RESCALE_NORMAL factor 1/sqrt(m31²+m32²+m33²), where mij are the modelview inverse: https://registry.khronos.org/OpenGL/specs/gl/glspec21.pdf . The raster-depth normal maps that native Z row into the attachable rig frame before shader rescaling.
+## Worn elytra rendering
+
+- `crates/pack-compiler/src/entity/legacy_block_geometry.rs`: the pinned pack's
+  `models/mobs.json` owns `geometry.elytra`; `attachables/elytra.json` selects it.
+- `crates/client-presentation/src/presentation/equipment/runtime/elytra.rs`:
+  `animations/elytra.animation.json` and
+  `animation_controllers/elytra.animation_controllers.json` own wing poses,
+  descending-movement spread and shortest-path transition blending.
+- `crates/client-presentation/src/presentation/cape.rs`: humanoid additional
+  rendering's chest-gear path uses the player's cape raster for worn elytra.
+- `crates/render/src/actor/glint.rs`: ActorShaderManager foil parameters define
+  the 1375/3750-ms scroll periods, -20/80-degree rotations and RGB multiplier.
+- `crates/render/src/actor.wgsl`: independent fragment/vertex evidence from
+  `~/coding/go/lunar/minecraft-apk/split_install_pack.apk`,
+  `assets/assets/renderer/materials/ActorGlint.material.bin`; its base APK manifest
+  identifies 1.26.31.1. UV rotation uses the texture center; summed glint samples
+  are multiplied by glint color and tile light before RGB is squared and added
+  to the shaded base before fog. This is an older shader cross-check, not a
+  version-matched 1.26.50 pixel acceptance witness.
+- Current foil uniform evidence: `ActorShaderManager::setupFoilShaderParameters`
+  (`R:ActorShaderManager:1250`, `R:ActorShaderManager:1436`) and constants
+  `0x10dd0cff0`, `0x10dd0d5a0`, `0x10dd0d000`; cape-image selection:
+  `R:DataDrivenRenderer_tempComponent_HumanoidAdditionalRendering:3687`.
+- `crates/client-world/src/actor_animation/tick.rs`: controller transitions reset
+  the blend timer and replace the outgoing state with the immediately preceding
+  current state (`R:ActorAnimationControllerPlayer:912`). During a blend, both
+  state players are resampled with the current render queries; shortest-path
+  blending combines their sampled bone maps (`R:ActorAnimationControllerPlayer:1093`,
+  `R:ActorAnimationControllerPlayer:1327`). Interrupted blends therefore restart
+  from that outgoing state's clip rather than a snapshot of the previously
+  blended pose.
+- `crates/client-world/src/actor_animation/pose.rs`: shortest-path blends sample
+  each state into a fresh bone map, lerp them, then add translation/rotation and
+  multiply scale into the accumulated map (`ActorAnimationControllerPlayer::blendViaShortestPath`,
+  `R:ActorAnimationControllerPlayer:2395`); other blends apply both state players
+  onto the shared map with weights `w` and `1 - w` (`R:ActorAnimationControllerPlayer:1158`).
+  The blend timer resets on transition and accumulates each frame's delta
+  (`R:ActorAnimationControllerPlayer:1098`), so it starts at the transition's frame fraction.
+
+## Primitive shapes: protocol, state and reference rules
+
+Files: `crates/protocol/src/primitive_shapes.rs`,
+`crates/render-api/src/primitive_shapes.rs`,
+`crates/render-model/src/primitive_shapes/`, `docs/reference/primitive-shapes.md`.
+
+Current Lens function reads corroborated the older owner-organized lookup files under
+`~/coding/go/lunar/refs/mcsrc-1.26.50/reference/26.30/src/by-owner/`; the directory label alone
+was not used as version evidence.
+
+- `ClientNetworkHandler::handle(PrimitiveShapesPacket)` `0x103541c60`: client dispatch.
+- `ClientScriptPrimitiveShapesDataComponent::handlePacket` `0x1022bab10`: ordered id lookup,
+  absent-type removal, present-type creation/update, no explicit count cap.
+- `PrimitiveShapeDataPayload::constructShape` `0x1065c93e0`: kinds and creation defaults.
+- `ScriptPrimitiveShape::applyUpdatedData` `0x10918c750`: optional patches, zero lifetime,
+  negative-distance reset, dimension and actor unique id.
+- `ScriptSpherePrimitive::applyUpdatedData` `0x109191530` and
+  `ScriptCirclePrimitive::applyUpdatedData` `0x109192b50`: byte segment count.
+- `ScriptArrowPrimitive` constructor `0x109195740` and updater `0x109195af0`:
+  independent optional head and endpoint fields; `0x10d986350` f32 pair `[0.5, 1.0]` gives
+  default radius and length.
+- `ScriptTextPrimitive` constructor `0x109192c20` and updater `0x109193240`: default options,
+  text-object parsing, complete text option replacement and background clearing.
+- `ClientScriptPrimitiveShapesSystem::tick` `0x1022bc960`: dimension filtering, missing-actor
+  suppression and render-helper construction; no local lifetime decrement.
+- Server primitive system tick adapter `0x10538dc30`: monotonic elapsed-time subtraction and
+  removal at remaining lifetime `<= 0`.
+- `serialize<mce::Color>::read` `0x1066bf090`, `cerealizer<mce::Color>::bind` `0x106e63a70`:
+  ARGB channel order in the four-byte wire integer.
+- `Scripting::RenderHelper::Renderer::convertStringsToNameTags` `0x104449a80`: literal
+  backslash-n replacement, discard-empty line splitting and integer half widths.
+
+## Primitive shape rendering
+
+- `crates/render/src/primitive_shapes/mesh.rs`: current Lens `Scripting::RenderHelper::LinePrimitive::_rebuild` at `0x10443dab0`, `BoxPrimitive::_rebuild` at `0x10443d540`, `DiscPrimitive::_rebuild` at `0x10443dce0`, `AxialSpherePrimitive::_rebuild` at `0x10443df80`, `ArrowPrimitive::_rebuild` at `0x10443e290`, and `generateDiscVerts` at `0x10443ed90`.
+- `crates/render/src/primitive_shapes/pipeline.rs`: current Lens `Scripting::RenderHelper::Renderer::onEndRender` at `0x104447e40` submits line-list vertices through the `debug` material. Installed PlayCover `data/resource_packs/vanilla/materials/ui3D.material` lines 454–466 corroborate LessEqual, default depth write and no blending; the installed asset version is 1.26.51.01, not a matched 1.26.50 witness.
+- `crates/render/src/primitive_shapes/shapes.wgsl`: `BasePrimitive::getAttachedToPosition` uses interpolated riding position; `Renderer::convertStringsToNameTags` at `0x104449a80` forwards text to `BaseActorRenderer::extractRenderTextObjects` at `0x103dc03c0` and `_extractRenderTextObject` at `0x103dc0840`. `LevelNameTagRenderer::renderText` at `0x103eb9050` applies incoming scale times 1.6 times 1/60 and fixed 0.125-per-extra-line lift; data reads at `0x10d9a15a0`, `0x10db88db4`, `0x10d91dae0` confirmed these constants.
+- Local files consulted are the matching owner files under `~/coding/go/lunar/refs/mcsrc-1.26.50/reference/26.30/src/by-owner`; their catalog is labeled 26.30. Current function reads corroborate `Renderer::onEndRender` and `convertStringsToNameTags`; full material/geometry capture parity remains open.
+
+- `crates/render-model/src/primitive_shapes/state.rs`: current `ClientScriptPrimitiveShapesSystem::tick` `0x1022bc960` text quaternion is `Rz * Ry * Rx`; data at `0x10d972210` and `0x10d8ec9d8` are degree-to-radian and half-angle constants.
+- `crates/render/src/primitive_shapes/shapes.wgsl`: current `Renderer::onBeginRender` `0x104446fa0` performs strict squared-distance comparison against the optional shape range or context range. `LevelRenderer::renderLevel` `0x10436ad94` passes the range computed by `LevelRendererPlayer::recalculateRenderDistance` `0x10439a330`, already mirrored by the cloud distance helper. Vtable reads at `0x110c96290` and `0x110c96360` select `BasePrimitivePosition::getPosition` `0x10443d500`; box tick construction supplies its lower corner.
+- `crates/client-presentation/src/primitive_shapes.rs`: `BasePrimitive::getAttachedToPosition` `0x10443d390` gets interpolated riding position and subtracts `OffsetsComponent` vertical offset; existing actor-store snapshots already normalize feet positions and seat riders before interpolation.
+
+- Primitive draw ordering: `Renderer::onBeginRender` comparator in `__sort3` `0x104479810` compares signed `BasePrimitive + 0xc`; packet helper construction in `ClientScriptPrimitiveShapesSystem::tick` `0x1022bc960` initializes that priority to zero for all supported geometry. The unstable introsort does not order by kind or distance.
+
+- `crates/client-ui/src/ui_runtime/presentation/primitive_shapes.rs`: current `ScriptTextPrimitive::applyUpdatedData` `0x109193240` retains parsed `TextObjectRoot` or literal; `Renderer::onBeginRender` `0x104446fa0` resolves only when the helper dirty flag or player input/interaction mode changes. Domain dynamic-text markers preserve common-patch refresh without rebuilding literal text geometry.
+
+- Equal packet updates: current `ClientScriptPrimitiveShapesDataComponent::handlePacket` `0x1022bab10` unconditionally marks an existing present-type entry dirty after its updater, with no equality check. `generateDiscVerts` `0x10443ed90` zero-segment branch initializes both closing vertices and packed colors to zero, then appends the closing pair unconditionally.
