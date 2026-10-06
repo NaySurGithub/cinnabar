@@ -19,7 +19,8 @@ pub use mod_api::{
 pub use mod_render;
 #[cfg(feature = "execution")]
 pub use runtime::cinnabar::extension::gameplay::{
-    CameraRig as GameplayCameraRig, Mob as GameplayMob, Player as GameplayPlayer,
+    CameraRig as GameplayCameraRig, Mob as GameplayMob,
+    MovementSnapshot as GameplayMovementSnapshot, Player as GameplayPlayer,
     Snapshot as GameplaySnapshot, Vector3 as GameplayVector3,
 };
 #[cfg(feature = "execution")]
@@ -76,6 +77,8 @@ pub struct ModGrants {
     pub controls: bool,
     /// Allows bounded actor attack range and held-attack press requests.
     pub interaction: bool,
+    /// Allows local physics snapshots and ordinary one-shot jump input requests.
+    pub movement: bool,
     /// Allows the selected component's bounded companion settings file.
     pub settings: bool,
     /// Allows sandboxed post passes and bounded world primitives.
@@ -140,9 +143,27 @@ impl ModHost {
         mobs: Vec<GameplayMob>,
         controls: ControlFrame,
     ) -> Result<()> {
-        self.instance.frame(pressed, snapshot, mobs, controls)?;
+        self.frame_with_movement(pressed, snapshot, mobs, None, controls)
+    }
+
+    /// Supplies local physics state only for this callback, under movement authority.
+    pub fn frame_with_movement(
+        &mut self,
+        pressed: bool,
+        snapshot: Option<GameplaySnapshot>,
+        mobs: Vec<GameplayMob>,
+        movement: Option<GameplayMovementSnapshot>,
+        controls: ControlFrame,
+    ) -> Result<()> {
+        self.instance
+            .frame(pressed, snapshot, mobs, movement, controls)?;
         self.queue_settings();
         Ok(())
+    }
+
+    /// Consumes a successful callback's jump request once.
+    pub fn take_jump_pulse(&mut self) -> bool {
+        self.instance.take_jump_pulse()
     }
 
     /// The retained camera rig from the last successful callback.

@@ -396,3 +396,19 @@ uploads no new table; inactive world sessions suppress the override.
 
 Block highlights inspect received primary block layers even while collision
 readiness is incomplete. Missing subchunks and unloaded data remain excluded.
+
+
+## Local movement input
+
+The separate `movement` grant (`CINNABAR_MOD_MOVEMENT=1`, or `"movement": true`
+in a component registration) exposes `gameplay.read-movement` and `pulse-jump`.
+The snapshot belongs to captured gameplay and contains its session, dimension,
+simulation tick, velocity in blocks per tick, ground contact, physical held jump,
+ordinary walking eligibility and local knockback sequence. No snapshot is retained
+across callbacks. Snapshot validation rejects mismatched authority and non-finite velocity.
+
+`pulse-jump` stages a single ordinary jump input only while walking is eligible and
+physical jump is released. The request commits after a successful callback and is
+consumed once by the next physics tick. Focus loss, menus and authority changes
+revoke pending input; no velocity or movement rule is changed. Jumping remains
+subject to the simulator's ground contact and jump cooldown rules.
