@@ -35,7 +35,7 @@ fn cache() -> (RenderDevice, PipelineCache) {
     let device = RenderDevice::from(device);
     let adapter = RenderAdapter(Arc::new(WgpuWrapper::new(adapter)));
     let mut cache = PipelineCache::new(device.clone(), adapter, true);
-    cache.set_shader(Handle::<Shader>::default().id(), Shader::from_wgsl(
+    cache.set_shader(Handle::<Shader>::default().id(), crate::shader_safety::from_wgsl(
         "@vertex fn vertex() -> @builtin(position) vec4f { return vec4f(0.0); }\n@fragment fn fragment() -> @location(0) vec4f { return vec4f(1.0); }",
         "warmup-regression.wgsl"));
     (device, cache)

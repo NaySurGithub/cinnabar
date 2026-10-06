@@ -24,6 +24,7 @@ systems! {
     GpuApiCreateComputePipeline => "gpu_api_create_compute_pipeline",
     GpuApiCreateRenderPipeline => "gpu_api_create_render_pipeline",
     GpuApiPoll => "gpu_api_poll",
+    GpuApiSubmit => "gpu_api_submit",
     GpuApiWriteBuffer => "gpu_api_write_buffer",
     GpuApiWriteTexture => "gpu_api_write_texture",
 
@@ -89,6 +90,7 @@ systems! {
     BlockEntityGpuPrepareBindGroups => "block_entity_gpu_prepare_bind_groups",
     BlockEntityGpuQueueSolid => "block_entity_gpu_queue_solid",
     BlockEntityGpuQueueOverlay => "block_entity_gpu_queue_overlay",
+    BlockEntityGpuQueueOutline => "block_entity_gpu_queue_outline",
     BlockEntityGpuQueueCrack => "block_entity_gpu_queue_crack",
     BlockEntityGpuQueueAdditive => "block_entity_gpu_queue_additive",
     BlockEntityGpuQueueBlended => "block_entity_gpu_queue_blended",

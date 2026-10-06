@@ -3,6 +3,8 @@ use crate::chunk::*;
 use crate::render_work::{DeviceWork as _, QueueWork as _};
 
 #[cfg(test)]
+mod animation_clock_tests;
+#[cfg(test)]
 mod water_tint_tests;
 
 #[derive(Clone, PartialEq, Eq)]
@@ -172,6 +174,7 @@ pub(in crate::chunk) struct PreparedChunkTextureAssets {
 #[derive(Resource)]
 pub(in crate::chunk) struct ChunkGpuAnimationClock {
     pub(in crate::chunk) buffer: Buffer,
+    uploaded: ChunkAnimationClock,
 }
 
 pub(in crate::chunk) fn init_chunk_gpu_animation_clock(
@@ -183,18 +186,33 @@ pub(in crate::chunk) fn init_chunk_gpu_animation_clock(
         contents: bytemuck::bytes_of(&ChunkAnimationClock::default()),
         usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
     });
-    commands.insert_resource(ChunkGpuAnimationClock { buffer });
+    commands.insert_resource(ChunkGpuAnimationClock {
+        buffer,
+        uploaded: ChunkAnimationClock::default(),
+    });
 }
 
+/// Stages only changed clock bytes while retaining the shared texture and clock bindings.
 pub(in crate::chunk) fn prepare_chunk_animation_clock(
     clock: Res<ChunkAnimationClock>,
-    gpu_clock: Res<ChunkGpuAnimationClock>,
+    mut gpu_clock: ResMut<ChunkGpuAnimationClock>,
+    render_device: Res<RenderDevice>,
     render_queue: Res<RenderQueue>,
+    staging: Option<Res<crate::upload_staging::BufferUploadStaging>>,
 ) {
     let _render_system_span = crate::render_systems::time(
         crate::render_systems::System::ChunkGpuBindGroupsPrepareChunkAnimationClock,
     );
-    render_queue.tracked_write_buffer(&gpu_clock.buffer, 0, bytemuck::bytes_of(&*clock));
+    if gpu_clock.uploaded == *clock {
+        return;
+    }
+    crate::upload_staging::write_batch(
+        staging.as_deref(),
+        &render_device,
+        &render_queue,
+        &[(&gpu_clock.buffer, 0, bytemuck::bytes_of(&*clock))],
+    );
+    gpu_clock.uploaded = *clock;
 }
 
 type PreparedReplacement = (

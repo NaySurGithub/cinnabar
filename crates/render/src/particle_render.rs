@@ -139,6 +139,7 @@ pub struct ParticleRenderPlugin;
 
 impl Plugin for ParticleRenderPlugin {
     fn build(&self, app: &mut App) {
+        crate::upload_staging::install(app);
         crate::pipeline_warmup::register::<ParticlePipeline>(app);
         crate::lighting::install(app);
         app.init_resource::<ParticleSimulation>()
@@ -219,6 +220,7 @@ fn prepare_particle_resources(
     render_device: Res<RenderDevice>,
     render_queue: Res<RenderQueue>,
     mut gpu: ResMut<ParticleGpu>,
+    staging: Option<Res<crate::upload_staging::BufferUploadStaging>>,
 ) {
     let _render_system_span = crate::render_systems::time(
         crate::render_systems::System::ParticleRenderPrepareParticleResources,
@@ -290,11 +292,18 @@ fn prepare_particle_resources(
         gpu.bind_group = None;
     }
     if let Some(buffer) = &gpu.buffer {
-        render_queue.tracked_write_buffer(buffer, 0, bytemuck::cast_slice(&frame.blend[..]));
-        render_queue.tracked_write_buffer(
-            buffer,
-            blend as u64 * INSTANCE_BYTES,
-            bytemuck::cast_slice(&frame.add[..]),
+        crate::upload_staging::write_batch(
+            staging.as_deref(),
+            &render_device,
+            &render_queue,
+            &[
+                (buffer, 0, bytemuck::cast_slice(&frame.blend[..])),
+                (
+                    buffer,
+                    blend as u64 * INSTANCE_BYTES,
+                    bytemuck::cast_slice(&frame.add[..]),
+                ),
+            ],
         );
     }
 }

@@ -127,7 +127,7 @@ impl SegmentedVertexBuffer {
                         (len * stride) as u64,
                     );
                 }
-                queue.submit([encoder.finish()]);
+                queue.tracked_submit([encoder.finish()]);
             }
             self.buffer = Some(buffer);
         }

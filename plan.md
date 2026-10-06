@@ -5966,11 +5966,20 @@ cloud window storage avoid recurring GPU resource creation; known application
 pipelines warm before world presentation. Hidden developer mode owns the macOS
 activation policy without backend patches. Deterministic work regressions pass.
 
-The M3 hidden captures do not close the performance gate: final render median
-is lower, but startup and tail hitches remain, including upload and submission
-stalls. The roughly 22% displayed slow-frame report is not yet attributed.
-See [capture evidence](docs/evidence/render-frame-spikes.md) for all three runs,
-measured offenders, tests and unverified workloads.
+The follow-up adds bounded persistent buffer staging, incremental neutral-actor
+artwork and initial/resized UI textures, shared completion polling and timestamp
+resolution, and compact trace storage. Player skin uploads are outside this
+budget. Cancelled texture generations are discarded, and pending actor artwork
+cannot retain actors across lifetime changes. Compatible UI updates wait for a
+complete publication. Pending neutral artwork freezes the previous complete actor pose and
+skins while preserving lifetime invalidation. These reload behaviors are provisional;
+rapid catalog replacement and actor-art reload still need live qualification.
+
+The M3 hidden captures do not close the performance gate: startup and tail hitches
+remain. Disabling prewarm or system timers did not isolate the earlier two-second
+outlier. The roughly 22% displayed slow-frame report is not yet attributed. See
+[capture evidence](docs/evidence/render-frame-spikes.md) for before/after runs,
+measured offenders, deterministic checks and unverified workloads.
 ## Desktop chat web links
 
 - Requested desktop extension: recognize HTTP(S) links locally in displayed chat,

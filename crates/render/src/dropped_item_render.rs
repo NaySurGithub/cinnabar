@@ -4,7 +4,7 @@ use crate::dropped_item::{
     MAX_DROPPED_ITEM_INSTANCES, MAX_DYNAMIC_ITEM_VERTICES, MAX_ITEM_LAYERS, MAX_ITEM_SPRITE_SIDE,
     block_mesh, cube_mesh, extruded_sprite_mesh, native_dropped_sprite_mesh,
 };
-use crate::render_work::{DeviceWork as _, QueueWork as _};
+use crate::render_work::DeviceWork as _;
 use bevy::{
     asset::{AssetId, load_internal_asset, uuid_handle},
     core_pipeline::core_3d::{CORE_3D_DEPTH_FORMAT, Opaque3d, Opaque3dBatchSetKey, Opaque3dBinKey},
@@ -66,6 +66,7 @@ impl Plugin for DroppedItemRenderPlugin {
 struct Installed;
 
 fn install(app: &mut App) {
+    crate::upload_staging::install(app);
     crate::pipeline_warmup::register::<ItemPipeline>(app);
     app.init_resource::<DroppedItemScene>();
     crate::lighting::install(app);
@@ -324,6 +325,7 @@ fn prepare_items(
     device: Res<RenderDevice>,
     queue: Res<RenderQueue>,
     mut gpu: ResMut<ItemGpu>,
+    staging: Option<Res<crate::upload_staging::BufferUploadStaging>>,
 ) {
     let _render_system_span =
         crate::render_systems::time(crate::render_systems::System::DroppedItemRenderPrepareItems);
@@ -371,25 +373,31 @@ fn prepare_items(
         ],
         meta: [0, 15, 15, 0],
     });
-    queue.tracked_write_buffer(
-        &gpu.instance_buffer,
-        0,
-        bytemuck::cast_slice::<GpuItemInstance, u8>(&instances),
+    let environment = [scene.daylight, 0.0, 0.0, 0.0];
+    crate::upload_staging::write_batch(
+        staging.as_deref(),
+        &device,
+        &queue,
+        &[
+            (
+                &gpu.instance_buffer,
+                0,
+                bytemuck::cast_slice::<GpuItemInstance, u8>(&instances),
+            ),
+            (
+                &gpu.dynamic_buffer,
+                0,
+                bytemuck::cast_slice::<ItemMeshVertex, u8>(&scene.dynamic),
+            ),
+            (
+                &gpu.environment,
+                0,
+                bytemuck::cast_slice::<f32, u8>(&environment),
+            ),
+        ],
     );
     gpu.dynamic_count = scene.dynamic.len() as u32;
-    if !scene.dynamic.is_empty() {
-        queue.tracked_write_buffer(
-            &gpu.dynamic_buffer,
-            0,
-            bytemuck::cast_slice::<ItemMeshVertex, u8>(&scene.dynamic),
-        );
-    }
     gpu.draws = draws;
-    queue.tracked_write_buffer(
-        &gpu.environment,
-        0,
-        bytemuck::cast_slice::<f32, u8>(&[scene.daylight, 0.0, 0.0, 0.0]),
-    );
 }
 
 struct ItemPipelineSpecializer;

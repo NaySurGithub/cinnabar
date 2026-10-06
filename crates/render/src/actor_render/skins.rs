@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use super::*;
 use crate::actor::{ActorSkinResidency, SKIN_CLASS_SIDES};
+use wgpu::CommandEncoderDescriptor;
 
 struct GpuSkinClass {
     texture: Option<Texture>,
@@ -171,7 +172,7 @@ impl GpuSkinArrays {
         }
         if let Some(copies) = copies {
             // Staged layer writes target only layers this copy leaves untouched.
-            queue.submit([copies.finish()]);
+            queue.tracked_submit([copies.finish()]);
         }
         self.synced = Some(Arc::clone(residency));
         views_changed

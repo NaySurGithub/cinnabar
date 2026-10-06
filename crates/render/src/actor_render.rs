@@ -37,11 +37,10 @@ use bevy::{
             AddressMode, BindGroup, BindGroupEntry, BindGroupLayoutDescriptor,
             BindGroupLayoutEntry, BindingResource, BindingType, Buffer, BufferBindingType,
             BufferDescriptor, BufferId, BufferInitDescriptor, BufferSize, BufferUsages, Canonical,
-            ColorTargetState, ColorWrites, CommandEncoderDescriptor, CompareFunction,
-            DepthStencilState, Extent3d, FilterMode, FragmentState, PipelineCache, PollType,
-            RenderPipeline, RenderPipelineDescriptor, Sampler, SamplerBindingType,
-            SamplerDescriptor, ShaderStages, ShaderType, Specializer, SpecializerKey,
-            TexelCopyBufferLayout, TexelCopyTextureInfo, Texture, TextureDataOrder,
+            ColorTargetState, ColorWrites, CompareFunction, DepthStencilState, Extent3d,
+            FilterMode, FragmentState, PipelineCache, RenderPipeline, RenderPipelineDescriptor,
+            Sampler, SamplerBindingType, SamplerDescriptor, ShaderStages, ShaderType, Specializer,
+            SpecializerKey, TexelCopyBufferLayout, TexelCopyTextureInfo, Texture,
             TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType, TextureUsages,
             TextureView, TextureViewDescriptor, TextureViewDimension, Variants, VertexState,
         },
@@ -267,6 +266,19 @@ fn prepare_actor_resources(
     let artwork_valid = gpu
         .artwork
         .prepare(&frame.artwork, &render_device, &render_queue);
+    if gpu.artwork.is_pending() {
+        if !gpu.manifest.is_empty() && !same_actor_lifetimes(&gpu.manifest, &rig.manifest) {
+            gpu.instance_count = 0;
+            gpu.maximum_vertex_count = 0;
+            gpu.manifest = std::sync::Arc::from([]);
+            gpu.spans.clear();
+            gpu.instances = std::sync::Arc::from([]);
+            gpu.frame_generation = u64::MAX;
+            gate.clear();
+            tracker.clear();
+        }
+        return;
+    }
     gpu.artwork_current = artwork_valid;
     if gpu.artwork_identity != frame.artwork.identity() {
         gate.clear();
@@ -307,26 +319,7 @@ fn prepare_actor_resources(
         gpu.artwork.invalidate_bindings();
     }
     if gpu.frame_generation != rig.frame_generation {
-        let lifetime_changed = gpu.manifest.len() != rig.manifest.len()
-            || gpu
-                .manifest
-                .iter()
-                .zip(rig.manifest.iter())
-                .any(|(old, new)| {
-                    let old = old.identity;
-                    let new = new.identity;
-                    (
-                        old.session_id,
-                        old.dimension,
-                        old.runtime_id,
-                        old.spawn_revision,
-                    ) != (
-                        new.session_id,
-                        new.dimension,
-                        new.runtime_id,
-                        new.spawn_revision,
-                    )
-                });
+        let lifetime_changed = !same_actor_lifetimes(&gpu.manifest, &rig.manifest);
         if lifetime_changed {
             gate.clear();
             tracker.clear();
@@ -395,6 +388,29 @@ fn prepare_actor_resources(
         prepared_instances: gpu.instance_count,
         maximum_vertices: gpu.maximum_vertex_count,
     });
+}
+
+/// Retained artwork may reuse a pose only while every actor belongs to the same lifetime.
+fn same_actor_lifetimes(
+    old: &[crate::actor::ActorDrawManifestEntry],
+    next: &[crate::actor::ActorDrawManifestEntry],
+) -> bool {
+    old.len() == next.len()
+        && old.iter().zip(next).all(|(old, next)| {
+            let old = old.identity;
+            let next = next.identity;
+            (
+                old.session_id,
+                old.dimension,
+                old.runtime_id,
+                old.spawn_revision,
+            ) == (
+                next.session_id,
+                next.dimension,
+                next.runtime_id,
+                next.spawn_revision,
+            )
+        })
 }
 
 fn prepare_actor_bind_group(
@@ -561,7 +577,6 @@ fn prepare_actor_bind_group(
 }
 
 fn submit_actor_presented_frame(
-    render_device: Res<RenderDevice>,
     render_queue: Res<RenderQueue>,
     tracker: Res<ActorDrawTracker>,
     gate: Res<ActorPresentationGate>,
@@ -577,12 +592,6 @@ fn submit_actor_presented_frame(
             reserved: false,
             acknowledged: false,
         });
-        if let Err(error) = render_device.tracked_poll(PollType::Poll) {
-            bevy::log::warn!(
-                ?error,
-                "could not nonblockingly poll actor presentation fence"
-            );
-        }
         return;
     };
     let exact = draw.is_exact();
@@ -602,13 +611,9 @@ fn submit_actor_presented_frame(
         acknowledged: false,
     });
     let present_returned_at = std::time::Instant::now();
-    let encoder = render_device.create_command_encoder(&CommandEncoderDescriptor {
-        label: Some("actor presented-frame completion sentinel"),
-    });
-    let command_buffer = encoder.finish();
     let callback_gate = gate.clone();
     let callback_witness = witness.clone();
-    command_buffer.on_submitted_work_done(move || {
+    render_queue.tracked_on_submitted_work_done(move || {
         let acknowledged =
             callback_gate.publish_reserved(token, present_returned_at, std::time::Instant::now());
         callback_witness.observe_submit(ActorSubmitWitness {
@@ -618,7 +623,6 @@ fn submit_actor_presented_frame(
             acknowledged,
         });
     });
-    render_queue.submit([command_buffer]);
 }
 
 #[cfg(test)]

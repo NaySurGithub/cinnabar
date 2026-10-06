@@ -67,6 +67,7 @@ mod shader_safety;
 mod shader_source;
 mod surface_lifecycle;
 mod ui_render;
+mod upload_staging;
 mod viewmodel;
 mod viewmodel_render;
 
@@ -222,3 +223,5 @@ mod stars;
 
 #[cfg(test)]
 mod queue_review_support;
+
+mod texture_upload;

@@ -1,4 +1,4 @@
-use crate::render_work::{DeviceWork as _, QueueWork as _};
+use crate::render_work::DeviceWork as _;
 use std::{
     mem::size_of,
     sync::{Arc, Weak},
@@ -89,6 +89,7 @@ impl Plugin for UiRenderPlugin {
 struct UiRenderInstalled;
 
 fn install_ui_render(app: &mut App) {
+    crate::upload_staging::install(app);
     crate::pipeline_warmup::register::<UiPipeline>(app);
     crate::pipeline_warmup::register::<composite::UiCompositePipeline>(app);
     app.init_resource::<UiRenderSceneResource>()
@@ -153,6 +154,8 @@ pub(crate) struct UiGpu {
     linear_sampler: Sampler,
     batches: Arc<[UiRenderBatch]>,
     accepted_revision: Option<u64>,
+    /// Keeps textures and geometry on one publication; newer compatible revisions wait for it.
+    pending_input: Option<Arc<UiRenderInput>>,
     /// The accepted revision draws glint, which animates without a new revision.
     animated: bool,
     // Admission watermark survives every draw rejection, even after payload drop.
@@ -172,6 +175,14 @@ pub(crate) struct UiGpu {
         (Entity, bool, bool),
         (CachedRenderPipelineId, CachedRenderPipelineId),
     >,
+}
+
+impl UiGpu {
+    /// Drops an abandoned publication and all private uploads prepared for it.
+    fn cancel_pending_publication(&mut self) {
+        self.pending_input = None;
+        self.textures.cancel_pending();
+    }
 }
 
 fn init_ui_gpu(mut commands: Commands, render_device: Res<RenderDevice>, tick: SystemChangeTick) {
@@ -215,6 +226,7 @@ fn init_ui_gpu(mut commands: Commands, render_device: Res<RenderDevice>, tick: S
         linear_sampler,
         batches: Arc::from([]),
         accepted_revision: None,
+        pending_input: None,
         animated: false,
         last_admitted_revision: None,
         last_admitted_publication: Weak::new(),
@@ -230,7 +242,10 @@ fn init_ui_gpu(mut commands: Commands, render_device: Res<RenderDevice>, tick: S
 pub(crate) fn prepare_ui_resources(
     scene: Res<UiRenderSceneResource>,
     render_device: Res<RenderDevice>,
-    render_queue: Res<RenderQueue>,
+    (render_queue, staging): (
+        Res<RenderQueue>,
+        Option<Res<crate::upload_staging::BufferUploadStaging>>,
+    ),
     mut gpu: ResMut<UiGpu>,
     stats: Res<UiRenderStatsResource>,
     tick: SystemChangeTick,
@@ -246,6 +261,7 @@ pub(crate) fn prepare_ui_resources(
         coverage.clear();
     }
     let Some(input) = scene.input.as_ref() else {
+        gpu.cancel_pending_publication();
         gpu.accepted_revision = None;
         gpu.batches = Arc::from([]);
         stats.update(|s| {
@@ -255,6 +271,7 @@ pub(crate) fn prepare_ui_resources(
         return;
     };
     if !device_valid {
+        gpu.cancel_pending_publication();
         gpu.accepted_revision = None;
         gpu.batches = Arc::from([]);
         record_render_rejection(
@@ -266,7 +283,11 @@ pub(crate) fn prepare_ui_resources(
     }
     // Written every frame: the glint animates without a new UI revision.
     let viewport = UiViewportUniform {
-        viewport_size: [input.viewport_size[0] as f32, input.viewport_size[1] as f32],
+        viewport_size: if gpu.accepted_revision.is_some() {
+            [gpu.viewport_size[0] as f32, gpu.viewport_size[1] as f32]
+        } else {
+            [input.viewport_size[0] as f32, input.viewport_size[1] as f32]
+        },
         time_seconds: glint
             .as_deref()
             .copied()
@@ -274,7 +295,12 @@ pub(crate) fn prepare_ui_resources(
             .animation_seconds(gpu.started.elapsed().as_secs_f32()),
         glint_strength: glint.as_deref().copied().unwrap_or_default().strength,
     };
-    render_queue.tracked_write_buffer(&gpu.viewport_buffer, 0, bytemuck::bytes_of(&viewport));
+    crate::upload_staging::write_batch(
+        staging.as_deref(),
+        &render_device,
+        &render_queue,
+        &[(&gpu.viewport_buffer, 0, bytemuck::bytes_of(&viewport))],
+    );
     if let Some(previous) = gpu.last_admitted_revision {
         let reason = if input.revision < previous {
             Some(UiRenderRejectReason::StaleRevision {
@@ -291,6 +317,7 @@ pub(crate) fn prepare_ui_resources(
             None
         };
         if let Some(reason) = reason {
+            gpu.cancel_pending_publication();
             gpu.accepted_revision = None;
             gpu.batches = Arc::from([]);
             record_render_rejection(&stats, input.revision, reason);
@@ -298,6 +325,7 @@ pub(crate) fn prepare_ui_resources(
         }
     }
     if gpu.accepted_revision == Some(input.revision) {
+        gpu.cancel_pending_publication();
         if !gpu.textures.resident(&input.textures)
             || (!input.vertices.is_empty() && gpu.vertex_buffer.is_none())
             || (!input.indices.is_empty() && gpu.index_buffer.is_none())
@@ -312,20 +340,51 @@ pub(crate) fn prepare_ui_resources(
         }
         return;
     }
-    if let Err(reason) = input.validate() {
-        gpu.accepted_revision = None;
-        gpu.batches = Arc::from([]);
-        record_render_rejection(&stats, input.revision, reason);
-        return;
+    if gpu.pending_input.as_ref().is_some_and(|pending| {
+        pending.textures.static_identity() != input.textures.static_identity()
+    }) {
+        gpu.cancel_pending_publication();
     }
-    if let Err(reason) = gpu
+    if gpu.pending_input.is_none() {
+        if let Err(reason) = input.validate() {
+            gpu.accepted_revision = None;
+            gpu.batches = Arc::from([]);
+            record_render_rejection(&stats, input.revision, reason);
+            return;
+        }
+        gpu.pending_input = Some(Arc::clone(input));
+    }
+    let input = Arc::clone(
+        gpu.pending_input
+            .as_ref()
+            .expect("validated UI publication"),
+    );
+    match gpu
         .textures
         .prepare(&input.textures, &render_device, &render_queue)
     {
-        gpu.accepted_revision = None;
-        gpu.batches = Arc::from([]);
-        record_render_rejection(&stats, input.revision, reason);
-        return;
+        Ok(false) => return,
+        Ok(true) => {}
+        Err(reason) => {
+            gpu.cancel_pending_publication();
+            gpu.accepted_revision = None;
+            gpu.batches = Arc::from([]);
+            record_render_rejection(&stats, input.revision, reason);
+            return;
+        }
+    }
+    gpu.pending_input = None;
+    if viewport.viewport_size != [input.viewport_size[0] as f32, input.viewport_size[1] as f32] {
+        let viewport = UiViewportUniform {
+            viewport_size: [input.viewport_size[0] as f32, input.viewport_size[1] as f32],
+            ..viewport
+        };
+        crate::upload_staging::write_batch(
+            staging.as_deref(),
+            &render_device,
+            &render_queue,
+            &[(&gpu.viewport_buffer, 0, bytemuck::bytes_of(&viewport))],
+        );
     }
 
     let fresh_vertices = gpu.vertex_capacity < input.vertices.len();
@@ -352,23 +411,33 @@ pub(crate) fn prepare_ui_resources(
         gpu.index_capacity = capacity;
         gpu.index_arena_id = gpu.index_arena_id.saturating_add(1);
     }
-    let upload = gpu.uploads.plan(input, fresh_vertices, fresh_indices);
+    let upload = gpu.uploads.plan(&input, fresh_vertices, fresh_indices);
     if let Some(buffer) = gpu.vertex_buffer.as_ref()
         && !upload.vertices.is_empty()
     {
-        render_queue.tracked_write_buffer(
-            buffer,
-            (upload.vertices.start * size_of::<UiRenderVertex>()) as u64,
-            bytemuck::cast_slice(&input.vertices[upload.vertices.clone()]),
+        crate::upload_staging::write_batch(
+            staging.as_deref(),
+            &render_device,
+            &render_queue,
+            &[(
+                buffer,
+                (upload.vertices.start * size_of::<UiRenderVertex>()) as u64,
+                bytemuck::cast_slice(&input.vertices[upload.vertices.clone()]),
+            )],
         );
     }
     if let Some(buffer) = gpu.index_buffer.as_ref()
         && !upload.indices.is_empty()
     {
-        render_queue.tracked_write_buffer(
-            buffer,
-            (upload.indices.start * size_of::<u32>()) as u64,
-            bytemuck::cast_slice(&input.indices[upload.indices.clone()]),
+        crate::upload_staging::write_batch(
+            staging.as_deref(),
+            &render_device,
+            &render_queue,
+            &[(
+                buffer,
+                (upload.indices.start * size_of::<u32>()) as u64,
+                bytemuck::cast_slice(&input.indices[upload.indices.clone()]),
+            )],
         );
     }
     gpu.viewport_size = input.viewport_size;
@@ -381,7 +450,7 @@ pub(crate) fn prepare_ui_resources(
     gpu.index_count = input.indices.len();
     gpu.accepted_revision = Some(input.revision);
     gpu.last_admitted_revision = Some(input.revision);
-    gpu.last_admitted_publication = Arc::downgrade(input);
+    gpu.last_admitted_publication = Arc::downgrade(&input);
     stats.update(|stats| {
         stats.accepted_revision = Some(input.revision);
         stats.uploaded_vertices = upload.vertices.len() as u32;

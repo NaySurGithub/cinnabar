@@ -1,5 +1,5 @@
 use crate::lightmap::LightmapInputs;
-use crate::render_work::{DeviceWork as _, QueueWork as _};
+use crate::render_work::DeviceWork as _;
 use bevy::{
     asset::{load_internal_asset, uuid_handle},
     ecs::{
@@ -9,7 +9,7 @@ use bevy::{
     prelude::*,
     render::{
         Render, RenderApp, RenderSystems,
-        extract_resource::ExtractResourcePlugin,
+        extract_resource::{ExtractResource, ExtractResourcePlugin},
         render_phase::{PhaseItem, RenderCommand, RenderCommandResult, TrackedRenderPass},
         render_resource::*,
         renderer::{RenderDevice, RenderQueue},
@@ -68,6 +68,7 @@ struct LightingInstalled;
 
 /// Installs one lightmap upload, independent of terrain or actor publication revisions.
 pub(crate) fn install(app: &mut App) {
+    crate::upload_staging::install(app);
     app.init_resource::<WorldLighting>()
         .init_resource::<WorldFullbright>();
     let Some(render_app) = app.get_sub_app(RenderApp) else {
@@ -98,7 +99,10 @@ fn prepare(
     mut commands: Commands,
     (input, fullbright): (Res<WorldLighting>, Res<WorldFullbright>),
     device: Res<RenderDevice>,
-    queue: Res<RenderQueue>,
+    (queue, staging): (
+        Res<RenderQueue>,
+        Option<Res<crate::upload_staging::BufferUploadStaging>>,
+    ),
     cache: Res<PipelineCache>,
     gpu: Option<ResMut<LightmapGpu>>,
     atmosphere: Option<Res<crate::atmosphere_render::AtmosphereGpu>>,
@@ -108,7 +112,12 @@ fn prepare(
     let inputs = (!fullbright.0).then_some(input.0);
     if let Some(mut gpu) = gpu {
         if gpu.inputs != inputs {
-            queue.tracked_write_buffer(&gpu.buffer, 0, bytemuck::cast_slice(&light_table(inputs)));
+            crate::upload_staging::write_batch(
+                staging.as_deref(),
+                &device,
+                &queue,
+                &[(&gpu.buffer, 0, bytemuck::cast_slice(&light_table(inputs)))],
+            );
             gpu.inputs = inputs;
         }
         if let Some(atmosphere) = atmosphere.as_deref()
@@ -208,3 +217,7 @@ mod fullbright_tests {
         assert_eq!(light_table(Some(day)), day.build());
     }
 }
+
+#[cfg(test)]
+#[path = "lighting/tests.rs"]
+mod upload_tests;

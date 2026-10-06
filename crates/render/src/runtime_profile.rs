@@ -16,6 +16,7 @@ pub enum RuntimeStage {
     WorldPoll,
     SurfacePreparation,
     RenderSubmission,
+    RenderGraph,
     ActorGeometrySetup,
     ActorArtworkSetup,
     ActorEquipmentSetup,
@@ -101,12 +102,13 @@ pub enum RuntimeStage {
 }
 
 impl RuntimeStage {
-    pub const ALL: [Self; 79] = [
+    pub const ALL: [Self; 80] = [
         Self::ActorSessionSetup,
         Self::PackReload,
         Self::WorldPoll,
         Self::SurfacePreparation,
         Self::RenderSubmission,
+        Self::RenderGraph,
         Self::ActorGeometrySetup,
         Self::ActorArtworkSetup,
         Self::ActorEquipmentSetup,
@@ -244,6 +246,7 @@ impl RuntimeStage {
             Self::WorldPoll => "world_poll",
             Self::SurfacePreparation => "surface_preparation",
             Self::RenderSubmission => "render_submission",
+            Self::RenderGraph => "render_graph",
             Self::ActorGeometrySetup => "actor_geometry_setup",
             Self::ActorArtworkSetup => "actor_artwork_setup",
             Self::ActorEquipmentSetup => "actor_equipment_setup",

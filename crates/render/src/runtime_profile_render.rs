@@ -32,6 +32,10 @@ pub(crate) fn install_surface_trace(app: &mut SubApp) {
     app.init_resource::<crate::RuntimeStageSpans>();
     app.add_systems(
         Render,
+        poll_gpu_completions.before(RenderSystems::PrepareResources),
+    );
+    app.add_systems(
+        Render,
         finish_work_frame
             .after(RenderSystems::Cleanup)
             .before(crate::runtime_profile::end_render_frame_span),
@@ -140,6 +144,26 @@ pub(crate) fn install_surface_trace(app: &mut SubApp) {
                 .before(RenderSystems::Cleanup),
         ),
     );
+    app.add_systems(
+        Render,
+        (
+            begin_stage_span::<{ RuntimeStage::RenderGraph as usize }>
+                .before(bevy::render::renderer::render_system),
+            end_stage_span::<{ RuntimeStage::RenderGraph as usize }>
+                .after(bevy::render::renderer::render_system),
+        )
+            .in_set(RenderSystems::Render),
+    );
+}
+
+/// One nonblocking callback pump serves all readback rings and presentation fences.
+fn poll_gpu_completions(device: Option<Res<bevy::render::renderer::RenderDevice>>) {
+    use crate::render_work::DeviceWork as _;
+    if let Some(device) = device
+        && let Err(error) = device.poll_frame()
+    {
+        bevy::log::warn!(?error, "GPU completion polling failed");
+    }
 }
 
 /// Maps graph pass categories to their CPU recording spans, also on Metal.
@@ -174,7 +198,7 @@ impl std::fmt::Display for RenderWorkFrame {
         let w = self.work;
         write!(
             f,
-            "render_frame_id={} pipeline_specializations={} own_render_pipelines_created={} own_compute_pipelines_created={} own_shader_modules={} bind_groups={} buffer_upload_bytes={} texture_upload_bytes={} arena_migrations={} arena_copy_bytes={} readback_polls={} readback_waits={} render_systems=[",
+            "render_frame_id={} pipeline_specializations={} own_render_pipelines_created={} own_compute_pipelines_created={} own_shader_modules={} bind_groups={} buffer_upload_bytes={} texture_upload_bytes={} arena_migrations={} arena_copy_bytes={} own_queue_submits={} completion_callbacks={} staged_uploads={} staged_upload_bytes={} fallback_uploads={} fallback_upload_bytes={} staging_buffers={} staging_capacity_bytes={} timestamp_marker_passes={} readback_polls={} readback_waits={} render_systems=[",
             self.sequence,
             w.render_pipelines_queued,
             w.render_pipelines_created,
@@ -185,6 +209,15 @@ impl std::fmt::Display for RenderWorkFrame {
             w.texture_upload_bytes,
             self.arena_migrations,
             self.arena_copy_bytes,
+            w.own_queue_submits,
+            w.completion_callbacks,
+            w.staged_uploads,
+            w.staged_upload_bytes,
+            w.fallback_uploads,
+            w.fallback_upload_bytes,
+            w.staging_buffers,
+            w.staging_capacity_bytes,
+            w.timestamp_marker_passes,
             w.readback_polls,
             w.readback_waits
         )?;

@@ -551,7 +551,6 @@ fn hand_pipeline_descriptor(layout: BindGroupLayoutDescriptor) -> RenderPipeline
 }
 
 fn submit_completion(
-    device: Res<RenderDevice>,
     queue: Res<RenderQueue>,
     drawn: Res<HandDrawn>,
     gate: Res<ViewmodelCompletionGate>,
@@ -571,16 +570,10 @@ fn submit_completion(
         gate.reject(expected);
     }
     if let Some(reservation) = token.and_then(|token| gate.reserve(token)) {
-        let command = device
-            .create_command_encoder(&CommandEncoderDescriptor {
-                label: Some("hand queue completion sentinel"),
-            })
-            .finish();
         let callback = gate.clone();
-        command.on_submitted_work_done(move || {
+        queue.tracked_on_submitted_work_done(move || {
             callback.complete(reservation);
         });
-        queue.submit([command]);
         ViewmodelCompletionGate::observe_stage(4, 1, token);
     } else {
         ViewmodelCompletionGate::observe_stage(
@@ -588,13 +581,6 @@ fn submit_completion(
             if token.is_some() { 2 } else { 3 },
             token.or(gpu.token),
         );
-    }
-    if let Err(error) = device.tracked_poll(PollType::Poll) {
-        ViewmodelCompletionGate::observe_stage(4, 4, token);
-        if let Some(token) = token {
-            gate.reject(token);
-        }
-        bevy::log::warn!(?error, "hand completion polling failed");
     }
 }
 

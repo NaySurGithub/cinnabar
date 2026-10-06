@@ -1,4 +1,4 @@
-use crate::render_work::{DeviceWork as _, QueueWork as _};
+use crate::render_work::DeviceWork as _;
 use std::collections::HashMap;
 
 use assets::AtmosphereRole;
@@ -53,6 +53,7 @@ impl Default for CloudVisibility {
 
 const CLOUD_SHADER_HANDLE: Handle<Shader> = uuid_handle!("8dcfe9d0-c182-44cc-ae4c-7e5233b68659");
 pub(crate) fn install_cloud_render(app: &mut App) {
+    crate::upload_staging::install(app);
     crate::pipeline_warmup::register::<CloudPipeline>(app);
     app.init_resource::<CloudVisibility>()
         .add_plugins(ExtractResourcePlugin::<CloudVisibility>::default());
@@ -127,6 +128,7 @@ pub(crate) fn prepare_cloud_records(
     render_queue: Res<RenderQueue>,
     views: Query<(Entity, &ExtractedView), With<Camera3d>>,
     mut gpu: ResMut<CloudGpu>,
+    staging: Option<Res<crate::upload_staging::BufferUploadStaging>>,
 ) {
     let _render_system_span =
         crate::render_systems::time(crate::render_systems::System::CloudRenderPrepareCloudRecords);
@@ -211,7 +213,13 @@ pub(crate) fn prepare_cloud_records(
             view_buffer_id: None,
             atmosphere_buffer_id: None,
         });
-        upload_cloud_records(prepared, &render_device, &render_queue, &records);
+        upload_cloud_records(
+            prepared,
+            &render_device,
+            &render_queue,
+            &records,
+            staging.as_deref(),
+        );
         prepared.record_count = record_count;
         prepared.geometry_diagnostic = Some(geometry_diagnostic);
         prepared.prepared_identity = identity;
@@ -229,6 +237,7 @@ fn upload_cloud_records(
     device: &RenderDevice,
     queue: &RenderQueue,
     records: &[ViewportCloudQuad],
+    staging: Option<&crate::upload_staging::BufferUploadStaging>,
 ) {
     let _span = crate::render_systems::time(crate::render_systems::System::CloudUploadRecords);
     if records.is_empty() {
@@ -252,7 +261,12 @@ fn upload_cloud_records(
         }));
         prepared.bind_group = None;
     }
-    queue.tracked_write_buffer(prepared.record_buffer.as_ref().unwrap(), 0, bytes);
+    crate::upload_staging::write_batch(
+        staging,
+        device,
+        queue,
+        &[(prepared.record_buffer.as_ref().unwrap(), 0, bytes)],
+    );
 }
 
 fn prepare_cloud_colour(
@@ -260,6 +274,8 @@ fn prepare_cloud_colour(
     view: Res<crate::AtmosphereViewInputs>,
     gpu: Res<CloudGpu>,
     render_queue: Res<RenderQueue>,
+    render_device: Res<RenderDevice>,
+    staging: Option<Res<crate::upload_staging::BufferUploadStaging>>,
 ) {
     let _render_system_span =
         crate::render_systems::time(crate::render_systems::System::CloudRenderPrepareCloudColour);
@@ -274,7 +290,12 @@ fn prepare_cloud_colour(
         CLOUD_TOP_Y,
         CLOUD_WORLD_PERIOD,
     ];
-    render_queue.tracked_write_buffer(&gpu.colour_buffer, 0, bytemuck::cast_slice(&native));
+    crate::upload_staging::write_batch(
+        staging.as_deref(),
+        &render_device,
+        &render_queue,
+        &[(&gpu.colour_buffer, 0, bytemuck::cast_slice(&native))],
+    );
 }
 
 struct CloudPipelineSpecializer;

@@ -39,6 +39,36 @@ impl Node for CountingNode {
     }
 }
 
+/// Defers draw-span allocation just as the opaque phase defers command encoding.
+struct DeferredDrawNode;
+
+impl Node for DeferredDrawNode {
+    fn run<'w>(
+        &self,
+        _: &mut RenderGraphContext,
+        context: &mut RenderContext<'w>,
+        world: &'w World,
+    ) -> Result<(), NodeRunError> {
+        let timestamps = world.resource::<GpuTimestamps>();
+        context.add_command_buffer_generation_task(move |device| {
+            let span = timestamps
+                .open_draw(RuntimeStage::GpuActors)
+                .expect("draw recording retains its frame slot until graph finish");
+            let mut encoder = device.create_command_encoder(&Default::default());
+            encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: None,
+                timestamp_writes: Some(wgpu::ComputePassTimestampWrites {
+                    query_set: span.queries,
+                    beginning_of_pass_write_index: Some(span.begin),
+                    end_of_pass_write_index: Some(span.begin + 1),
+                }),
+            });
+            encoder.finish()
+        });
+        Ok(())
+    }
+}
+
 /// A Core3d graph whose opaque node counts runs, wrapped as the plugin does.
 fn timed_world() -> (World, Arc<AtomicU32>) {
     let runs = Arc::new(AtomicU32::new(0));
@@ -65,6 +95,9 @@ fn run_opaque(world: &World, device: &RenderDevice) -> Vec<wgpu::CommandBuffer> 
     let mut render_context = RenderContext::new(device.clone(), None);
     state
         .node
+        .run(&mut graph_context, &mut render_context, world)
+        .unwrap();
+    resolve::ResolveNode
         .run(&mut graph_context, &mut render_context, world)
         .unwrap();
     bevy::tasks::ComputeTaskPool::get_or_init(bevy::tasks::TaskPool::default);
@@ -97,22 +130,174 @@ fn timed_frame_is_read_back_on_a_later_frame_without_waiting() {
     timestamps.begin(|frame| frames.push(*frame));
     world.insert_resource(timestamps);
 
+    let before = crate::render_work::snapshot();
     let buffers = run_opaque(&world, &device);
     assert_eq!(buffers.len(), 1, "begin and end markers share one encoder");
     queue.submit(buffers);
     let mut timestamps = world.remove_resource::<GpuTimestamps>().unwrap();
     assert_eq!(timestamps.frame.passes.load(Ordering::Relaxed), 1);
-    timestamps.submit(&device, &queue);
-    assert!(timestamps.ring.oldest_in_flight().is_some());
+    assert!(
+        timestamps
+            .readbacks
+            .lock()
+            .unwrap()
+            .ring
+            .oldest_in_flight()
+            .is_some()
+    );
+    let work = crate::render_work::snapshot().delta_since(before);
+    assert_eq!(
+        work.own_queue_submits, 0,
+        "readback shares the frame submission"
+    );
+    assert_eq!(work.readback_waits, 0);
+    assert_eq!(
+        work.timestamp_marker_passes, 2,
+        "pass boundaries use two isolated markers"
+    );
     assert!(frames.is_empty());
 
-    device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+    device.poll(wgpu::PollType::Poll).unwrap();
     timestamps.begin(|frame| frames.push(*frame));
     assert_eq!(runs.load(Ordering::Relaxed), 1);
     assert_eq!(frames.len(), 1);
     // The NOOP backend writes no ticks, so the frame decodes to no durations.
     assert_eq!(frames[0].iter().count(), 0);
-    assert!(timestamps.ring.oldest_in_flight().is_none());
+    assert!(
+        timestamps
+            .readbacks
+            .lock()
+            .unwrap()
+            .ring
+            .oldest_in_flight()
+            .is_none()
+    );
+}
+
+#[test]
+fn encoder_capability_keeps_isolated_markers_and_gameplay_diagnostics() {
+    let features =
+        wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS;
+    let (device, queue) = noop_device(features);
+    let (mut world, runs) = timed_world();
+    let profiler = RuntimeStageProfiler::for_gameplay(false, None);
+    world.insert_resource(profiler.clone());
+    let mut timestamps = GpuTimestamps::new(&device, &queue, false).unwrap();
+    timestamps.begin(|_| unreachable!("first frame has no readback"));
+    world.insert_resource(timestamps);
+    let before = crate::render_work::snapshot();
+    let buffers = run_opaque(&world, &device);
+    assert_eq!(buffers.len(), 1);
+    queue.submit(buffers);
+    device.poll(wgpu::PollType::Poll).unwrap();
+    world
+        .resource_mut::<GpuTimestamps>()
+        .begin(|frame| profiler.record_gpu_frame(frame));
+    assert_eq!(runs.load(Ordering::Relaxed), 1);
+    assert!(
+        profiler.latest_gpu_frame().is_some(),
+        "normal play keeps the F3 GPU sample"
+    );
+    let work = crate::render_work::snapshot().delta_since(before);
+    assert_eq!(
+        work.timestamp_marker_passes, 2,
+        "markers must remain isolated from scene passes"
+    );
+    assert_eq!(work.own_queue_submits, 0);
+    assert_eq!(work.readback_waits, 0);
+}
+
+#[test]
+fn deferred_draw_spans_resolve_once_after_command_generation() {
+    use bevy::ecs::system::RunSystemOnce;
+    let features = wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES;
+    let (device, queue) = noop_device(features);
+    let (mut world, _) = timed_world();
+    world
+        .resource_mut::<RenderGraph>()
+        .get_sub_graph_mut(Core3d)
+        .unwrap()
+        .add_node(
+            Node3d::MainOpaquePass,
+            TimedNode {
+                inner: Box::new(DeferredDrawNode),
+                stage: RuntimeStage::GpuOpaque,
+            },
+        );
+    let mut timestamps = GpuTimestamps::new(&device, &queue, true).unwrap();
+    timestamps.begin(|_| unreachable!("first frame has no readback"));
+    world.insert_resource(timestamps);
+    world.insert_resource(device.clone());
+    world.insert_resource(queue.clone());
+
+    let buffers = run_opaque(&world, &device);
+    let timestamps = world.resource::<GpuTimestamps>();
+    assert_eq!(timestamps.frame.draws.load(Ordering::Relaxed), 1);
+    assert_ne!(timestamps.frame.slot.load(Ordering::Acquire), NO_SLOT);
+    queue.submit(buffers);
+    let before = crate::render_work::snapshot();
+    world.run_system_once(resolve::submit_draw_frame).unwrap();
+    let work = crate::render_work::snapshot().delta_since(before);
+    assert_eq!(
+        work.own_queue_submits, 1,
+        "per-draw profiling resolves after deferred work"
+    );
+    assert_eq!(work.readback_waits, 0);
+    {
+        let readbacks = world.resource::<GpuTimestamps>().readbacks.lock().unwrap();
+        let index = readbacks.ring.oldest_in_flight().unwrap();
+        let slot = &readbacks.slots[index];
+        assert_eq!((slot.passes, slot.draws), (1, 1));
+        assert_eq!(slot.stages[PASS_SPANS as usize], RuntimeStage::GpuActors);
+    }
+    world.run_system_once(resolve::submit_draw_frame).unwrap();
+    assert_eq!(
+        crate::render_work::snapshot()
+            .delta_since(before)
+            .own_queue_submits,
+        1
+    );
+    device.poll(wgpu::PollType::Poll).unwrap();
+    let mut completed = 0;
+    world
+        .resource_mut::<GpuTimestamps>()
+        .begin(|_| completed += 1);
+    assert_eq!(completed, 1);
+}
+
+#[test]
+fn empty_profiled_frames_release_slots_without_submitting() {
+    use bevy::ecs::system::RunSystemOnce;
+    let features = wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES;
+    let (device, queue) = noop_device(features);
+    let mut world = World::new();
+    world.insert_resource(GpuTimestamps::new(&device, &queue, true).unwrap());
+    world.insert_resource(device);
+    world.insert_resource(queue);
+    let before = crate::render_work::snapshot();
+    for _ in 0..SLOTS * 2 {
+        world
+            .resource_mut::<GpuTimestamps>()
+            .begin(|_| unreachable!("empty frame"));
+        world.run_system_once(resolve::submit_draw_frame).unwrap();
+        let timestamps = world.resource::<GpuTimestamps>();
+        assert_eq!(timestamps.frame.slot.load(Ordering::Acquire), NO_SLOT);
+        assert!(
+            timestamps
+                .readbacks
+                .lock()
+                .unwrap()
+                .ring
+                .oldest_in_flight()
+                .is_none()
+        );
+    }
+    assert_eq!(
+        crate::render_work::snapshot()
+            .delta_since(before)
+            .own_queue_submits,
+        0
+    );
 }
 
 #[test]
@@ -121,8 +306,17 @@ fn frame_without_spans_releases_its_slot() {
     let mut timestamps = GpuTimestamps::new(&device, &queue, false).unwrap();
     for _ in 0..SLOTS * 2 {
         timestamps.begin(|_| unreachable!("no frame was submitted"));
-        timestamps.submit(&device, &queue);
-        assert!(timestamps.ring.oldest_in_flight().is_none());
+        let mut encoder = device.create_command_encoder(&Default::default());
+        timestamps.encode(&mut encoder);
+        assert!(
+            timestamps
+                .readbacks
+                .lock()
+                .unwrap()
+                .ring
+                .oldest_in_flight()
+                .is_none()
+        );
     }
 }
 
@@ -143,13 +337,15 @@ fn draw_overflow_drops_categories_but_keeps_passes() {
         .filter(|_| timestamps.open_draw(RuntimeStage::GpuActors).is_some())
         .count();
     assert_eq!(draws, DRAW_SPANS as usize);
-    timestamps.submit(&device, &queue);
-    let slot = timestamps.ring.oldest_in_flight().unwrap();
+    let mut encoder = device.create_command_encoder(&Default::default());
+    timestamps.encode(&mut encoder);
+    let readbacks = timestamps.readbacks.lock().unwrap();
+    let slot = readbacks.ring.oldest_in_flight().unwrap();
     assert_eq!(
-        (timestamps.slots[slot].passes, timestamps.slots[slot].draws),
+        (readbacks.slots[slot].passes, readbacks.slots[slot].draws),
         (1, 0)
     );
-    assert_eq!(timestamps.slots[slot].stages[0], RuntimeStage::GpuOpaque);
+    assert_eq!(readbacks.slots[slot].stages[0], RuntimeStage::GpuOpaque);
 }
 
 /// Pipelined rendering removes the render app during cleanup, before later plugins' hooks.

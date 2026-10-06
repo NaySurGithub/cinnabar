@@ -115,9 +115,22 @@ pub(super) struct UiGpuTextures {
     pub(super) bytes: usize,
     allocation_identity: Option<[u8; 32]>,
     allocation_plan: Option<UiTexturePlan>,
+    pending: Option<PendingTextureGeneration>,
+}
+
+struct PendingTextureGeneration {
+    catalog: UiTextureCatalog,
+    buckets: Vec<GpuBucket>,
+    page: usize,
+    cursor: crate::texture_upload::TextureUploadCursor,
 }
 
 impl UiGpuTextures {
+    /// Releases private arrays when their owning UI publication is no longer admitted.
+    pub(super) fn cancel_pending(&mut self) {
+        self.pending = None;
+    }
+
     pub(super) fn allocated_buckets(&self) -> &[render_model::UiTextureBucket] {
         self.allocation_plan
             .as_ref()
@@ -136,12 +149,13 @@ impl UiGpuTextures {
                 .zip(catalog.pages())
                 .all(|(id, page)| *id == page.identity())
     }
+    /// Returns false while a replacement is private; resident dynamic writes remain transactional.
     pub(super) fn prepare(
         &mut self,
         catalog: &UiTextureCatalog,
         device: &RenderDevice,
         queue: &RenderQueue,
-    ) -> Result<(), UiRenderRejectReason> {
+    ) -> Result<bool, UiRenderRejectReason> {
         let limits = device.limits();
         catalog.plan().validate_device(
             limits.max_texture_dimension_2d,
@@ -179,61 +193,45 @@ impl UiGpuTextures {
                 return Err(UiRenderRejectReason::InvalidTextureExtent);
             }
         }
-        // All catalog and per-device admission checks precede allocation/writes.
-        if resized {
-            self.buckets.clear();
-            self.locations.clear();
-            self.state = TextureUploadState::default();
-        }
-        if self.buckets.is_empty() {
-            self.allocation_identity = Some(catalog.static_identity());
-            self.allocation_plan = Some(catalog.plan().clone());
-            for bucket in catalog.plan().buckets() {
-                let texture = device.create_texture(&TextureDescriptor {
-                    label: Some("bounded UI dimension bucket"),
-                    size: Extent3d {
-                        width: bucket.dimensions[0],
-                        height: bucket.dimensions[1],
-                        depth_or_array_layers: bucket.layers,
-                    },
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: TextureDimension::D2,
-                    format: match bucket.format {
-                        UiTextureFormat::Rgba8 => TextureFormat::Rgba8Unorm,
-                        UiTextureFormat::Coverage => TextureFormat::R8Unorm,
-                    },
-                    usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
-                    view_formats: &[],
-                });
-                let view = texture.create_view(&TextureViewDescriptor {
-                    label: Some("bounded UI dimension bucket view"),
-                    dimension: Some(TextureViewDimension::D2Array),
-                    ..Default::default()
-                });
-                let coverage = u32::from(bucket.format == UiTextureFormat::Coverage);
-                let format_uniform = device.tracked_create_buffer_with_data(
-                    &bevy::render::render_resource::BufferInitDescriptor {
-                        label: Some("UI bucket page format"),
-                        contents: bytemuck::cast_slice(&[coverage, 0, 0, 0]),
-                        usage: bevy::render::render_resource::BufferUsages::UNIFORM,
-                    },
-                );
-                self.buckets.push(GpuBucket {
-                    texture,
-                    view,
-                    format_uniform,
-                    bind_group: None,
+        // Initial and resized arrays remain private until every layer is uploaded.
+        if self.allocation_plan.is_none() || resized || self.pending.is_some() {
+            if self
+                .pending
+                .as_ref()
+                .is_none_or(|pending| pending.catalog != *catalog)
+            {
+                self.pending = Some(PendingTextureGeneration {
+                    catalog: catalog.clone(),
+                    buckets: Vec::with_capacity(catalog.plan().buckets().len()),
+                    page: 0,
+                    cursor: Default::default(),
                 });
             }
+            let pending = self
+                .pending
+                .as_mut()
+                .expect("validated UI texture generation");
+            if !pending.advance(device, queue) {
+                return Ok(false);
+            }
+            let pending = self
+                .pending
+                .take()
+                .expect("completed UI texture generation");
+            self.buckets = pending.buckets;
+            self.allocation_identity = Some(catalog.static_identity());
+            self.allocation_plan = Some(catalog.plan().clone());
             self.locations = catalog.plan().locations().to_vec();
             self.bytes = catalog.plan().bytes();
+            self.state
+                .execute(catalog, &[], |_, _, _| Ok::<_, UiRenderRejectReason>(()))?;
+            return Ok(true);
         }
         if self.buckets.len() != catalog.plan().buckets().len() {
             return Err(UiRenderRejectReason::InvalidTextureExtent);
         }
         if dirty.is_empty() {
-            return Ok(());
+            return Ok(true);
         }
         let buckets = &self.buckets;
         self.state.execute(catalog, &dirty, |_, page, location| {
@@ -262,7 +260,100 @@ impl UiGpuTextures {
                 },
             );
             Ok::<(), UiRenderRejectReason>(())
-        })
+        })?;
+        Ok(true)
+    }
+}
+
+impl PendingTextureGeneration {
+    /// Allocates at most one array and copies a bounded texel batch per preparation call.
+    fn advance(&mut self, device: &RenderDevice, queue: &RenderQueue) -> bool {
+        if let Some(bucket) = self.catalog.plan().buckets().get(self.buckets.len()) {
+            self.buckets.push(create_bucket(*bucket, device));
+        }
+        let mut remaining = crate::texture_upload::TEXTURE_UPLOAD_BATCH_BYTES;
+        while let Some(page) = self.catalog.pages().get(self.page) {
+            let location = self.catalog.plan().locations()[self.page];
+            let Some(bucket) = self.buckets.get(location.bucket) else {
+                return false;
+            };
+            let [width, height] = page.dimensions();
+            let texel_bytes = page.format().bytes_per_texel();
+            while let Some(slice) =
+                self.cursor
+                    .take([width, height, 1], texel_bytes, &mut remaining)
+            {
+                queue.tracked_write_texture(
+                    TexelCopyTextureInfo {
+                        texture: &bucket.texture,
+                        mip_level: 0,
+                        origin: Origin3d {
+                            x: 0,
+                            y: slice.row,
+                            z: location.layer,
+                        },
+                        aspect: Default::default(),
+                    },
+                    &page.pixels()[slice.bytes],
+                    TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(width * texel_bytes as u32),
+                        rows_per_image: Some(height),
+                    },
+                    Extent3d {
+                        width,
+                        height: slice.rows,
+                        depth_or_array_layers: 1,
+                    },
+                );
+            }
+            if !self.cursor.complete(1) {
+                return false;
+            }
+            self.page += 1;
+            self.cursor = Default::default();
+        }
+        self.buckets.len() == self.catalog.plan().buckets().len()
+    }
+}
+
+/// Creates one retained array and its immutable format uniform after device admission.
+fn create_bucket(bucket: render_model::UiTextureBucket, device: &RenderDevice) -> GpuBucket {
+    let texture = device.create_texture(&TextureDescriptor {
+        label: Some("bounded UI dimension bucket"),
+        size: Extent3d {
+            width: bucket.dimensions[0],
+            height: bucket.dimensions[1],
+            depth_or_array_layers: bucket.layers,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: TextureDimension::D2,
+        format: match bucket.format {
+            UiTextureFormat::Rgba8 => TextureFormat::Rgba8Unorm,
+            UiTextureFormat::Coverage => TextureFormat::R8Unorm,
+        },
+        usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    let view = texture.create_view(&TextureViewDescriptor {
+        label: Some("bounded UI dimension bucket view"),
+        dimension: Some(TextureViewDimension::D2Array),
+        ..Default::default()
+    });
+    let coverage = u32::from(bucket.format == UiTextureFormat::Coverage);
+    let format_uniform = device.tracked_create_buffer_with_data(
+        &bevy::render::render_resource::BufferInitDescriptor {
+            label: Some("UI bucket page format"),
+            contents: bytemuck::cast_slice(&[coverage, 0, 0, 0]),
+            usage: bevy::render::render_resource::BufferUsages::UNIFORM,
+        },
+    );
+    GpuBucket {
+        texture,
+        view,
+        format_uniform,
+        bind_group: None,
     }
 }
 
@@ -316,8 +407,132 @@ pub(super) fn prepare_ui_bind_group(
 }
 
 #[cfg(test)]
+#[path = "textures/pending_tests.rs"]
+mod pending_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Completes bounded preparation without depending on elapsed time.
+    fn finish_uploads(
+        gpu: &mut UiGpuTextures,
+        catalog: &UiTextureCatalog,
+        device: &RenderDevice,
+        queue: &RenderQueue,
+    ) {
+        for _ in 0..128 {
+            if gpu.prepare(catalog, device, queue).unwrap() {
+                return;
+            }
+        }
+        panic!("bounded UI upload must make progress");
+    }
+
+    /// Runs only resource preparation until the requested publication is complete.
+    fn finish_publication(world: &mut bevy::prelude::World, revision: u64) {
+        use bevy::ecs::system::RunSystemOnce;
+        for _ in 0..128 {
+            world
+                .run_system_once(super::super::prepare_ui_resources)
+                .unwrap();
+            if world.resource::<UiGpu>().accepted_revision == Some(revision) {
+                return;
+            }
+        }
+        panic!("bounded UI publication must make progress");
+    }
+
+    #[test]
+    fn initial_texture_uploads_bound_work_and_keep_partial_arrays_private() {
+        let (device, queue) = wgpu::Device::noop(&wgpu::DeviceDescriptor::default());
+        let device = RenderDevice::from(device);
+        let queue = RenderQueue(std::sync::Arc::new(
+            bevy::render::renderer::WgpuWrapper::new(queue),
+        ));
+        let catalog = catalog(0);
+        let mut gpu = UiGpuTextures::default();
+        let mut allocated = 0;
+        for _ in 0..32 {
+            let before = crate::render_work::snapshot();
+            let ready = gpu.prepare(&catalog, &device, &queue).unwrap();
+            let work = crate::render_work::snapshot().delta_since(before);
+            assert!(
+                work.texture_upload_bytes
+                    <= crate::texture_upload::TEXTURE_UPLOAD_BATCH_BYTES as u64
+            );
+            assert_eq!(work.readback_waits, 0);
+            if ready {
+                assert!(gpu.resident(&catalog));
+                let ids = gpu
+                    .buckets
+                    .iter()
+                    .map(|bucket| bucket.texture.id())
+                    .collect::<Vec<_>>();
+                let before = crate::render_work::snapshot();
+                assert!(gpu.prepare(&catalog, &device, &queue).unwrap());
+                assert_eq!(
+                    crate::render_work::snapshot().delta_since(before),
+                    Default::default()
+                );
+                assert_eq!(
+                    gpu.buckets
+                        .iter()
+                        .map(|bucket| bucket.texture.id())
+                        .collect::<Vec<_>>(),
+                    ids
+                );
+                return;
+            }
+            assert!(!gpu.resident(&catalog));
+            assert!(gpu.buckets.is_empty());
+            let next = gpu.pending.as_ref().unwrap().buckets.len();
+            assert!(next - allocated <= 1);
+            allocated = next;
+        }
+        panic!("bounded UI upload must make progress");
+    }
+
+    #[test]
+    fn pending_texture_upload_keeps_its_draw_publication_when_newer_input_arrives() {
+        use super::super::{
+            UiRenderInput, UiRenderScene, UiRenderSceneResource, UiRenderStatsResource,
+        };
+        use bevy::ecs::system::RunSystemOnce;
+        use std::sync::Arc;
+
+        let mut world = super::super::ordered_command_tests::binding_world();
+        let textures = Arc::new(catalog(0));
+        let input = |revision, side| UiRenderInput {
+            revision,
+            viewport_size: [side; 2],
+            safe_area: [0; 4],
+            vertices: Arc::from([]),
+            indices: Arc::from([]),
+            batches: Arc::from([]),
+            textures: Arc::clone(&textures),
+        };
+        let mut scene = UiRenderScene::default();
+        scene
+            .publish(input(1, 64), world.resource::<UiRenderStatsResource>())
+            .unwrap();
+        world.insert_resource(UiRenderSceneResource(scene.clone()));
+        world
+            .run_system_once(super::super::prepare_ui_resources)
+            .unwrap();
+        assert!(world.resource::<UiGpu>().accepted_revision.is_none());
+        scene
+            .publish(input(2, 128), world.resource::<UiRenderStatsResource>())
+            .unwrap();
+        world.insert_resource(UiRenderSceneResource(scene));
+        finish_publication(&mut world, 1);
+        let gpu = world.resource::<UiGpu>();
+        assert_eq!(gpu.viewport_size, [64; 2]);
+        assert!(gpu.textures.resident(&textures));
+        assert!(gpu.pending_input.is_none());
+        finish_publication(&mut world, 2);
+        assert_eq!(world.resource::<UiGpu>().viewport_size, [128; 2]);
+    }
 
     #[test]
     fn device_observation_handles_clamped_aging_wrap_and_unknown_gaps() {
@@ -496,7 +711,7 @@ mod tests {
         ));
         let catalog = catalog(0);
         let mut gpu = UiGpuTextures::default();
-        gpu.prepare(&catalog, &device, &queue).unwrap();
+        finish_uploads(&mut gpu, &catalog, &device, &queue);
         assert_eq!(gpu.buckets.len(), 2);
         assert!(gpu.state.dirty(&catalog).unwrap().is_empty());
         assert!(gpu.resident(&catalog));
@@ -563,9 +778,7 @@ mod tests {
             )
             .unwrap();
         world.insert_resource(UiRenderSceneResource(scene.clone()));
-        world
-            .run_system_once(super::super::prepare_ui_resources)
-            .unwrap();
+        finish_publication(&mut world, 1);
         world
             .run_system_once(super::super::prepare_ui_bind_group)
             .unwrap();
@@ -595,6 +808,18 @@ mod tests {
         world
             .run_system_once(super::super::prepare_ui_resources)
             .unwrap();
+        assert_eq!(world.resource::<UiGpu>().accepted_revision, Some(1));
+        assert!(world.resource::<UiGpu>().textures.resident(&base));
+        assert_eq!(
+            world
+                .resource::<UiGpu>()
+                .pending_input
+                .as_ref()
+                .unwrap()
+                .revision,
+            2
+        );
+        finish_publication(&mut world, 2);
         let gpu = world.resource::<UiGpu>();
         assert_eq!(gpu.accepted_revision, Some(2));
         assert!(gpu.textures.resident(&resized));
@@ -631,9 +856,7 @@ mod tests {
             )
             .unwrap();
         world.insert_resource(UiRenderSceneResource(scene));
-        world
-            .run_system_once(super::super::prepare_ui_resources)
-            .unwrap();
+        finish_publication(&mut world, 3);
         let gpu = world.resource::<UiGpu>();
         assert_eq!(gpu.accepted_revision, Some(3));
         assert!(gpu.textures.resident(&base));

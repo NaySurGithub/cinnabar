@@ -365,7 +365,7 @@ pub(in crate::chunk) fn advance_arena_migration(
             migration.copied_bytes,
             slice,
         );
-        render_queue.submit([encoder.finish()]);
+        render_queue.tracked_submit([encoder.finish()]);
         migration.copied_bytes += slice;
     }
     if migration.copied_bytes == migration.copy_bytes {

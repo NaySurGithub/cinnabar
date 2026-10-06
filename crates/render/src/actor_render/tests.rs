@@ -30,6 +30,9 @@ mod pipeline_material_gpu_tests;
 #[path = "frame_order_tests.rs"]
 mod frame_order_tests;
 
+#[path = "completion_tests.rs"]
+mod completion_tests;
+
 /// A residency holding one standard-raster skin in class 0, layer 0.
 fn one_resident_skin() -> Arc<crate::actor::ActorSkinResidency> {
     let skin = render_api::SkinRgba8::from(vec![255; render_model::STANDARD_SKIN_BYTES]);
@@ -247,6 +250,88 @@ fn first_generic_only_frame_prepares_after_an_empty_skin_revision() {
         .run_system_once(super::prepare_actor_resources)
         .unwrap();
     assert!(world.resource::<ActorGpu>().artwork_current);
+}
+
+#[test]
+fn pending_artwork_never_retains_actors_after_their_lifetime_changes() {
+    use bevy::ecs::system::RunSystemOnce;
+    for changed_field in 0..5 {
+        let mut app = app_with_noop_render_sub_app();
+        app.add_plugins(ActorRenderPlugin);
+        app.finish();
+        let world = app.sub_app_mut(RenderApp).world_mut();
+        world.run_schedule(RenderStartup);
+        world.insert_resource(generic_actor_frame());
+        world
+            .run_system_once(super::prepare_actor_resources)
+            .unwrap();
+        let gpu = world.resource::<ActorGpu>();
+        let draw = crate::actor::ActorDrawFrame {
+            artwork_identity: gpu.artwork_identity,
+            skin_revision: gpu.skin_revision,
+            geometry_revision: gpu.geometry_revision,
+            frame_generation: gpu.frame_generation,
+            draw_generation: 1,
+            manifest: Arc::clone(&gpu.manifest),
+        };
+        let tracker = world.resource::<super::ActorDrawTracker>();
+        assert!(tracker.begin(draw.clone(), 1, &gpu.spans));
+        for &span in &gpu.spans {
+            tracker.record_draw(1, span);
+        }
+        let gate = world
+            .resource::<crate::actor::ActorPresentationGate>()
+            .clone();
+        let token = gate.try_reserve_callback(draw).unwrap();
+        let mut frame = world.resource::<crate::actor::ActorRenderFrame>().clone();
+        let mut artwork = frame.artwork.as_ref().clone();
+        artwork.identity = [3; 32];
+        artwork.pages = Arc::from([crate::actor::ActorTexturePage {
+            width: 1024,
+            height: 1024,
+            layers: 1,
+            color_mask: false,
+            multitexture: false,
+            rgba8: vec![255; 1024 * 1024 * 4].into(),
+        }]);
+        frame.artwork = Arc::new(artwork);
+        world.insert_resource(frame.clone());
+        world
+            .run_system_once(super::prepare_actor_resources)
+            .unwrap();
+        assert!(world.resource::<ActorGpu>().artwork.is_pending());
+        assert_eq!(world.resource::<ActorGpu>().instance_count, 1);
+        if changed_field == 0 {
+            frame.rig.instances = Arc::from([]);
+            frame.rig.manifest = Arc::from([]);
+            frame.instance_pages = Arc::from([]);
+        } else {
+            let identity = &mut Arc::make_mut(&mut frame.rig.manifest)[0].identity;
+            match changed_field {
+                1 => identity.session_id += 1,
+                2 => identity.dimension += 1,
+                3 => identity.runtime_id += 1,
+                _ => identity.spawn_revision += 1,
+            }
+        }
+        frame.rig.frame_generation += 1;
+        world.insert_resource(frame);
+        world
+            .run_system_once(super::prepare_actor_resources)
+            .unwrap();
+        let gpu = world.resource::<ActorGpu>();
+        assert!(gpu.artwork.is_pending());
+        assert_eq!(gpu.instance_count, 0);
+        assert!(gpu.instances.is_empty() && gpu.spans.is_empty() && gpu.manifest.is_empty());
+        assert!(
+            world
+                .resource::<super::ActorDrawTracker>()
+                .take_drawn()
+                .is_none()
+        );
+        let now = std::time::Instant::now();
+        assert!(!gate.publish_reserved(token, now, now));
+    }
 }
 
 /// One generic actor with stable geometry and artwork, independent of player skins.

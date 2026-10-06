@@ -1,5 +1,5 @@
 use crate::chunk::*;
-use crate::render_work::DeviceWork as _;
+use crate::render_work::QueueWork as _;
 use std::sync::{
     MutexGuard,
     atomic::{AtomicBool, Ordering},
@@ -633,7 +633,6 @@ impl ActiveFrameProbe {
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::chunk) fn submit_presented_frame_probe(
-    render_device: Res<RenderDevice>,
     render_queue: Res<RenderQueue>,
     frame_probe: Res<ActiveFrameProbe>,
     presented_frame_gate: Res<PresentedFrameGate>,
@@ -705,19 +704,9 @@ pub(in crate::chunk) fn submit_presented_frame_probe(
         && witness_token.is_none()
         && visibility_snapshot.is_none()
     {
-        if let Err(error) = render_device.tracked_poll(PollType::Poll) {
-            bevy::log::warn!(
-                ?error,
-                "could not nonblockingly poll presented-frame fences"
-            );
-        }
         return;
     }
     let present_returned_at = Instant::now();
-    let encoder = render_device.create_command_encoder(&CommandEncoderDescriptor {
-        label: Some("presented frame completion sentinel"),
-    });
-    let command_buffer = encoder.finish();
     let callback_gate = presented_frame_gate.clone();
     let callback_metrics = transparent_metrics.clone();
     let callback_transparent_fence = transparent_fence.clone();
@@ -725,7 +714,7 @@ pub(in crate::chunk) fn submit_presented_frame_probe(
     let callback_witness_evidence = witness_evidence.clone();
     let callback_visibility_diagnostics = visibility_diagnostics.clone();
     let callback_visibility_completion_fence = visibility_completion_fence.clone();
-    command_buffer.on_submitted_work_done(move || {
+    render_queue.tracked_on_submitted_work_done(move || {
         if let Some(snapshot) = visibility_snapshot {
             callback_visibility_diagnostics.publish(snapshot.gpu_completed());
             callback_visibility_completion_fence.complete();
@@ -749,11 +738,4 @@ pub(in crate::chunk) fn submit_presented_frame_probe(
             callback_witness_evidence.complete(token);
         }
     });
-    render_queue.submit([command_buffer]);
-    if let Err(error) = render_device.tracked_poll(PollType::Poll) {
-        bevy::log::warn!(
-            ?error,
-            "could not nonblockingly poll presented-frame fences"
-        );
-    }
 }

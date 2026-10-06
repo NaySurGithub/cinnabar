@@ -1,4 +1,4 @@
-use crate::render_work::{DeviceWork as _, QueueWork as _};
+use crate::render_work::DeviceWork as _;
 use std::collections::HashMap;
 
 use assets::{AtmosphereRole, AtmosphereTexture};
@@ -67,6 +67,7 @@ struct AtmosphereRenderInstalled;
 
 pub(crate) fn install_atmosphere(app: &mut App) {
     crate::pipeline_warmup::register::<AtmospherePipeline>(app);
+    crate::upload_staging::install(app);
     app.init_resource::<AtmosphereFrame>();
     app.init_resource::<crate::AtmosphereViewInputs>();
     app.init_resource::<AtmosphereTextureAssets>();
@@ -129,6 +130,7 @@ pub(crate) fn install_atmosphere(app: &mut App) {
 #[derive(Resource)]
 pub(crate) struct AtmosphereGpu {
     pub(crate) buffer: Buffer,
+    uploaded_frame: AtmosphereFrame,
     stars: Buffer,
     star_vertex_count: u32,
     prepared: Option<PreparedAtmosphereAssets>,
@@ -163,6 +165,7 @@ fn init_atmosphere_gpu(mut commands: Commands, render_device: Res<RenderDevice>)
     });
     commands.insert_resource(AtmosphereGpu {
         buffer,
+        uploaded_frame: AtmosphereFrame::default(),
         stars,
         star_vertex_count: vertices.len() as u32,
         prepared: None,
@@ -177,13 +180,26 @@ fn init_atmosphere_gpu(mut commands: Commands, render_device: Res<RenderDevice>)
 
 fn prepare_atmosphere_uniform(
     frame: Res<AtmosphereFrame>,
-    gpu: Res<AtmosphereGpu>,
-    render_queue: Res<RenderQueue>,
+    mut gpu: ResMut<AtmosphereGpu>,
+    render_device: Res<RenderDevice>,
+    (render_queue, staging): (
+        Res<RenderQueue>,
+        Option<Res<crate::upload_staging::BufferUploadStaging>>,
+    ),
 ) {
     let _render_system_span = crate::render_systems::time(
         crate::render_systems::System::AtmosphereRenderPrepareAtmosphereUniform,
     );
-    render_queue.tracked_write_buffer(&gpu.buffer, 0, bytemuck::bytes_of(&*frame));
+    if gpu.uploaded_frame == *frame {
+        return;
+    }
+    crate::upload_staging::write_batch(
+        staging.as_deref(),
+        &render_device,
+        &render_queue,
+        &[(&gpu.buffer, 0, bytemuck::bytes_of(&*frame))],
+    );
+    gpu.uploaded_frame = *frame;
 }
 
 fn prepare_atmosphere_textures(
@@ -935,3 +951,7 @@ impl crate::pipeline_warmup::PrewarmPipelines for AtmospherePipeline {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "atmosphere_render/upload_tests.rs"]
+mod upload_tests;

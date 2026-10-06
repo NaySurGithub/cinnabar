@@ -1,9 +1,13 @@
 //! Work performed by Cinnabar at its GPU API boundaries.
 //! API wall times include driver waits and overlap their enclosing application-system spans.
+#[path = "render_work/buffer_view.rs"]
+mod buffer_view;
 use bevy::render::{
     render_resource::*,
     renderer::{RenderDevice, RenderQueue},
 };
+use buffer_view::BufferWriteView;
+#[cfg(not(test))]
 use std::sync::atomic::{AtomicU64, Ordering};
 
 macro_rules! counters {
@@ -16,7 +20,9 @@ macro_rules! counters {
                 Self { $($field: self.$field.saturating_sub(old.$field)),+ }
             }
         }
+        #[cfg(not(test))]
         struct Counters { $($field: AtomicU64),+ }
+        #[cfg(not(test))]
         static WORK: Counters = Counters { $($field: AtomicU64::new(0)),+ };
         /// Reads cumulative application work without consulting Bevy internals.
         pub(crate) fn snapshot() -> WorkSnapshot {
@@ -33,19 +39,25 @@ counters!(
     bind_groups_created,
     buffer_upload_bytes,
     texture_upload_bytes,
+    timestamp_marker_passes,
+    own_queue_submits,
+    completion_callbacks,
+    staged_uploads,
+    staged_upload_bytes,
+    fallback_uploads,
+    fallback_upload_bytes,
+    staging_buffers,
+    staging_capacity_bytes,
     readback_polls,
     readback_waits
 );
 
 #[cfg(test)]
-thread_local! { static TEST_WORK: std::cell::Cell<WorkSnapshot> = const { std::cell::Cell::new(WorkSnapshot {
-    render_pipelines_queued: 0, render_pipelines_created: 0,
-    compute_pipelines_created: 0, shader_modules_created: 0, bind_groups_created: 0,
-    buffer_upload_bytes: 0, texture_upload_bytes: 0, readback_polls: 0, readback_waits: 0,
-}) }; }
+thread_local! { static TEST_WORK: std::cell::Cell<WorkSnapshot> = Default::default(); }
 macro_rules! record {
     ($field:ident, $value:expr) => {{
         let value = $value as u64;
+        #[cfg(not(test))]
         WORK.$field.fetch_add(value, Ordering::Relaxed);
         #[cfg(test)]
         TEST_WORK.with(|counter| {
@@ -59,6 +71,14 @@ macro_rules! record {
 /// Counts a cache-miss specializer callback, including keys that canonicalize together.
 pub(crate) fn specialization() {
     record!(render_pipelines_queued, 1);
+}
+
+#[path = "render_work/staging.rs"]
+pub(crate) mod staging;
+
+/// Counts isolated timestamp compute passes independently of scene rendering.
+pub(crate) fn timestamp_marker_pass() {
+    record!(timestamp_marker_passes, 1);
 }
 
 /// Counts initialized or updated texture payload without row padding or source offsets.
@@ -101,8 +121,8 @@ pub(crate) trait DeviceWork {
     ) -> ComputePipeline;
     /// Counts render pipelines created directly by our renderer.
     fn tracked_create_render_pipeline(&self, desc: &RawRenderPipelineDescriptor) -> RenderPipeline;
-    /// Distinguishes nonblocking readback polling from explicit device waits.
-    fn tracked_poll(&self, poll: wgpu::PollType) -> Result<wgpu::PollStatus, wgpu::PollError>;
+    /// Drives completed callbacks without accepting a blocking wait mode.
+    fn poll_frame(&self) -> Result<wgpu::PollStatus, wgpu::PollError>;
 }
 impl DeviceWork for RenderDevice {
     fn tracked_create_bind_group<'a>(
@@ -167,18 +187,22 @@ impl DeviceWork for RenderDevice {
             crate::render_systems::time(crate::render_systems::System::GpuApiCreateRenderPipeline);
         self.create_render_pipeline(desc)
     }
-    fn tracked_poll(&self, poll: wgpu::PollType) -> Result<wgpu::PollStatus, wgpu::PollError> {
+    fn poll_frame(&self) -> Result<wgpu::PollStatus, wgpu::PollError> {
         record!(readback_polls, 1);
-        if matches!(poll, wgpu::PollType::Wait { .. }) {
-            record!(readback_waits, 1);
-        }
         let _api_span = crate::render_systems::time(crate::render_systems::System::GpuApiPoll);
-        self.poll(poll)
+        self.poll(wgpu::PollType::Poll)
     }
 }
 
 /// Instrumented queue uploads retain the original payload and submission behavior.
 pub(crate) trait QueueWork {
+    /// Counts application submissions independently of the renderer's main graph submission.
+    fn tracked_submit(
+        &self,
+        commands: impl IntoIterator<Item = wgpu::CommandBuffer>,
+    ) -> wgpu::SubmissionIndex;
+    /// Fences already submitted work without creating another command buffer or submission.
+    fn tracked_on_submitted_work_done(&self, callback: impl FnOnce() + Send + 'static);
     /// Counts only the bytes passed for this buffer update.
     fn tracked_write_buffer(&self, buffer: &wgpu::Buffer, offset: u64, data: &[u8]);
     /// Counts a directly initialized staging allocation for this buffer update.
@@ -187,7 +211,7 @@ pub(crate) trait QueueWork {
         buffer: &wgpu::Buffer,
         offset: u64,
         size: std::num::NonZeroU64,
-    ) -> Option<wgpu::QueueWriteBufferView>;
+    ) -> Option<BufferWriteView>;
     /// Counts texel payload independently of source row padding.
     fn tracked_write_texture(
         &self,
@@ -198,6 +222,19 @@ pub(crate) trait QueueWork {
     );
 }
 impl QueueWork for RenderQueue {
+    fn tracked_submit(
+        &self,
+        commands: impl IntoIterator<Item = wgpu::CommandBuffer>,
+    ) -> wgpu::SubmissionIndex {
+        record!(own_queue_submits, 1);
+        let _api_span = crate::render_systems::time(crate::render_systems::System::GpuApiSubmit);
+        self.submit(commands)
+    }
+
+    fn tracked_on_submitted_work_done(&self, callback: impl FnOnce() + Send + 'static) {
+        record!(completion_callbacks, 1);
+        self.on_submitted_work_done(callback);
+    }
     fn tracked_write_buffer(&self, buffer: &wgpu::Buffer, offset: u64, data: &[u8]) {
         record!(buffer_upload_bytes, data.len());
         let _api_span =
@@ -209,12 +246,12 @@ impl QueueWork for RenderQueue {
         buffer: &wgpu::Buffer,
         offset: u64,
         size: std::num::NonZeroU64,
-    ) -> Option<wgpu::QueueWriteBufferView> {
-        let _api_span =
+    ) -> Option<BufferWriteView> {
+        let api_span =
             crate::render_systems::time(crate::render_systems::System::GpuApiWriteBuffer);
         let view = self.write_buffer_with(buffer, offset, size)?;
         record!(buffer_upload_bytes, size.get());
-        Some(view)
+        Some(BufferWriteView::new(view, api_span))
     }
     fn tracked_write_texture(
         &self,

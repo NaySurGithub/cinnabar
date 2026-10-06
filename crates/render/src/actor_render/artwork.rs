@@ -18,9 +18,18 @@ pub(super) struct GpuArtwork {
     identity: Option<([u8; 32], [u8; 32])>,
     pub pages: Vec<GpuArtworkPage>,
     rejected: bool,
+    pending: Option<PendingArtwork>,
+}
+
+struct PendingArtwork {
+    identity: ([u8; 32], [u8; 32]),
+    pages: Vec<GpuArtworkPage>,
+    source: Option<crate::actor::ActorTexturePage>,
+    cursor: crate::texture_upload::TextureUploadCursor,
 }
 
 impl GpuArtwork {
+    /// Uploads one allocation and a bounded texel batch without exposing partial generations.
     pub fn prepare(
         &mut self,
         pages: &ActorArtworkPages,
@@ -29,45 +38,63 @@ impl GpuArtwork {
     ) -> bool {
         let identity = (pages.identity, pages.entity_identity);
         if self.identity == Some(identity) {
+            self.pending = None;
             return !self.rejected;
         }
-        if self.identity.take().is_some() {
-            // Session packs change the artwork. wgpu keeps dropped pages alive until
-            // work already submitted with them completes, so a generation is only
-            // briefly doubled.
-            self.pages.clear();
-            self.rejected = false;
-        }
         if pages.identity == [0; 32] {
+            self.pages.clear();
+            self.identity = None;
+            self.pending = None;
+            self.rejected = false;
             return true;
         }
-        self.identity = Some(identity);
         let limits = device.limits();
-        let bytes = pages
-            .pages
-            .iter()
-            .try_fold(crate::actor::PLAYER_SKIN_BUDGET_BYTES, |total, page| {
-                total.checked_add(page.rgba8.len())
-            });
-        if pages.pages.len() + 1 > MAX_ACTOR_TEXTURE_PAGES
-            || bytes.is_none_or(|bytes| bytes > MAX_ACTOR_GPU_PIXEL_BYTES)
-            || pages
+        if self
+            .pending
+            .as_ref()
+            .is_none_or(|pending| pending.identity != identity)
+        {
+            let bytes = pages
                 .pages
                 .iter()
-                .any(|page| page.layers > limits.max_texture_array_layers)
-        {
-            self.rejected = true;
-            bevy::log::warn!(
-                "neutral actor artwork exceeds device limits; generic artwork unavailable"
-            );
-            return false;
+                .try_fold(crate::actor::PLAYER_SKIN_BUDGET_BYTES, |total, page| {
+                    total.checked_add(page.rgba8.len())
+                });
+            if pages.pages.len() + 1 > MAX_ACTOR_TEXTURE_PAGES
+                || bytes.is_none_or(|bytes| bytes > MAX_ACTOR_GPU_PIXEL_BYTES)
+                || pages
+                    .pages
+                    .iter()
+                    .any(|page| page.layers > limits.max_texture_array_layers)
+            {
+                self.pending = None;
+                self.identity = Some(identity);
+                self.pages.clear();
+                self.rejected = true;
+                bevy::log::warn!(
+                    "neutral actor artwork exceeds device limits; generic artwork unavailable"
+                );
+                return false;
+            }
+            self.pending = Some(PendingArtwork {
+                identity,
+                pages: Vec::with_capacity(pages.pages.len()),
+                source: None,
+                cursor: Default::default(),
+            });
         }
-        for page in pages.pages.iter() {
-            // UVs are normalised, so a page past the device limit draws downscaled, not blank.
-            let page = &page.fit_within(limits.max_texture_dimension_2d);
-            let texture = device.tracked_create_texture_with_data(
-                queue,
-                &TextureDescriptor {
+        let pending = self.pending.as_mut().expect("validated artwork generation");
+        let mut remaining = crate::texture_upload::TEXTURE_UPLOAD_BATCH_BYTES;
+        let mut allocated = false;
+        while pending.pages.len() < pages.pages.len() || pending.source.is_some() {
+            if pending.source.is_none() {
+                if allocated {
+                    return false;
+                }
+                let page = pages.pages[pending.pages.len()]
+                    .fit_within(limits.max_texture_dimension_2d)
+                    .into_owned();
+                let texture = device.create_texture(&TextureDescriptor {
                     label: Some("immutable neutral binary-alpha actor page"),
                     size: Extent3d {
                         width: u32::from(page.width),
@@ -80,23 +107,68 @@ impl GpuArtwork {
                     format: TextureFormat::Rgba8UnormSrgb,
                     usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
                     view_formats: &[],
-                },
-                TextureDataOrder::LayerMajor,
-                &page.rgba8,
-            );
-            let view = texture.create_view(&TextureViewDescriptor {
-                dimension: Some(TextureViewDimension::D2Array),
-                ..default()
-            });
-            self.pages.push(GpuArtworkPage {
-                _texture: texture,
-                view,
-                bind_group: None,
-                color_mask: page.color_mask,
-                multitexture: page.multitexture,
-            });
+                });
+                let view = texture.create_view(&TextureViewDescriptor {
+                    dimension: Some(TextureViewDimension::D2Array),
+                    ..default()
+                });
+                pending.pages.push(GpuArtworkPage {
+                    _texture: texture,
+                    view,
+                    bind_group: None,
+                    color_mask: page.color_mask,
+                    multitexture: page.multitexture,
+                });
+                pending.source = Some(page);
+                pending.cursor = Default::default();
+                allocated = true;
+            }
+            let page = pending.source.as_ref().expect("allocated actor page");
+            let size = [u32::from(page.width), u32::from(page.height), page.layers];
+            while let Some(slice) = pending.cursor.take(size, 4, &mut remaining) {
+                queue.tracked_write_texture(
+                    TexelCopyTextureInfo {
+                        texture: &pending
+                            .pages
+                            .last()
+                            .expect("allocated actor texture")
+                            ._texture,
+                        mip_level: 0,
+                        origin: bevy::render::render_resource::Origin3d {
+                            x: 0,
+                            y: slice.row,
+                            z: slice.layer,
+                        },
+                        aspect: default(),
+                    },
+                    &page.rgba8[slice.bytes],
+                    TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(size[0] * 4),
+                        rows_per_image: Some(size[1]),
+                    },
+                    Extent3d {
+                        width: size[0],
+                        height: slice.rows,
+                        depth_or_array_layers: slice.layers,
+                    },
+                );
+            }
+            if !pending.cursor.complete(page.layers) {
+                return false;
+            }
+            pending.source = None;
         }
+        let pending = self.pending.take().expect("completed actor artwork");
+        self.pages = pending.pages;
+        self.identity = Some(identity);
+        self.rejected = false;
         true
+    }
+
+    /// Pending artwork retains the previous complete GPU actor frame.
+    pub(super) fn is_pending(&self) -> bool {
+        self.pending.is_some()
     }
 
     pub fn invalidate_bindings(&mut self) {
@@ -142,6 +214,71 @@ pub(super) fn draw_spans(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn artwork_uploads_are_bounded_and_publish_only_complete_generations() {
+        use bevy::render::renderer::WgpuWrapper;
+        use std::sync::Arc;
+
+        let (device, queue) = wgpu::Device::noop(&wgpu::DeviceDescriptor::default());
+        let device = RenderDevice::from(device);
+        let queue = RenderQueue(Arc::new(WgpuWrapper::new(queue)));
+        let page = |side| crate::actor::ActorTexturePage {
+            width: side,
+            height: side,
+            layers: 2,
+            rgba8: vec![255; usize::from(side).pow(2) * 4 * 2].into(),
+            color_mask: false,
+            multitexture: false,
+        };
+        let mut pages = ActorArtworkPages::default();
+        pages.identity = [1; 32];
+        pages.pages = Arc::from([page(4)]);
+        let mut gpu = GpuArtwork::default();
+        assert!(gpu.prepare(&pages, &device, &queue));
+        let old_id = gpu.pages[0]._texture.id();
+        pages.entity_identity = [2; 32];
+        pages.pages = Arc::from([page(1024), page(8), page(16)]);
+        let mut allocated = 0;
+        for _ in 0..32 {
+            let before = crate::render_work::snapshot();
+            let ready = gpu.prepare(&pages, &device, &queue);
+            let work = crate::render_work::snapshot().delta_since(before);
+            assert!(
+                work.texture_upload_bytes
+                    <= crate::texture_upload::TEXTURE_UPLOAD_BATCH_BYTES as u64
+            );
+            assert_eq!(work.readback_waits, 0);
+            if ready {
+                assert_eq!(gpu.pages.len(), 3);
+                assert_ne!(gpu.pages[0]._texture.id(), old_id);
+                let before = crate::render_work::snapshot();
+                let ids = gpu
+                    .pages
+                    .iter()
+                    .map(|page| page._texture.id())
+                    .collect::<Vec<_>>();
+                assert!(gpu.prepare(&pages, &device, &queue));
+                assert_eq!(
+                    gpu.pages
+                        .iter()
+                        .map(|page| page._texture.id())
+                        .collect::<Vec<_>>(),
+                    ids
+                );
+                assert_eq!(
+                    crate::render_work::snapshot().delta_since(before),
+                    Default::default()
+                );
+                return;
+            }
+            assert_eq!(gpu.pages[0]._texture.id(), old_id);
+            let next = gpu.pending.as_ref().unwrap().pages.len();
+            assert!(next - allocated <= 1);
+            allocated = next;
+        }
+        panic!("bounded artwork upload must make progress");
+    }
 
     #[test]
     fn blended_instances_keep_separate_sortable_spans_while_opaque_instances_batch() {

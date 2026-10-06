@@ -139,14 +139,20 @@ Slow lines include the latest completed `render_frame_id` and `render_systems`: 
 largest completed Cinnabar render-system/node spans, each with milliseconds and call count.
 These wall spans can overlap. Extraction can complete on another thread; attribution follows
 completion, not a claim that the overlapping main frame caused the work.
-The nested `gpu_api_*` spans measure our uploads, resource creation and polling calls.
+The nested `gpu_api_*` spans measure our uploads, resource creation, submission and polling calls.
+Upload-view spans include copying and enqueue-on-drop, not just staging allocation.
 They include driver waits and thread descheduling, overlap their caller, and do not prove
 that the driver consumed that duration of CPU time.
 
 Work counters live at Cinnabar's call sites, with stock Bevy dependencies. They count new-key
 specializer callbacks, directly queued descriptors, our bind groups, buffer/texture upload
 payload bytes, chunk arena migrations/copied bytes, and readback polls versus waits. They do
-not count internal Bevy uploads, bind groups or native pipeline compilation. Direct pipeline
+not count internal Bevy uploads, bind groups or native pipeline compilation.
+`own_queue_submits` excludes the stock graph submission. Completion callbacks attach to
+submitted frames without an empty submission. One nonblocking poll serves all our rings.
+Staging counters distinguish retained copies, fallback writes, and fixed pool allocation.
+The `render_graph` bracket surrounds stock rendering but can include scheduler delay and
+private pipeline work; it is not an exact native submit timer. Direct pipeline
 and shader creation fields are explicitly `own_*`. A cache hit does not add a specialization;
 different keys that produce the same descriptor still count as separate specialization work.
 
@@ -157,7 +163,11 @@ measurements. Stock Bevy keeps pipeline processing private; the submission span 
 precise native compilation measurement.
 
 GPU timing uses timestamp queries when the adapter supports them, read back
-asynchronously, so `gpu_*` stages describe a frame a few frames older than the
+asynchronously. Node timestamps use isolated compute markers so they cannot attach
+to subsequent real render passes; `timestamp_marker_passes` counts this work. Pass-only
+resolution shares the main submission. Per-draw profiling resolves after deferred
+commands finish and adds one counted submission when queries exist. Thus `gpu_*`
+stages describe a frame a few frames older than the
 window they appear in. `gpu_frame` spans the first to last timestamp; node stages
 are `gpu_shadows`, `gpu_opaque`, `gpu_transparent`, `gpu_ui`, `gpu_hand`,
 `gpu_post`, `gpu_tonemapping`, `gpu_fxaa` and `gpu_blit`. With

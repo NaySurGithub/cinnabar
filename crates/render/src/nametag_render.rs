@@ -85,6 +85,7 @@ fn phase_batch_range(index: usize) -> Range<u32> {
 }
 
 pub(crate) fn install_nametag_render(app: &mut App) {
+    crate::upload_staging::install(app);
     crate::pipeline_warmup::register::<NametagPipeline>(app);
     app.init_resource::<NametagSceneResource>()
         .add_plugins(ExtractResourcePlugin::<NametagSceneResource>::default());
@@ -113,6 +114,8 @@ pub(crate) fn install_nametag_render(app: &mut App) {
 #[derive(Resource)]
 struct NametagGpu {
     record_buffer: Buffer,
+    records: Vec<NametagRecord>,
+    see_through: usize,
     atlas_view: TextureView,
     atlas_texture: bevy::render::render_resource::Texture,
     sampler: Sampler,
@@ -157,6 +160,8 @@ fn init_nametag_gpu(mut commands: Commands, render_device: Res<RenderDevice>) {
     });
     commands.insert_resource(NametagGpu {
         record_buffer,
+        records: Vec::with_capacity(MAX_NAMETAG_RECORDS),
+        see_through: 0,
         atlas_view,
         atlas_texture,
         sampler,
@@ -170,21 +175,34 @@ fn init_nametag_gpu(mut commands: Commands, render_device: Res<RenderDevice>) {
 
 fn prepare_nametags(
     scene: Res<NametagSceneResource>,
-    render_queue: Res<RenderQueue>,
+    render_device: Res<RenderDevice>,
+    (render_queue, staging): (
+        Res<RenderQueue>,
+        Option<Res<crate::upload_staging::BufferUploadStaging>>,
+    ),
     mut gpu: ResMut<NametagGpu>,
 ) {
     let _render_system_span =
         crate::render_systems::time(crate::render_systems::System::NametagRenderPrepareNametags);
     let total = scene.records.len().min(MAX_NAMETAG_RECORDS);
-    gpu.total = total as u32;
-    gpu.batches = record_batches(&scene.records[..total], scene.see_through.min(total));
-    if total > 0 {
-        render_queue.tracked_write_buffer(
-            &gpu.record_buffer,
-            0,
-            bytemuck::cast_slice::<NametagRecord, u8>(&scene.records[..total]),
-        );
+    let records = &scene.records[..total];
+    let records_changed = gpu.records.as_slice() != records;
+    let see_through = scene.see_through.min(total);
+    if records_changed || gpu.see_through != see_through {
+        gpu.batches = record_batches(records, see_through);
+        gpu.see_through = see_through;
     }
+    if records_changed {
+        crate::upload_staging::write_batch(
+            staging.as_deref(),
+            &render_device,
+            &render_queue,
+            &[(&gpu.record_buffer, 0, bytemuck::cast_slice(records))],
+        );
+        gpu.records.clear();
+        gpu.records.extend_from_slice(records);
+    }
+    gpu.total = total as u32;
     if Arc::ptr_eq(&scene.atlas, &gpu.atlas) {
         return;
     }
@@ -779,17 +797,20 @@ impl crate::pipeline_warmup::PrewarmPipelines for NametagPipeline {
         view: crate::pipeline_warmup::WarmView,
         ids: &mut crate::pipeline_warmup::WarmupIds,
     ) -> Result<(), BevyError> {
-        for depth_tested in [false, true] {
-            for text in [false, true] {
-                ids.push(self.variants.specialize(
-                    cache,
-                    NametagPipelineKey {
-                        msaa: view.msaa,
-                        hdr: view.hdr,
-                        depth_tested,
-                        text,
-                    },
-                )?);
+        for gamma_blend in [false, true] {
+            for depth_tested in [false, true] {
+                for text in [false, true] {
+                    ids.push(self.variants.specialize(
+                        cache,
+                        NametagPipelineKey {
+                            msaa: view.msaa,
+                            hdr: view.hdr,
+                            gamma_blend,
+                            depth_tested,
+                            text,
+                        },
+                    )?);
+                }
             }
         }
         Ok(())
@@ -797,3 +818,7 @@ impl crate::pipeline_warmup::PrewarmPipelines for NametagPipeline {
 }
 
 crate::render_systems::extract_resource!(NametagSceneResource, ExtractNametagSceneResource);
+
+#[cfg(test)]
+#[path = "nametag_render/upload_tests.rs"]
+mod upload_tests;

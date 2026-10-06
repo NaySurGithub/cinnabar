@@ -30,6 +30,67 @@ fn creations_survive_drop_and_unchanged_frames_do_no_work() {
 }
 
 #[test]
+fn buffer_upload_view_counts_payload_once_through_enqueue() {
+    let (device, queue) = device();
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: 32,
+        usage: wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let before = crate::render_work::snapshot();
+    let mut view = queue
+        .tracked_write_buffer_with(&buffer, 8, std::num::NonZeroU64::new(16).unwrap())
+        .unwrap();
+    view.copy_from_slice(&[7; 16]);
+    assert_eq!(
+        crate::render_work::snapshot()
+            .delta_since(before)
+            .buffer_upload_bytes,
+        16
+    );
+    drop(view);
+    let work = crate::render_work::snapshot().delta_since(before);
+    assert_eq!(work.buffer_upload_bytes, 16);
+    assert_eq!(work.own_queue_submits, 0);
+    assert_eq!(work.readback_waits, 0);
+}
+
+#[test]
+fn completion_callback_fences_existing_work_without_an_empty_submission() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let (device, queue) = device();
+    queue.tracked_submit([]);
+    let before = crate::render_work::snapshot();
+    let completed = Arc::new(AtomicBool::new(false));
+    let callback = completed.clone();
+    queue.tracked_on_submitted_work_done(move || callback.store(true, Ordering::Release));
+    device.poll_frame().unwrap();
+    assert!(completed.load(Ordering::Acquire));
+    let work = crate::render_work::snapshot().delta_since(before);
+    assert_eq!(work.own_queue_submits, 0);
+    assert_eq!(work.completion_callbacks, 1);
+    assert_eq!(work.readback_polls, 1);
+    assert_eq!(work.readback_waits, 0);
+}
+
+#[test]
+fn callback_pump_issues_one_nonblocking_poll_per_frame() {
+    use bevy::ecs::system::RunSystemOnce;
+    let (device, _) = device();
+    let mut world = World::new();
+    world.insert_resource(device);
+    let before = crate::render_work::snapshot();
+    for _ in 0..3 {
+        world.run_system_once(poll_gpu_completions).unwrap();
+    }
+    let work = crate::render_work::snapshot().delta_since(before);
+    assert_eq!(work.readback_polls, 3);
+    assert_eq!(work.readback_waits, 0);
+    assert_eq!(work.own_queue_submits, 0);
+}
+
+#[test]
 fn shader_and_bind_group_counts_include_first_use_only() {
     let (device, _) = device();
     let before = crate::render_work::snapshot();

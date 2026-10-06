@@ -3,7 +3,6 @@
 //! so its depth holds only static, fully opaque geometry; a pyramid of it tests every resident
 //! slot, and the bits come back asynchronously for later frames to skip what stays occluded.
 
-use crate::render_work::DeviceWork as _;
 use crate::render_work::QueueWork as _;
 use std::sync::{
     Arc,
@@ -386,7 +385,6 @@ pub(super) fn prepare_direct_occlusion(
         &mut hidden,
     );
     occlusion.upload(&device, &queue);
-    let _ = device.tracked_poll(PollType::Poll);
     occlusion.apply_verdicts();
 
     let Some(queued) = frame.view else {

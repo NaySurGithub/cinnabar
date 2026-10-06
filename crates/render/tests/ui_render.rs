@@ -12,8 +12,12 @@ mod render_work;
 #[path = "../src/shader_safety.rs"]
 #[allow(dead_code, reason = "shared checked shader constructors")]
 mod shader_safety;
+#[path = "../src/texture_upload.rs"]
+mod texture_upload;
 #[path = "../src/ui_render.rs"]
 pub mod ui_render;
+#[path = "../src/upload_staging.rs"]
+mod upload_staging;
 
 // This standalone UI fixture installs no camera-effect scene. Production's
 // post-hand camera pass is exercised by the render library and live client.

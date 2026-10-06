@@ -1,4 +1,5 @@
 use crate::chunk::*;
+use crate::render_work::QueueWork as _;
 
 /// Hard 16 MiB ceiling for one committed transparent indirection snapshot.
 pub const MAX_TRANSPARENT_DRAW_REFS: usize = 2_097_152;
@@ -132,7 +133,7 @@ pub(in crate::chunk) fn ensure_transparent_ref_capacity(
             );
         }
         // The old buffer is released once this submission no longer needs it.
-        queue.submit([encoder.finish()]);
+        queue.tracked_submit([encoder.finish()]);
     }
     arena.transparent_ref_buffer = grown;
     arena.transparent_slot_refs = slot_refs;

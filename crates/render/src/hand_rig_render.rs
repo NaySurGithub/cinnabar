@@ -1,7 +1,7 @@
 //! Near-camera first-person pass that draws the local player's own animated rig (arms + hands)
 //! over the scene, reusing the actor rig's packed buffers with a hand-local view and lighting.
 //! The rendered content is the player's own skin on the standard samples player geometry.
-use crate::render_work::{DeviceWork as _, PipelineWork as _, QueueWork as _};
+use crate::render_work::{DeviceWork as _, PipelineWork as _};
 use crate::{ActorGpuInstance, ActorRigGeometrySpan, ActorRigRenderFrame};
 use bevy::{
     asset::{load_internal_asset, uuid_handle},
@@ -193,6 +193,7 @@ impl HandRigScene {
 
 fn install(app: &mut App) {
     crate::pipeline_warmup::register::<HandRigGpu>(app);
+    crate::upload_staging::install(app);
     app.init_resource::<HandRigScene>();
     crate::lighting::install(app);
     let Some(render_app) = app.get_sub_app(RenderApp) else {
@@ -289,6 +290,7 @@ struct HandRigGpu {
     view_uniform: Buffer,
     material: Buffer,
     light_uniform: Buffer,
+    uniforms: Option<([f32; 16], HandRigLight)>,
     instances: Option<Buffer>,
     vertices: crate::actor::gpu::SegmentedVertexBuffer,
     spans: Option<Buffer>,
@@ -333,6 +335,7 @@ fn init_gpu(mut commands: Commands, device: Res<RenderDevice>) {
         view_uniform: uniform("first-person rig view", &[0u8; 64]),
         material,
         light_uniform: uniform("first-person rig light", &[0u8; 16]),
+        uniforms: None,
         instances: None,
         vertices: default(),
         spans: None,
@@ -355,7 +358,10 @@ fn prepare(
     scene: Res<HandRigScene>,
     background: Option<Res<crate::panorama::PanoramaScene>>,
     device: Res<RenderDevice>,
-    queue: Res<RenderQueue>,
+    (queue, staging): (
+        Res<RenderQueue>,
+        Option<Res<crate::upload_staging::BufferUploadStaging>>,
+    ),
     cache: Res<PipelineCache>,
     mut gpu: ResMut<HandRigGpu>,
     views: Query<(&ExtractedView, &Msaa)>,
@@ -382,19 +388,21 @@ fn prepare(
     };
     let size = [viewport.z, viewport.w];
     upload_geometry(&mut gpu, &device, &queue, frame);
-    upload_pose(&mut gpu, &device, &queue, frame);
+    upload_pose(&mut gpu, &device, &queue, staging.as_deref(), frame);
     upload_skin(&mut gpu, &device, &queue, frame);
     upload_atlas(&mut gpu, &device, &queue, frame);
     ensure_depth(&mut gpu, &device, size, samples);
     let aspect = viewport.z as f32 / viewport.w as f32;
     let projection =
         Mat4::perspective_infinite_reverse_rh(frame.fov_radians, aspect, HAND_RIG_NEAR_PLANE);
-    queue.tracked_write_buffer(
-        &gpu.view_uniform,
-        0,
-        bytemuck::cast_slice(&projection.to_cols_array()),
+    upload_uniforms(
+        &mut gpu,
+        &device,
+        &queue,
+        staging.as_deref(),
+        projection,
+        frame.light,
     );
-    queue.tracked_write_buffer(&gpu.light_uniform, 0, bytemuck::bytes_of(&frame.light));
     build_bind_group(&mut gpu, &device, &cache);
     let gpu = &mut *gpu;
     let layout = gpu.layout.clone();
@@ -404,6 +412,38 @@ fn prepare(
     if gpu.bind_group.is_none() || gpu.pipeline.is_none() {
         gpu.maximum_vertex_count = 0;
     }
+}
+
+/// Uploads only changed hand projection and lighting, with no recurring queue allocation.
+fn upload_uniforms(
+    gpu: &mut HandRigGpu,
+    device: &RenderDevice,
+    queue: &RenderQueue,
+    staging: Option<&crate::upload_staging::BufferUploadStaging>,
+    projection: Mat4,
+    light: HandRigLight,
+) {
+    let projection = projection.to_cols_array();
+    let view_bytes = if gpu.uniforms.as_ref().is_none_or(|old| old.0 != projection) {
+        bytemuck::cast_slice(&projection)
+    } else {
+        &[]
+    };
+    let light_bytes = if gpu.uniforms.as_ref().is_none_or(|old| old.1 != light) {
+        bytemuck::bytes_of(&light)
+    } else {
+        &[]
+    };
+    crate::upload_staging::write_batch(
+        staging,
+        device,
+        queue,
+        &[
+            (&gpu.view_uniform, 0, view_bytes),
+            (&gpu.light_uniform, 0, light_bytes),
+        ],
+    );
+    gpu.uniforms = Some((projection, light));
 }
 
 fn deactivate(gpu: &mut HandRigGpu) {
@@ -440,10 +480,12 @@ fn upload_geometry(
     gpu.bind_group = None;
 }
 
+/// Stages one complete pose while keeping its destination buffers and bindings stable.
 fn upload_pose(
     gpu: &mut HandRigGpu,
     device: &RenderDevice,
     queue: &RenderQueue,
+    staging: Option<&crate::upload_staging::BufferUploadStaging>,
     frame: &HandRigFrame,
 ) {
     if gpu.revision == Some(frame.revision) && gpu.instances.is_some() {
@@ -469,21 +511,40 @@ fn upload_pose(
         ),
     ] {
         match slot {
-            Some(buffer) if buffer.size() == bytes.len() as u64 => {
-                queue.tracked_write_buffer(buffer, 0, bytes);
-            }
+            Some(buffer) if buffer.size() == bytes.len() as u64 => {}
             _ => {
-                *slot = Some(
-                    device.tracked_create_buffer_with_data(&BufferInitDescriptor {
-                        label: Some(label),
-                        contents: bytes,
-                        usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
-                    }),
-                );
+                *slot = Some(device.create_buffer(&BufferDescriptor {
+                    label: Some(label),
+                    size: bytes.len() as u64,
+                    usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                }));
                 recreated = true;
             }
         }
     }
+    crate::upload_staging::write_batch(
+        staging,
+        device,
+        queue,
+        &[
+            (
+                gpu.instances.as_ref().unwrap(),
+                0,
+                bytemuck::cast_slice(&frame.rig.instances),
+            ),
+            (
+                gpu.previous_bones.as_ref().unwrap(),
+                0,
+                bytemuck::cast_slice(&frame.rig.previous_bones),
+            ),
+            (
+                gpu.current_bones.as_ref().unwrap(),
+                0,
+                bytemuck::cast_slice(&frame.rig.current_bones),
+            ),
+        ],
+    );
     gpu.maximum_vertex_count = frame.rig.maximum_vertex_count;
     gpu.instance_count = u32::try_from(frame.rig.instances.len()).unwrap_or(0);
     gpu.revision = Some(frame.revision);

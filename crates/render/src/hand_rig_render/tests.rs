@@ -167,7 +167,13 @@ fn pose_updates_reuse_their_buffers() {
     let mut buffers = Vec::new();
     for revision in 1..=3 {
         assert!(scene.publish(single_instance_frame(), skin(), light(), 1.2, revision));
-        upload_pose(&mut gpu, &device, &queue, scene.frame.as_ref().unwrap());
+        upload_pose(
+            &mut gpu,
+            &device,
+            &queue,
+            None,
+            scene.frame.as_ref().unwrap(),
+        );
         buffers.push(gpu.instances.as_ref().unwrap().id());
     }
     assert!(buffers.windows(2).all(|pair| pair[0] == pair[1]));
@@ -227,6 +233,84 @@ fn pose_updates_reuse_their_buffers() {
     upload_atlas(&mut gpu, &device, &queue, scene.frame.as_ref().unwrap());
     assert!(gpu.atlases[0].is_none());
     assert!(gpu.atlases[1].is_some());
+}
+
+#[test]
+fn recurring_hand_uploads_stage_bounded_payloads_and_skip_unchanged_inputs() {
+    use bevy::{ecs::system::RunSystemOnce, render::renderer::WgpuWrapper};
+    let (device, queue) = wgpu::Device::noop(&Default::default());
+    let device = RenderDevice::from(device);
+    let queue = RenderQueue(Arc::new(WgpuWrapper::new(queue)));
+    let staging = crate::upload_staging::BufferUploadStaging::for_tests(&device, 4096);
+    let mut world = World::new();
+    world.insert_resource(device.clone());
+    world.run_system_once(init_gpu).unwrap();
+    let mut gpu = world.remove_resource::<HandRigGpu>().unwrap();
+    let mut scene = HandRigScene::default();
+    assert!(scene.publish(single_instance_frame(), skin(), light(), 1.2, 1));
+    let frame = scene.frame.as_ref().unwrap();
+    upload_pose(&mut gpu, &device, &queue, Some(&staging), frame);
+    upload_uniforms(
+        &mut gpu,
+        &device,
+        &queue,
+        Some(&staging),
+        Mat4::IDENTITY,
+        frame.light,
+    );
+    let buffers = [
+        gpu.instances.as_ref().unwrap().id(),
+        gpu.previous_bones.as_ref().unwrap().id(),
+        gpu.current_bones.as_ref().unwrap().id(),
+    ];
+    let before = crate::render_work::snapshot();
+    upload_pose(&mut gpu, &device, &queue, Some(&staging), frame);
+    upload_uniforms(
+        &mut gpu,
+        &device,
+        &queue,
+        Some(&staging),
+        Mat4::IDENTITY,
+        frame.light,
+    );
+    assert_eq!(
+        crate::render_work::snapshot().delta_since(before),
+        Default::default()
+    );
+
+    let frame = scene.frame.as_mut().unwrap();
+    frame.revision += 1;
+    Arc::make_mut(&mut frame.rig.current_bones)[0][0][0] = 1.0;
+    frame.light.daylight = 0.5;
+    let expected = size_of_val(frame.rig.instances.as_ref())
+        + size_of_val(frame.rig.previous_bones.as_ref())
+        + size_of_val(frame.rig.current_bones.as_ref())
+        + size_of::<HandRigLight>();
+    let before = crate::render_work::snapshot();
+    upload_pose(&mut gpu, &device, &queue, Some(&staging), frame);
+    upload_uniforms(
+        &mut gpu,
+        &device,
+        &queue,
+        Some(&staging),
+        Mat4::IDENTITY,
+        frame.light,
+    );
+    let work = crate::render_work::snapshot().delta_since(before);
+    assert_eq!(work.staged_uploads, 4);
+    assert_eq!(work.staged_upload_bytes, expected as u64);
+    assert_eq!(work.buffer_upload_bytes, expected as u64);
+    assert_eq!(work.fallback_uploads, 0);
+    assert_eq!(work.staging_buffers, 0);
+    assert_eq!(work.readback_waits, 0);
+    assert_eq!(
+        [
+            gpu.instances.as_ref().unwrap().id(),
+            gpu.previous_bones.as_ref().unwrap().id(),
+            gpu.current_bones.as_ref().unwrap().id()
+        ],
+        buffers
+    );
 }
 
 #[test]

@@ -1,6 +1,9 @@
 //! Atlas-backed model, portal and overlay passes with separate vertex lists.
 //! Models and portal planes draw in the opaque phase; overlays draw afterward.
 
+mod vertex_list;
+use vertex_list::VertexList;
+
 use crate::render_work::{DeviceWork as _, QueueWork as _};
 use std::mem::size_of;
 
@@ -24,16 +27,16 @@ use bevy::{
             SetItemPipeline, TrackedRenderPass, ViewBinnedRenderPhases, ViewSortedRenderPhases,
         },
         render_resource::{
-            AddressMode, BindGroup, BindGroupEntry, BindGroupLayoutDescriptor,
-            BindGroupLayoutEntry, BindingResource, BindingType, BlendComponent, BlendFactor,
-            BlendOperation, BlendState, Buffer, BufferBindingType, BufferDescriptor, BufferId,
-            BufferSize, BufferUsages, Canonical, ColorTargetState, ColorWrites, CompareFunction,
-            DepthStencilState, Extent3d, FilterMode, FragmentState, Origin3d, PipelineCache,
-            PrimitiveTopology, RenderPipeline, RenderPipelineDescriptor, Sampler,
-            SamplerBindingType, SamplerDescriptor, ShaderStages, ShaderType, Specializer,
-            SpecializerKey, TexelCopyBufferLayout, TexelCopyTextureInfo, Texture,
-            TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType, TextureUsages,
-            TextureView, TextureViewDescriptor, TextureViewDimension, Variants, VertexState,
+            AddressMode, BindGroupEntry, BindGroupLayoutDescriptor, BindGroupLayoutEntry,
+            BindingResource, BindingType, BlendComponent, BlendFactor, BlendOperation, BlendState,
+            Buffer, BufferBindingType, BufferDescriptor, BufferId, BufferSize, BufferUsages,
+            Canonical, ColorTargetState, ColorWrites, CompareFunction, DepthStencilState, Extent3d,
+            FilterMode, FragmentState, Origin3d, PipelineCache, PrimitiveTopology, RenderPipeline,
+            RenderPipelineDescriptor, Sampler, SamplerBindingType, SamplerDescriptor, ShaderStages,
+            ShaderType, Specializer, SpecializerKey, TexelCopyBufferLayout, TexelCopyTextureInfo,
+            Texture, TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType,
+            TextureUsages, TextureView, TextureViewDescriptor, TextureViewDimension, Variants,
+            VertexState,
         },
         renderer::{RenderDevice, RenderQueue},
         sync_world::MainEntity,
@@ -49,7 +52,6 @@ use super::{
 
 const SHADER_HANDLE: Handle<Shader> = uuid_handle!("6f0c1c1e-3b6d-4a7e-9b1e-2f4f8a1d5c33");
 const VERTEX_BYTES: u64 = (BLOCK_ENTITY_VERTEX_WORDS * size_of::<f32>()) as u64;
-const MIN_BUFFER_VERTICES: u64 = 1024;
 const PORTAL_PARAMETER_BYTES: u64 = size_of::<[[f32; 4]; 4]>() as u64;
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -69,6 +71,7 @@ impl Plugin for BlockEntityRenderPlugin {
 struct BlockEntityRenderInstalled;
 
 fn install(app: &mut App) {
+    crate::upload_staging::install(app);
     crate::pipeline_warmup::register::<BlockEntityPipeline>(app);
     app.init_resource::<BlockEntityFrame>()
         .init_resource::<BlockSelectionFrame>()
@@ -121,53 +124,6 @@ fn install(app: &mut App) {
                     .in_set(RenderSystems::Queue),
             ),
         );
-}
-
-/// One storage buffer of vertices with its live count and bind group.
-struct VertexList {
-    buffer: Option<Buffer>,
-    capacity_vertices: u64,
-    count: u32,
-    bind_group: Option<BindGroup>,
-}
-
-impl VertexList {
-    const fn new() -> Self {
-        Self {
-            buffer: None,
-            capacity_vertices: 0,
-            count: 0,
-            bind_group: None,
-        }
-    }
-
-    fn upload(
-        &mut self,
-        vertices: &[BlockEntityVertex],
-        render_device: &RenderDevice,
-        render_queue: &RenderQueue,
-        label: &'static str,
-    ) {
-        self.count = u32::try_from(vertices.len()).unwrap_or(0);
-        if vertices.is_empty() {
-            return;
-        }
-        let needed = vertices.len() as u64;
-        if self.buffer.is_none() || self.capacity_vertices < needed {
-            let capacity = needed.next_power_of_two().max(MIN_BUFFER_VERTICES);
-            self.buffer = Some(render_device.create_buffer(&BufferDescriptor {
-                label: Some(label),
-                size: capacity * VERTEX_BYTES,
-                usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }));
-            self.capacity_vertices = capacity;
-            self.bind_group = None;
-        }
-        if let Some(buffer) = &self.buffer {
-            render_queue.tracked_write_buffer(buffer, 0, bytemuck::cast_slice(vertices));
-        }
-    }
 }
 
 #[derive(Resource)]
@@ -232,6 +188,7 @@ fn prepare_resources(
     render_device: Res<RenderDevice>,
     render_queue: Res<RenderQueue>,
     mut gpu: ResMut<BlockEntityGpu>,
+    staging: Option<Res<crate::upload_staging::BufferUploadStaging>>,
 ) {
     let _render_system_span =
         crate::render_systems::time(crate::render_systems::System::BlockEntityGpuPrepareResources);
@@ -243,10 +200,15 @@ fn prepare_resources(
         [red, green, blue, atmosphere.fog_start()],
         [atmosphere.fog_end(), 0.0, 0.0, 0.0],
     ];
-    render_queue.tracked_write_buffer(
-        &gpu.portal_uniform,
-        0,
-        bytemuck::cast_slice(&portal_parameters),
+    crate::upload_staging::write_batch(
+        staging.as_deref(),
+        &render_device,
+        &render_queue,
+        &[(
+            &gpu.portal_uniform,
+            0,
+            bytemuck::cast_slice(&portal_parameters),
+        )],
     );
     let atlas = frame
         .atlas
@@ -310,18 +272,21 @@ fn prepare_resources(
             &render_device,
             &render_queue,
             "block-entity solid vertices",
+            staging.as_deref(),
         );
         gpu.portal.upload(
             &frame.portal,
             &render_device,
             &render_queue,
             "portal encoded plane vertices",
+            staging.as_deref(),
         );
         gpu.additive.upload(
             &frame.additive,
             &render_device,
             &render_queue,
             "dragon death additive vertices",
+            staging.as_deref(),
         );
     }
     if gpu.frame_revision != frame.revision {
@@ -330,6 +295,7 @@ fn prepare_resources(
             &render_device,
             &render_queue,
             "block-entity overlay vertices",
+            staging.as_deref(),
         );
     }
     if gpu.selection_revision != selection.revision {
@@ -338,6 +304,7 @@ fn prepare_resources(
             &render_device,
             &render_queue,
             "block selection line vertices",
+            staging.as_deref(),
         );
     }
     if gpu.frame_revision != frame.revision || gpu.selection_revision != selection.revision {
@@ -352,6 +319,7 @@ fn prepare_resources(
             &render_device,
             &render_queue,
             "block-entity crack vertices",
+            staging.as_deref(),
         );
         gpu.frame_revision = frame.revision;
         gpu.selection_revision = selection.revision;
@@ -779,6 +747,8 @@ fn queue_outline(
     draw_functions: Res<DrawFunctions<Transparent3d>>,
     views: Query<(Entity, &MainEntity, &ExtractedView, &Msaa)>,
 ) {
+    let _render_system_span =
+        crate::render_systems::time(crate::render_systems::System::BlockEntityGpuQueueOutline);
     let draw_function = draw_functions.read().id::<DrawOutlineCommands>();
     queue_blended(
         &gpu.outline,
@@ -955,16 +925,8 @@ impl<P: PhaseItem, const LIST: u8> RenderCommand<P> for DrawList<LIST> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn vertex_lists_track_counts_without_a_device() {
-        let list = VertexList::new();
-        assert_eq!(list.count, 0);
-        assert!(list.buffer.is_none() && list.bind_group.is_none());
-    }
-}
+#[path = "gpu/tests.rs"]
+mod tests;
 
 impl crate::pipeline_warmup::PrewarmPipelines for BlockEntityPipeline {
     const PROFILE: crate::render_systems::System =
@@ -980,6 +942,7 @@ impl crate::pipeline_warmup::PrewarmPipelines for BlockEntityPipeline {
         for mode in [
             PipelineMode::Solid,
             PipelineMode::Overlay,
+            PipelineMode::Outline,
             PipelineMode::Crack,
             PipelineMode::Portal,
             PipelineMode::Additive,

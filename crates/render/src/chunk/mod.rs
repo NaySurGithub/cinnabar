@@ -1,3 +1,5 @@
+#[cfg(test)]
+use bevy::render::render_resource::PollType;
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque, hash_map::Entry},
     ops::Range,
@@ -44,12 +46,12 @@ use bevy::{
             BufferBindingType, BufferDescriptor, BufferId, BufferInitDescriptor, BufferUsages,
             Canonical, ColorTargetState, ColorWrites, CommandEncoderDescriptor, CompareFunction,
             DepthStencilState, DownlevelFlags, DrawIndexedIndirectArgs, Extent3d, FilterMode,
-            FragmentState, IndexFormat, Origin3d, PipelineCache, PollType, PrimitiveState,
-            RenderPipeline, RenderPipelineDescriptor, Sampler, SamplerBindingType,
-            SamplerDescriptor, ShaderStages, ShaderType, Specializer, SpecializerKey,
-            TexelCopyBufferLayout, TexelCopyTextureInfo, Texture, TextureDescriptor,
-            TextureDimension, TextureFormat, TextureSampleType, TextureUsages, TextureView,
-            TextureViewDescriptor, TextureViewDimension, Variants, VertexState, WgpuFeatures,
+            FragmentState, IndexFormat, Origin3d, PipelineCache, PrimitiveState, RenderPipeline,
+            RenderPipelineDescriptor, Sampler, SamplerBindingType, SamplerDescriptor, ShaderStages,
+            ShaderType, Specializer, SpecializerKey, TexelCopyBufferLayout, TexelCopyTextureInfo,
+            Texture, TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType,
+            TextureUsages, TextureView, TextureViewDescriptor, TextureViewDimension, Variants,
+            VertexState, WgpuFeatures,
         },
         renderer::{RenderAdapter, RenderDevice, RenderInstance, RenderQueue},
         settings::Backends,
