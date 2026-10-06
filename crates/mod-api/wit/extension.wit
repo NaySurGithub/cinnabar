@@ -234,7 +234,8 @@ world player-mod {
     use screen.{screen-layout, modifiers};
     use cinnabar:session/items@0.1.0.{stack};
 
-    /// What a `data-changed` reports as changed.
+    /// What a `data-changed` reports as changed. Closed: changing it would refuse every built
+    /// `data-changed`, so a new kind of change arrives as a new optional export instead.
     enum data-source {
         items,
         recipes,
@@ -259,9 +260,8 @@ world player-mod {
     /// collection name and index of the mod's control under the pointer, overlay or view, by
     /// the rule `action` uses (its nearest collection).
     export key: func(id: string, hovered: option<stack>, row: option<tuple<string, u32>>);
-    /// The listed session sources changed revision. A change that includes `items` or
-    /// `recipes`, which a mod reads whole, gets the load fuel budget; any other gets the
-    /// per-event budget. A component that exports this also gets the load budget for `init`.
+    /// The listed session sources changed revision, each listed once. It gets the load fuel
+    /// budget, as does `init` of a component that exports it.
     export data-changed: func(sources: list<data-source>);
     /// The host closed the view (Escape, or the container closing), not the mod.
     export view-closed: func();
