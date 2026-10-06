@@ -76,14 +76,12 @@ impl GpuCull {
     }
 }
 
+/// Chunks whose inherited visibility changed since the last extract.
+type VisibilityChanged = (With<ChunkRenderInstance>, Changed<InheritedVisibility>);
+
 pub(super) fn extract_hidden_chunks(
     mut hidden: ResMut<ChunkHiddenEntities>,
-    chunks: Extract<
-        Query<
-            (RenderEntity, &InheritedVisibility),
-            (With<ChunkRenderInstance>, Changed<InheritedVisibility>),
-        >,
-    >,
+    chunks: Extract<Query<(RenderEntity, &InheritedVisibility), VisibilityChanged>>,
 ) {
     let _render_system_span = crate::render_systems::time(
         crate::render_systems::System::ChunkGpuCullPrepareExtractHiddenChunks,

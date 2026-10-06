@@ -181,6 +181,13 @@ impl DeviceWork for RenderDevice {
 pub(crate) trait QueueWork {
     /// Counts only the bytes passed for this buffer update.
     fn tracked_write_buffer(&self, buffer: &wgpu::Buffer, offset: u64, data: &[u8]);
+    /// Counts a directly initialized staging allocation for this buffer update.
+    fn tracked_write_buffer_with(
+        &self,
+        buffer: &wgpu::Buffer,
+        offset: u64,
+        size: std::num::NonZeroU64,
+    ) -> Option<wgpu::QueueWriteBufferView>;
     /// Counts texel payload independently of source row padding.
     fn tracked_write_texture(
         &self,
@@ -196,6 +203,18 @@ impl QueueWork for RenderQueue {
         let _api_span =
             crate::render_systems::time(crate::render_systems::System::GpuApiWriteBuffer);
         self.write_buffer(buffer, offset, data);
+    }
+    fn tracked_write_buffer_with(
+        &self,
+        buffer: &wgpu::Buffer,
+        offset: u64,
+        size: std::num::NonZeroU64,
+    ) -> Option<wgpu::QueueWriteBufferView> {
+        let _api_span =
+            crate::render_systems::time(crate::render_systems::System::GpuApiWriteBuffer);
+        let view = self.write_buffer_with(buffer, offset, size)?;
+        record!(buffer_upload_bytes, size.get());
+        Some(view)
     }
     fn tracked_write_texture(
         &self,

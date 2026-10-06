@@ -31,6 +31,7 @@ type PublishExtras<'w> = (
     Option<Res<'w, crate::movement::PhysicsCollisionRegistries>>,
     Option<Res<'w, render::RuntimeStageProfiler>>,
     Option<Res<'w, render::PipelineWarmupReadiness>>,
+    Option<Res<'w, render::ActorPipelineReadiness>>,
     (
         Res<'w, crate::runtime::network::ActorFramePartialTick>,
         Res<'w, crate::local_player::LocalPlayerFrameCarrier>,
@@ -69,6 +70,7 @@ pub(crate) fn prepare_ui_runtime(
         collisions,
         profiler,
         pipelines,
+        actor_pipelines,
         (
             actor_partial,
             local_frame,
@@ -128,6 +130,9 @@ pub(crate) fn prepare_ui_runtime(
             render_work_drained: render_queue.retained_len() == 0
                 && upload_acknowledgements.is_empty(),
             pipelines_ready: pipelines.is_some_and(|pipelines| pipelines.ready()),
+            actor_pipelines_ready: actor_pipelines
+                .as_ref()
+                .is_none_or(|ready| ready.is_ready()),
             now: time.elapsed(),
         },
     );
@@ -302,11 +307,10 @@ pub(crate) fn prepare_ui_runtime(
         presentation.sync_menu_artwork(
             client_ui::ui_runtime::presentation::menu_artwork::view_paths(&view),
         );
-        for server in view.featured.iter_mut().chain(view.gatherings.iter_mut()) {
+        for server in view.featured.iter_mut() {
             server.icon = presentation.menu_artwork_icon(&server.image_path);
         }
         view.featured_icon = presentation.item_icon("minecraft:compass_item", 0);
-        view.gathering_icon = presentation.item_icon("minecraft:map_empty", 0);
         view.realm_icon = presentation.item_icon("minecraft:ender_pearl", 0);
         view.friend_icon = presentation.item_icon("minecraft:heart_of_the_sea", 0);
         view.saved_icon = presentation.item_icon("minecraft:book_normal", 0);

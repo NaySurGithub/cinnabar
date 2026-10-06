@@ -88,7 +88,7 @@ pub(crate) mod enhanced;
 mod extract;
 mod gpu;
 mod gpu_cull;
-pub(crate) use gpu_cull::TerrainPassLabel;
+pub(crate) use gpu_cull::{GpuCullLateLabel, TerrainPassLabel, admit_depth_sampling};
 mod instance;
 pub(crate) mod pipeline;
 pub use pipeline::layouts::required_vertex_storage_buffers;
@@ -102,7 +102,7 @@ pub use instance::ChunkRenderInstance;
 mod texture_reload;
 mod textures;
 pub use texture_reload::ChunkTextureReload;
-mod transparent;
+pub(crate) mod transparent;
 
 use constants::{
     BIOME_TINT_SHADER_HANDLE, BIOME_WORD_BYTES, CHUNK_ORIGIN_BYTES, CHUNK_SHADER_HANDLE,
@@ -167,7 +167,6 @@ use gpu::layout::{
     GpuUploadReservation, SHARED_GEOMETRY_ALIGNMENT_WORDS, account_chunk_gpu_uploads,
     advance_arena_migration, arena_capacities, begin_arena_migration, buffer_byte_len,
     checked_align_up, first_arena_growth, plan_arena_growth, write_geometry_stream_words,
-    write_stream_records,
 };
 #[allow(unused_imports)]
 use gpu::types::{
@@ -250,10 +249,6 @@ pub use textures::{
 #[allow(unused_imports)]
 use transparent::face_metric::{FaceOrderCamera, FaceOrderClass, TransparentFaceMetric};
 #[allow(unused_imports)]
-use transparent::liquid::{
-    transparent_frame_draw_for_range, transparent_frame_draws, transparent_liquid_phase_distance,
-};
-#[allow(unused_imports)]
 use transparent::model::{
     TransparentModelAddressIdentity, TransparentModelAllocationIdentity,
     TransparentModelCandidateCache, TransparentModelSortBatch, TransparentModelSortCandidate,
@@ -286,7 +281,7 @@ pub use transparent::sort::{
 use transparent::sort::{
     INITIAL_TRANSPARENT_SLOT_REFS, MAX_TRANSPARENT_RETIRED_ALLOCATIONS,
     MAX_TRANSPARENT_RETIRED_BYTES, TransparentAddressIdentity, TransparentCandidateCache,
-    TransparentGroupInput, TransparentGroupOrder, TransparentLiquidPhaseGroup,
+    TransparentGroupInput, TransparentGroupOrder, TransparentGroups, TransparentLiquidPhaseGroup,
     TransparentSortRuntime, TransparentSortWork, TransparentStagedSnapshot,
     TransparentWorkerResult, build_transparent_group, changed_ref_spans, distinct_tint_count,
     ensure_transparent_ref_capacity, prepare_transparent_sorts, sort_transparent_groups,

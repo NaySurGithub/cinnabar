@@ -16,6 +16,7 @@ pub(super) struct LoadingObservation {
     pub cohort: Option<chunk_pipeline::ViewCohortStatus>,
     pub render_work_drained: bool,
     pub pipelines_ready: bool,
+    pub actor_pipelines_ready: bool,
     pub now: Duration,
 }
 
@@ -71,9 +72,8 @@ pub(super) fn prepare_loading(
                 stream.local_terrain_ready()
             }
         });
-    // Action 14 acknowledges the committed flush independently. Release local
-    // movement and loading End after decoded collision data, presented footing
-    // and a fresh GPU frame, without waiting for distant ticking columns.
+    // Release movement and loading End after the dimension handshake, presented
+    // footing and a fresh GPU frame, without waiting for distant ticking columns.
     let (released, milestone) = presentation.startup_mut().observe_with_milestone(
         StartupReadinessInput {
             session_generation: runtime.session_id(),
@@ -104,6 +104,7 @@ pub(super) fn prepare_loading(
             render_work_drained: observation.render_work_drained,
             pipelines_ready: observation.pipelines_ready,
             world_entry_held: runtime.experiences.holds_world_entry()
+                || !observation.actor_pipelines_ready
                 || client_world.dimension_transfer.waiting_for_switch()
                 || (client_world.dimension_transfer.active() && !local_terrain_ready),
         },
@@ -134,6 +135,8 @@ pub(super) fn prepare_loading(
         Some(LoadingStage::Connecting)
     } else if released && !client_world.dimension_transfer.active() {
         None
+    } else if client_world.dimension_transfer.active() {
+        Some(LoadingStage::ChangingDimension)
     } else {
         Some(LoadingStage::BuildingTerrain)
     });
