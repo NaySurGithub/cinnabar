@@ -1,11 +1,11 @@
 //! What a player mod package's screens exchange with the host: the events its callbacks
 //! receive, the screens it commits, and the declarations a package carries.
 
-use crate::{ModHost, package::Package, runtime::Declared};
+use crate::{ModHost, TargetFrame, TextSource, package::Package, runtime::Declared};
 use anyhow::Result;
 use experience_sdk::mod_manifest::KeyDecl;
 use server_experience::{
-    screen::{self, ScreenLayout},
+    screen::{self, GuiSize, Rect, ScreenLayout},
     session_data::{SessionData, Stack},
 };
 use std::sync::Arc;
@@ -30,6 +30,15 @@ impl DataSource {
     pub fn read_whole(&self) -> bool {
         matches!(self, Self::Items | Self::Recipes)
     }
+}
+
+/// The gameplay HUD as laid out while a mod's HUD layer may draw.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HudLayout {
+    /// The HUD root's size in GUI units and the GUI scale.
+    pub size: GuiSize,
+    /// The laid-out vanilla boss bars, when any shows.
+    pub boss_bars: Option<Rect>,
 }
 
 /// One host event for a `player-mod` component's callbacks.
@@ -64,19 +73,26 @@ pub enum ModEvent {
     ViewClosed,
     /// The sources that changed, each once, in order.
     DataChanged(Vec<DataSource>),
+    /// The crosshair target's revision moved.
+    TargetChanged,
+    /// The HUD layer was shown, hidden (`None`) or laid out anew.
+    HudChanged(Option<HudLayout>),
 }
 
 impl ModEvent {
-    /// One frame's events as delivered: the latest layout first, one data change, then the rest
-    /// in order, with one text change per edit box (its latest, where it last occurred).
+    /// One frame's events as delivered: the latest screen and HUD layouts first, one data
+    /// change, one target change, then the rest in order, with one text change per edit box
+    /// (its latest, where it last occurred).
     pub fn coalesce(events: Vec<Self>) -> Vec<Self> {
         let mut out = Vec::with_capacity(events.len());
-        if let Some(layout) = events
-            .iter()
-            .rev()
-            .find(|event| matches!(event, Self::ScreenChanged(_)))
-        {
-            out.push(layout.clone());
+        let layouts: [fn(&&Self) -> bool; 2] = [
+            |event| matches!(event, Self::ScreenChanged(_)),
+            |event| matches!(event, Self::HudChanged(_)),
+        ];
+        for latest in layouts {
+            if let Some(layout) = events.iter().rev().find(latest) {
+                out.push(layout.clone());
+            }
         }
         let mut sources: Vec<DataSource> = events
             .iter()
@@ -94,6 +110,9 @@ impl ModEvent {
         {
             out.push(Self::DataChanged(sources));
         }
+        if events.contains(&Self::TargetChanged) {
+            out.push(Self::TargetChanged);
+        }
         for (index, event) in events.iter().enumerate() {
             let later_text = |control: &str| {
                 events[index + 1..].iter().any(|later| {
@@ -101,7 +120,10 @@ impl ModEvent {
                 })
             };
             match event {
-                Self::ScreenChanged(_) | Self::DataChanged(_) => {}
+                Self::ScreenChanged(_)
+                | Self::HudChanged(_)
+                | Self::DataChanged(_)
+                | Self::TargetChanged => {}
                 Self::TextChanged { control, .. } if later_text(control) => {}
                 event => out.push(event.clone()),
             }
@@ -176,6 +198,34 @@ impl ModHost {
             return self.dispatch(vec![ModEvent::DataChanged(sources)]);
         }
         Ok(())
+    }
+
+    /// The HUD layer's layout from now on; a change delivers `hud-changed` to a mod granted
+    /// `hud`.
+    pub fn set_hud_layout(&mut self, layout: Option<HudLayout>) -> Result<()> {
+        if self.instance.set_hud_layout(layout.clone()) && self.grants.hud {
+            return self.dispatch(vec![ModEvent::HudChanged(layout)]);
+        }
+        Ok(())
+    }
+
+    /// This frame's crosshair target and the seconds since the last frame; a changed look
+    /// moves `target.revision` and delivers `target-changed` to a mod granted `target`.
+    pub fn set_target(&mut self, target: TargetFrame, frame_seconds: f32) -> Result<()> {
+        if self.instance.set_target(target, frame_seconds) && self.grants.target {
+            return self.dispatch(vec![ModEvent::TargetChanged]);
+        }
+        Ok(())
+    }
+
+    /// The client's language and HUD font measure, which `text` reads.
+    pub fn set_text(&mut self, text: Arc<dyn TextSource>) {
+        self.instance.set_text(text);
+    }
+
+    /// The committed HUD template and its bound data; empty after a trap.
+    pub fn hud(&self) -> &screen::Modal {
+        self.instance.hud()
     }
 
     /// Stops the guest as a trap would, removing everything it presented: the host refused

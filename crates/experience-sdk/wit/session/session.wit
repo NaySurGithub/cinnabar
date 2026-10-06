@@ -101,3 +101,126 @@ interface recipes {
     /// Up to `count` recipes from `start`, cut to the host's per-call cap.
     page: func(start: u32, count: u32) -> result<list<recipe>, string>;
 }
+
+/// What the local player's crosshair resolves to this frame, exactly as the client's own pick
+/// resolves it (the block the outline highlights, or the actor an attack would hit), with the
+/// nearest liquid surface the same ray meets. Every function errs only when the `target`
+/// permission is denied.
+interface target {
+    use items.{stack};
+
+    record block-pos {
+        x: s32,
+        y: s32,
+        z: s32,
+    }
+
+    variant state-value {
+        int(s32),
+        boolean(bool),
+        text(string),
+    }
+
+    record block-state {
+        name: string,
+        value: state-value,
+    }
+
+    record block {
+        identifier: string,
+        states: list<block-state>,
+        /// The localized display name.
+        name: string,
+        /// The item the block is picked as, with its icon.
+        pick: option<stack>,
+        /// Negative for an unbreakable block; none when the client has no destroy facts.
+        hardness: option<f32>,
+    }
+
+    /// `distance` is in blocks from the eye along the ray.
+    record block-hit {
+        position: block-pos,
+        /// 0 down, 1 up, 2 north, 3 south, 4 west, 5 east.
+        face: u8,
+        distance: f32,
+        block: block,
+    }
+
+    record liquid-hit {
+        position: block-pos,
+        distance: f32,
+        /// The liquid's own block, such as `minecraft:water`.
+        block: block,
+        source: bool,
+    }
+
+    record actor-hit {
+        runtime-id: u64,
+        type-id: string,
+        /// The localized type name.
+        type-name: string,
+        /// The nametag, or a player's name.
+        name-tag: option<string>,
+        /// A dropped item's stack.
+        item: option<stack>,
+        /// From the replicated health attribute; none when the server sends none.
+        health: option<f32>,
+        max-health: option<f32>,
+        distance: f32,
+    }
+
+    variant hit {
+        block(block-hit),
+        actor(actor-hit),
+    }
+
+    record look {
+        hit: option<hit>,
+        /// The nearest liquid surface on the same ray within block reach.
+        liquid: option<liquid-hit>,
+        /// The eye is inside a liquid.
+        eye-in-liquid: bool,
+    }
+
+    /// The local player's block break in progress.
+    record mining-state {
+        position: block-pos,
+        /// Progress at the last tick, 0 to 1.
+        progress: f32,
+        /// Progress gained per tick with the held item.
+        per-tick: f32,
+        /// How far this frame is into the current tick, 0 to 1.
+        partial-tick: f32,
+        harvestable: bool,
+    }
+
+    /// Breaking the targeted block with the held item.
+    record harvest-facts {
+        /// The block drops only with a correct tool.
+        requires-tool: bool,
+        /// It breaks at once.
+        instant: bool,
+        /// The player can break it here.
+        breakable: bool,
+        held-can-harvest: bool,
+        /// The candidates that are correct for its drops or mine it faster.
+        effective: list<string>,
+    }
+
+    /// Changes whenever `current` would return something different.
+    revision: func() -> result<u64, string>;
+    /// None outside gameplay.
+    current: func() -> result<option<look>, string>;
+    mining: func() -> result<option<mining-state>, string>;
+    /// The targeted block's harvest facts against `candidates` (item identifiers, cut to the
+    /// host's per-call cap); none without a targeted block or its destroy facts.
+    harvest: func(candidates: list<string>) -> result<option<harvest-facts>, string>;
+}
+
+/// The client's text: its language and the HUD font's measure.
+interface text {
+    /// `key` in the active language, the server's strings first; none when unknown.
+    translate: func(key: string) -> option<string>;
+    /// `text`'s width in GUI units as a HUD label draws it.
+    width: func(text: string) -> f32;
+}

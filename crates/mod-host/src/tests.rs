@@ -1,5 +1,6 @@
 use super::*;
 mod gameplay;
+mod hud;
 mod prepared_settings;
 mod render;
 mod screens;

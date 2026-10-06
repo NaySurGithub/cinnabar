@@ -1,0 +1,15 @@
+{
+  "namespace": "probe",
+  "hud": {
+    "type": "panel",
+    "controls": [
+      {
+        "label": {
+          "type": "label",
+          "text": "#hud_label",
+          "bindings": [{ "binding_name": "#hud_label" }]
+        }
+      }
+    ]
+  }
+}

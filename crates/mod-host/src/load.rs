@@ -42,6 +42,8 @@ impl ModHost {
             items: asked.items,
             recipes: asked.recipes,
             keys: asked.keys,
+            hud: asked.hud,
+            target: asked.target,
             ..extra
         };
         Self::load_read_package(dir, package, grants)
@@ -57,6 +59,8 @@ impl ModHost {
             items: asked.items && grants.items,
             recipes: asked.recipes && grants.recipes,
             keys: asked.keys && grants.keys,
+            hud: asked.hud && grants.hud,
+            target: asked.target && grants.target,
             ..grants
         };
         Self::load_read_package(dir, package, grants)
@@ -250,6 +254,8 @@ impl ModGrants {
             items: asks(ModPermission::Items),
             recipes: asks(ModPermission::Recipes),
             keys: asks(ModPermission::Keys),
+            hud: asks(ModPermission::Hud),
+            target: asks(ModPermission::Target),
             ..Self::default()
         }
     }

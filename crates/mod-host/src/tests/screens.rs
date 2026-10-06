@@ -68,7 +68,7 @@ fn write_probe(dir: &Path, edit: impl Fn(&str) -> String) {
     let component = probe_component();
     std::fs::write(dir.join("mod.wasm"), component).unwrap();
     let mut files = format!("\"mod.wasm\" = \"{}\"\n", sha(component));
-    for name in ["overlay", "view"] {
+    for name in ["overlay", "view", "hud"] {
         let bytes = std::fs::read(Path::new(PROBE).join(format!("ui/{name}.json"))).unwrap();
         std::fs::write(dir.join(format!("ui/{name}.json")), &bytes).unwrap();
         files.push_str(&format!("\"ui/{name}.json\" = \"{}\"\n", sha(&bytes)));
@@ -77,22 +77,22 @@ fn write_probe(dir: &Path, edit: impl Fn(&str) -> String) {
     std::fs::write(dir.join("mod.toml"), edit(&manifest) + &files).unwrap();
 }
 
-fn probe_with(edit: impl Fn(&str) -> String) -> (tempfile::TempDir, ModHost) {
+pub(super) fn probe_with(edit: impl Fn(&str) -> String) -> (tempfile::TempDir, ModHost) {
     let dir = tempfile::tempdir().unwrap();
     write_probe(dir.path(), edit);
     let host = ModHost::load_package(dir.path(), ModGrants::default()).unwrap();
     (dir, host)
 }
 
-fn probe() -> (tempfile::TempDir, ModHost) {
+pub(super) fn probe() -> (tempfile::TempDir, ModHost) {
     probe_with(str::to_owned)
 }
 
-fn value<'a>(host: &'a ModHost, name: &str) -> Option<&'a Value> {
+pub(super) fn value<'a>(host: &'a ModHost, name: &str) -> Option<&'a Value> {
     host.screens().data.values.get(name)
 }
 
-fn text(host: &ModHost, name: &str) -> String {
+pub(super) fn text(host: &ModHost, name: &str) -> String {
     match value(host, name) {
         Some(Value::Text(text)) => text.clone(),
         other => panic!("{name}: {other:?}"),
@@ -177,7 +177,7 @@ fn session_sized(items: usize, recipes: usize, revision: u64) -> Arc<SessionData
     })
 }
 
-fn action(id: &str) -> ModEvent {
+pub(super) fn action(id: &str) -> ModEvent {
     ModEvent::Action {
         id: id.into(),
         index: Some(3),
@@ -211,7 +211,7 @@ fn a_package_initializes_its_overlay_and_reads_the_session_on_data_changed() {
 fn session_reads_without_their_permission_are_denied() {
     let (_dir, mut host) = probe_with(|manifest| {
         manifest.replace(
-            "permissions = [\"screen\", \"items\", \"recipes\", \"keys\"]",
+            "permissions = [\"screen\", \"items\", \"recipes\", \"keys\", \"hud\", \"target\"]",
             "permissions = [\"screen\"]",
         )
     });
@@ -458,7 +458,7 @@ fn a_package_in_a_set_needs_both_the_manifest_ask_and_the_loader_grant() {
     let unasked = tempfile::tempdir().unwrap();
     write_probe(unasked.path(), |manifest| {
         manifest.replace(
-            "permissions = [\"screen\", \"items\", \"recipes\", \"keys\"]",
+            "permissions = [\"screen\", \"items\", \"recipes\", \"keys\", \"hud\", \"target\"]",
             "permissions = [\"items\"]",
         )
     });

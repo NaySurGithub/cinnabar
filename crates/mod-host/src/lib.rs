@@ -13,11 +13,24 @@ mod screens;
 pub mod server;
 #[cfg(feature = "execution")]
 mod settings;
+#[cfg(feature = "execution")]
+mod target;
 
 #[cfg(feature = "execution")]
 pub use experience_sdk::mod_manifest::{KEY_NAMES, KeyDecl, Modifier};
 #[cfg(feature = "execution")]
-pub use screens::{DataSource, KeyModifiers, LoadedPackage, ModEvent, ModScreens};
+pub use runtime::cinnabar::session::items::{ItemKey as GuestItemKey, Stack as GuestStack};
+#[cfg(feature = "execution")]
+pub use runtime::cinnabar::session::target::{
+    ActorHit as TargetActorHit, Block as TargetBlock, BlockHit as TargetBlockHit,
+    BlockPos as TargetBlockPos, BlockState as TargetBlockState, HarvestFacts as TargetHarvest,
+    Hit as TargetHit, LiquidHit as TargetLiquidHit, Look as TargetLook,
+    MiningState as TargetMining, StateValue as TargetStateValue,
+};
+#[cfg(feature = "execution")]
+pub use screens::{DataSource, HudLayout, KeyModifiers, LoadedPackage, ModEvent, ModScreens};
+#[cfg(feature = "execution")]
+pub use target::{HarvestRules, MAX_HARVEST_CANDIDATES, MAX_TEXT_BYTES, TargetFrame, TextSource};
 
 #[cfg(feature = "execution")]
 pub use mod_api::{
@@ -105,6 +118,10 @@ pub struct ModGrants {
     pub recipes: bool,
     /// Allows delivering a package's declared keys.
     pub keys: bool,
+    /// Allows a package's template over the gameplay HUD.
+    pub hud: bool,
+    /// Allows reading the crosshair target and its mining and harvest facts.
+    pub target: bool,
 }
 
 /// Where a mod came from, which reload reads again.

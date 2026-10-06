@@ -3,9 +3,11 @@
 id = "probe"
 version = "0.1.0"
 api = "0.1"
-permissions = ["screen", "items", "recipes", "keys"]
-templates = ["ui/overlay.json", "ui/view.json"]
-actions = ["probe.view", "probe.close", "probe.flood", "probe.search", "probe.read_all"]
+permissions = ["screen", "items", "recipes", "keys", "hud", "target"]
+templates = ["ui/overlay.json", "ui/view.json", "ui/hud.json"]
+actions = [
+    "probe.view", "probe.close", "probe.flood", "probe.search", "probe.read_all", "probe.hud",
+]
 
 [[keys]]
 id = "probe.show"

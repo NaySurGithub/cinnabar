@@ -26,7 +26,7 @@ const MAX_HOST_CALLS: usize = 1024;
 
 impl State {
     /// Stops host-call floods even when the guest ignores denied results.
-    fn charge(&mut self) -> Result<()> {
+    pub(super) fn charge(&mut self) -> Result<()> {
         self.calls += 1;
         ensure!(self.calls <= MAX_HOST_CALLS, "host-call limit exceeded");
         Ok(())
@@ -59,7 +59,7 @@ impl State {
         Ok(result)
     }
 
-    fn template(&self, template: Option<&String>) -> Result<(), String> {
+    pub(super) fn template(&self, template: Option<&String>) -> Result<(), String> {
         match template {
             Some(template) if !self.declared.templates.contains(template) => {
                 Err(format!("{template} is not a template mod.toml declares"))
@@ -86,6 +86,8 @@ impl State {
                     "{id} is not a declared key"
                 );
             }
+            ModEvent::TargetChanged => ensure!(self.grants.target, "target permission denied"),
+            ModEvent::HudChanged(_) => ensure!(self.grants.hud, "hud permission denied"),
             ModEvent::ScreenChanged(_)
             | ModEvent::Scrolled { .. }
             | ModEvent::DataChanged(_)
@@ -100,7 +102,7 @@ impl State {
     }
 
     /// Charges a session read and refuses it without `granted`.
-    fn read(&mut self, granted: bool, permission: &str) -> Result<Result<(), String>> {
+    pub(super) fn read(&mut self, granted: bool, permission: &str) -> Result<Result<(), String>> {
         self.charge()?;
         Ok(if granted {
             Ok(())
@@ -140,33 +142,14 @@ impl screen::Host for State {
     fn set_collection(&mut self, name: String, rows_json: Vec<u8>) -> Result<Result<(), String>> {
         let bytes = rows_json.len();
         self.stage(bytes, |screens, _| {
-            if !host_screen::collection_name(&name) {
-                return Err("invalid collection name".into());
-            }
-            let rows: Vec<host_screen::Row> = serde_json::from_slice(&rows_json)
-                .map_err(|error| format!("invalid rows: {error}"))?;
-            host_screen::validate_rows(&rows).map_err(|error| error.to_string())?;
-            screens.data.set_collection(name, rows);
-            Ok(())
+            set_collection(&mut screens.data, name, &rows_json)
         })
     }
 
     fn set_value(&mut self, name: String, value: ui::Value) -> Result<Result<(), String>> {
-        let value = match value {
-            ui::Value::Boolean(value) => host_screen::Value::Bool(value),
-            ui::Value::Integer(value) => host_screen::Value::Integer(value),
-            ui::Value::Number(value) => host_screen::Value::Number(value),
-            ui::Value::Text(value) => host_screen::Value::Text(value),
-            ui::Value::Numbers(values) => host_screen::Value::Numbers(values),
-        };
-        let bytes = name.len() + serde_json::to_vec(&value).map_or(0, |json| json.len());
-        self.stage(bytes, |screens, _| {
-            if !host_screen::binding_name(&name) {
-                return Err("invalid binding name".into());
-            }
-            value.validate().map_err(|error| error.to_string())?;
-            screens.data.set_value(name, value);
-            Ok(())
+        let value = host_value(value);
+        self.stage(value_bytes(&name, &value), |screens, _| {
+            set_value(&mut screens.data, name, value)
         })
     }
 
@@ -283,6 +266,51 @@ impl recipes::Host for State {
                 .collect()
         }))
     }
+}
+
+/// Replaces collection `name` of `data` with the rows `rows_json` holds, once they validate.
+pub(super) fn set_collection(
+    data: &mut host_screen::Modal,
+    name: String,
+    rows_json: &[u8],
+) -> Result<(), String> {
+    if !host_screen::collection_name(&name) {
+        return Err("invalid collection name".into());
+    }
+    let rows: Vec<host_screen::Row> =
+        serde_json::from_slice(rows_json).map_err(|error| format!("invalid rows: {error}"))?;
+    host_screen::validate_rows(&rows).map_err(|error| error.to_string())?;
+    data.set_collection(name, rows);
+    Ok(())
+}
+
+/// Binds `name` in `data` once the name and value validate.
+pub(super) fn set_value(
+    data: &mut host_screen::Modal,
+    name: String,
+    value: host_screen::Value,
+) -> Result<(), String> {
+    if !host_screen::binding_name(&name) {
+        return Err("invalid binding name".into());
+    }
+    value.validate().map_err(|error| error.to_string())?;
+    data.set_value(name, value);
+    Ok(())
+}
+
+pub(super) fn host_value(value: ui::Value) -> host_screen::Value {
+    match value {
+        ui::Value::Boolean(value) => host_screen::Value::Bool(value),
+        ui::Value::Integer(value) => host_screen::Value::Integer(value),
+        ui::Value::Number(value) => host_screen::Value::Number(value),
+        ui::Value::Text(value) => host_screen::Value::Text(value),
+        ui::Value::Numbers(values) => host_screen::Value::Numbers(values),
+    }
+}
+
+/// What a value write counts against the output budget: its name and its JSON.
+pub(super) fn value_bytes(name: &str, value: &host_screen::Value) -> usize {
+    name.len() + serde_json::to_vec(value).map_or(0, |json| json.len())
 }
 
 pub(super) fn modifiers(held: crate::KeyModifiers) -> Modifiers {

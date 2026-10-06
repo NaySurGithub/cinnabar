@@ -204,3 +204,15 @@ fn declarations_parse_before_the_files_are_hashed() {
         .is_err()
     );
 }
+
+#[test]
+fn hud_and_target_are_permissions() {
+    let text = format!(
+        "id = \"spyglass\"\nversion = \"0.1.0\"\napi = \"{API}\"\n\
+         permissions = [\"hud\", \"target\"]\n{}",
+        files(&[])
+    );
+    let manifest = ModManifest::parse(&text).unwrap();
+    assert!(manifest.permissions.contains(&ModPermission::Hud));
+    assert!(manifest.permissions.contains(&ModPermission::Target));
+}

@@ -16,6 +16,10 @@ pub enum ModPermission {
     Recipes,
     Keys,
     Inventory,
+    /// A template over the gameplay HUD.
+    Hud,
+    /// The crosshair target, its mining and harvest facts.
+    Target,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Deserialize)]

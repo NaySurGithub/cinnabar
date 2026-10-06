@@ -2,13 +2,14 @@
 //! value, so a test reads the guest's view of the host from the committed screens. A few inputs
 //! misbehave on purpose: the `probe.trap` key traps, the text `loop` never returns,
 //! `probe.flood` binds until the host refuses, and `probe.read_all` reads the whole session in
-//! an ordinary event, as `data-changed` does on the load budget.
+//! an ordinary event, as `data-changed` does on the load budget. `probe.hud` sets the HUD
+//! template, and `target-changed` reports the target, mining, harvest and text reads.
 
 use mod_api::player_mod::{
-    DataSource, Guest, ScreenLayout, Stack,
-    cinnabar::extension::screen,
+    DataSource, Guest, HudLayout, ScreenLayout, Stack,
+    cinnabar::extension::{hud_layer, screen},
     cinnabar::server_experience::ui::Value,
-    cinnabar::session::{items, recipes},
+    cinnabar::session::{items, recipes, target, text as host_text},
 };
 
 mod declared {
@@ -115,6 +116,9 @@ impl Guest for Probe {
             screen::open_view(Some(declared::templates::VIEW))
         } else if id == declared::actions::CLOSE {
             screen::open_view(None)
+        } else if id == declared::actions::HUD {
+            hud_layer::set_template(Some(declared::templates::HUD))
+                .and_then(|()| hud_layer::set_value("#hud_set", &Value::Boolean(true)))
         } else if id == declared::actions::READ_ALL {
             read_all();
             Ok(())
@@ -185,6 +189,68 @@ impl Guest for Probe {
         text("#data_sources", names.join(","));
         read_session();
         read_all();
+    }
+
+    fn target_changed() {
+        let look = match target::current() {
+            Ok(Some(look)) => {
+                let hit = match look.hit {
+                    Some(target::Hit::Block(hit)) => {
+                        format!("block:{}:{}", hit.block.identifier, hit.block.name)
+                    }
+                    Some(target::Hit::Actor(hit)) => {
+                        format!("actor:{}:{:?}", hit.type_id, hit.health)
+                    }
+                    None => "none".into(),
+                };
+                let liquid = look.liquid.map_or_else(String::new, |liquid| {
+                    format!("+{}", liquid.block.identifier)
+                });
+                hit + &liquid
+            }
+            Ok(None) => "outside".into(),
+            Err(error) => error,
+        };
+        text("#target", look);
+        if let Ok(revision) = target::revision() {
+            report("#target_revision", Value::Integer(revision as i64));
+        }
+        if let Ok(Some(mining)) = target::mining() {
+            report(
+                "#mining",
+                Value::Numbers(vec![mining.progress.into(), mining.per_tick.into()]),
+            );
+        }
+        let candidates = [
+            "minecraft:wooden_pickaxe".to_owned(),
+            "minecraft:iron_pickaxe".to_owned(),
+        ];
+        if let Ok(Some(harvest)) = target::harvest(&candidates) {
+            text(
+                "#harvest",
+                format!("{}:{}", harvest.requires_tool, harvest.effective.join(",")),
+            );
+        }
+        text(
+            "#translated",
+            host_text::translate("probe.key").unwrap_or_default(),
+        );
+        report("#width", Value::Number(host_text::width("abc").into()));
+        let _ = hud_layer::set_value("#hud_target", &Value::Boolean(true));
+    }
+
+    fn hud_changed(layout: Option<HudLayout>) {
+        let numbers = layout.map_or_else(
+            || vec![-1.0],
+            |layout| {
+                let bars = layout.boss_bars.map_or(-1.0, |bars| bars.height);
+                vec![layout.size.width, layout.size.height, bars]
+            },
+        );
+        // HUD-only writes, so a test sees the screens' data stay put.
+        let _ = hud_layer::set_value("#hud_layout", &Value::Numbers(numbers));
+        let seconds = hud_layer::frame_seconds().into();
+        let _ = hud_layer::set_value("#frame_seconds", &Value::Number(seconds));
     }
 
     fn view_closed() {

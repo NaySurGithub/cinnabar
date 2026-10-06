@@ -1,7 +1,7 @@
 //! The guest's callbacks, found and type-checked once. Every component exports `init` and
 //! `frame`; each `player-mod` event export is optional, and a missing one is never called.
 
-use super::{State, player_mod};
+use super::{State, cinnabar::extension::hud_layer::HudLayout, hud::hud_layout, player_mod};
 use crate::{DataSource, ModEvent};
 use anyhow::{Context, Result, bail};
 use wasmtime::{
@@ -23,6 +23,8 @@ struct Events {
     key: Option<TypedFunc<(String, Option<player_mod::GuestStack>, Row), ()>>,
     data_changed: Option<TypedFunc<(Vec<player_mod::DataSource>,), ()>>,
     view_closed: Option<TypedFunc<(), ()>>,
+    target_changed: Option<TypedFunc<(), ()>>,
+    hud_changed: Option<TypedFunc<(Option<HudLayout>,), ()>>,
 }
 
 pub(super) struct Exports {
@@ -50,6 +52,8 @@ impl Exports {
             key: typed(store, instance, "key")?,
             data_changed: typed(store, instance, "data-changed")?,
             view_closed: typed(store, instance, "view-closed")?,
+            target_changed: typed(store, instance, "target-changed")?,
+            hud_changed: typed(store, instance, "hud-changed")?,
         };
         Ok((
             init.typed(&*store)?,
@@ -71,6 +75,8 @@ impl Exports {
             || events.key.is_some()
             || events.data_changed.is_some()
             || events.view_closed.is_some()
+            || events.target_changed.is_some()
+            || events.hud_changed.is_some()
     }
 
     /// Whether the component reads the session in `data-changed`, which gives `init` the load
@@ -142,6 +148,12 @@ impl Exports {
                 call(events.data_changed.as_ref(), store, (sources,))
             }
             ModEvent::ViewClosed => call(events.view_closed.as_ref(), store, ()),
+            ModEvent::TargetChanged => call(events.target_changed.as_ref(), store, ()),
+            ModEvent::HudChanged(layout) => call(
+                events.hud_changed.as_ref(),
+                store,
+                (layout.as_ref().map(hud_layout),),
+            ),
         }
     }
 }

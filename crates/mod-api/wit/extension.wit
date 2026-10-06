@@ -203,6 +203,34 @@ interface screen {
     focus-text: func(control: string) -> result<_, string>;
 }
 
+/// The mod's JSON-UI template over the vanilla HUD during gameplay, with its own bound data.
+/// The template is one `mod.toml` indexes, under the overlay's rules. The host draws it below
+/// every screen but chat, hides it with the HUD (hide-GUI, loading, any other screen) and never
+/// hit-tests it. Every function but `layout` and `frame-seconds` errs when the `hud`
+/// permission is denied.
+interface hud-layer {
+    use cinnabar:server-experience/ui@1.2.0.{value, gui-size};
+    use screen.{rect};
+
+    record hud-layout {
+        /// The HUD root's size in GUI units and the GUI scale.
+        size: gui-size,
+        /// The laid-out vanilla boss bars, when any shows.
+        boss-bars: option<rect>,
+    }
+
+    /// The HUD as laid out while the layer may draw; none while the host hides it.
+    layout: func() -> option<hud-layout>;
+    /// Seconds since the last frame, for animation.
+    frame-seconds: func() -> f32;
+    /// Draws `template` over the HUD; none removes it.
+    set-template: func(template: option<string>) -> result<_, string>;
+    /// Replaces one of the layer's collections, as `screen.set-collection` does the screens'.
+    set-collection: func(name: string, rows-json: list<u8>) -> result<_, string>;
+    /// Binds one of the layer's `#binding` names, as `screen.set-value` does the screens'.
+    set-value: func(name: string, value: value) -> result<_, string>;
+}
+
 /// Experimental developer contract; no WASI or ambient operating-system access.
 world extension {
     import hud;
@@ -230,8 +258,12 @@ world player-mod {
     import screen;
     import cinnabar:session/items@0.1.0;
     import cinnabar:session/recipes@0.1.0;
+    import hud-layer;
+    import cinnabar:session/target@0.1.0;
+    import cinnabar:session/text@0.1.0;
 
     use screen.{screen-layout, modifiers};
+    use hud-layer.{hud-layout};
     use cinnabar:session/items@0.1.0.{stack};
 
     /// What a `data-changed` reports as changed. Closed: changing it would refuse every built
@@ -265,4 +297,8 @@ world player-mod {
     export data-changed: func(sources: list<data-source>);
     /// The host closed the view (Escape, or the container closing), not the mod.
     export view-closed: func();
+    /// The crosshair target changed: `target.revision` moved.
+    export target-changed: func();
+    /// The HUD layer was shown, hidden (`none`) or laid out anew.
+    export hud-changed: func(layout: option<hud-layout>);
 }

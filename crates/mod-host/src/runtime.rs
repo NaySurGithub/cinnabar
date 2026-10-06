@@ -1,11 +1,12 @@
 use crate::{
-    CameraDelta, FRAME_FUEL, GameplayCameraRig, GameplayMob, GameplaySnapshot, MAX_LABEL_BYTES,
-    MEMORY_BYTES, ModCue, ModEvent, ModGrants, ModScreens,
+    CameraDelta, FRAME_FUEL, GameplayCameraRig, GameplayMob, GameplaySnapshot,
+    HudLayout as HostHudLayout, MAX_LABEL_BYTES, MEMORY_BYTES, ModCue, ModEvent, ModGrants,
+    ModScreens, TargetFrame, TextSource,
 };
 use anyhow::{Result, bail};
 use server_experience::{
     runtime::{CALLBACK_FUEL, LOAD_FUEL},
-    screen::ScreenLayout as HostLayout,
+    screen::{Modal, ScreenLayout as HostLayout},
     session_data::SessionData,
 };
 use std::{collections::BTreeSet, sync::Arc};
@@ -32,6 +33,7 @@ mod controls;
 mod exports;
 #[path = "gameplay.rs"]
 mod gameplay;
+mod hud;
 mod player_mod;
 #[path = "render.rs"]
 mod render;
@@ -73,6 +75,14 @@ struct State {
     screens: ModScreens,
     /// This callback's screen output, applied to a copy of `screens`; committed on return.
     pending_screens: Option<ModScreens>,
+    /// The HUD layer's template and data, and this callback's copy of them.
+    hud: Modal,
+    pending_hud: Option<Modal>,
+    hud_layout: Option<HostHudLayout>,
+    frame_seconds: f32,
+    target: TargetFrame,
+    target_revision: u64,
+    text: Option<Arc<dyn TextSource>>,
     /// Host calls and screen output bytes of the running callback.
     calls: usize,
     output: usize,
@@ -115,6 +125,13 @@ impl State {
             session: Arc::default(),
             screens: ModScreens::default(),
             pending_screens: None,
+            hud: Modal::default(),
+            pending_hud: None,
+            hud_layout: None,
+            frame_seconds: 0.0,
+            target: TargetFrame::default(),
+            target_revision: 0,
+            text: None,
             calls: 0,
             output: 0,
         }
@@ -288,6 +305,7 @@ impl Instance {
         state.calls = 0;
         state.output = 0;
         state.pending_screens = None;
+        state.pending_hud = None;
         self.store.set_fuel(fuel)?;
         let called = call(&self.exports, &mut self.store);
         self.last_fuel = fuel - self.store.get_fuel().unwrap_or(0).min(fuel);
@@ -319,6 +337,8 @@ impl Instance {
         state.pending_show_real_position = None;
         state.pending_screens = None;
         state.screens = ModScreens::default();
+        state.pending_hud = None;
+        state.hud = Modal::default();
     }
 
     pub(super) fn camera_rig(&self) -> Option<GameplayCameraRig> {
@@ -433,6 +453,38 @@ impl Instance {
     pub(super) fn set_session(&mut self, session: Arc<SessionData>) {
         self.store.data_mut().session = session;
     }
+
+    pub(super) fn hud(&self) -> &Modal {
+        &self.store.data().hud
+    }
+
+    /// What `hud-layer.layout` returns from now on; `true` when it changed.
+    pub(super) fn set_hud_layout(&mut self, layout: Option<HostHudLayout>) -> bool {
+        let state = self.store.data_mut();
+        let changed = state.hud_layout != layout;
+        state.hud_layout = layout;
+        changed
+    }
+
+    /// This frame's target; `true` when its look changed, which moves the revision.
+    pub(super) fn set_target(&mut self, target: TargetFrame, frame_seconds: f32) -> bool {
+        let state = self.store.data_mut();
+        state.frame_seconds = if frame_seconds.is_finite() {
+            frame_seconds.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let changed = state.target.look != target.look;
+        if changed {
+            state.target_revision += 1;
+        }
+        state.target = target;
+        changed
+    }
+
+    pub(super) fn set_text(&mut self, text: Arc<dyn TextSource>) {
+        self.store.data_mut().text = Some(text);
+    }
 }
 
 /// Publishes retained presentation changes after the entire callback succeeds.
@@ -464,5 +516,8 @@ fn commit_event(store: &mut Store<State>) {
     }
     if let Some(screens) = state.pending_screens.take() {
         state.screens = screens;
+    }
+    if let Some(hud) = state.pending_hud.take() {
+        state.hud = hud;
     }
 }
