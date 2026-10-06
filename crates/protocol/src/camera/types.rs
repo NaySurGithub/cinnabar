@@ -15,6 +15,9 @@ pub const MAX_CAMERA_EASE_IDENTIFIER_BYTES: usize = 64;
 pub const MAX_CAMERA_PRESETS: usize = 256;
 
 #[derive(Debug, Clone, PartialEq)]
+// Instructions are rare and travel by value in the bounded world event queue; keeping them
+// inline avoids an allocation per instruction.
+#[allow(clippy::large_enum_variant)]
 pub enum CameraEvent {
     /// The server's preset registry; a preset id in `set` indexes it.
     Presets(Arc<[CameraPreset]>),

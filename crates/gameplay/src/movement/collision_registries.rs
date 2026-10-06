@@ -35,6 +35,9 @@ const FULL_CUBE: assets::CollisionBox = assets::CollisionBox {
 /// Registry records whose names the carrier deliberately withholds.
 const RESERVED_RECORD_NAME: &str = "cinnabar:reserved";
 
+/// A block's name, whether it is one full cube, and its block tags.
+type InteractionBlock = (Arc<str>, bool, Arc<[Arc<str>]>);
+
 /// Runtime-ID collision registries for both Bedrock palette identity modes.
 ///
 /// The two maps are intentionally distinct: a 32-bit network hash may have
@@ -48,8 +51,8 @@ pub struct PhysicsCollisionRegistries {
     hashed_count: usize,
     preg_sha256: [u8; 32],
     breg_sha256: [u8; 32],
-    interaction_blocks: BTreeMap<u32, (Arc<str>, bool, Arc<[Arc<str>]>)>,
-    hashed_interaction_blocks: BTreeMap<u32, (Arc<str>, bool, Arc<[Arc<str>]>)>,
+    interaction_blocks: BTreeMap<u32, InteractionBlock>,
+    hashed_interaction_blocks: BTreeMap<u32, InteractionBlock>,
     /// Named vanilla blocks as `(sort key, name, first sequential id)`, in id order.
     vanilla_runs: Vec<(u64, Arc<str>, u32)>,
     /// False when the carrier's ids are not in vanilla sort order, so customs cannot interleave.
