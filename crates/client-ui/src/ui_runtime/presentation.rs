@@ -57,7 +57,10 @@ pub mod viewmodel_bob;
 
 use crate::menu::{MenuAction, MenuView};
 pub use debug_overlay::DebugLines;
-pub use forms::{BedHit, ChatHit, ExperienceModal, LoadingStage, ModScreensInput, ModalEdits};
+pub use forms::{
+    BedHit, ChatHit, ExperienceModal, LoadingStage, ModHudInput, ModScreensInput, ModText,
+    ModalEdits,
+};
 pub use hud_layout::HudFrame;
 use hud_layout::{HudGeometry, HudLayout, gui_scale};
 use primitives::{bounded_visible_text, rect, resolve_chat_line};
@@ -582,6 +585,16 @@ impl UiPresentationRuntime {
                     )?;
                     if !crosshair {
                         self.append_mod_hud(player_runtime, runtime, nodes, next, metrics, content);
+                        if !runtime.chat_focused() {
+                            self.append_mod_hud_layer(
+                                player_runtime,
+                                runtime,
+                                nodes,
+                                next,
+                                metrics,
+                                content,
+                            );
+                        }
                         self.append_player_list(
                             player_runtime,
                             runtime,
@@ -627,6 +640,15 @@ impl UiPresentationRuntime {
                 }
                 Scene::Chat => {
                     self.append_chat_screen(runtime, nodes, next, metrics, content, now_millis)?;
+                    // A mod's HUD layer draws over chat, as over the bare HUD.
+                    self.append_mod_hud_layer(
+                        player_runtime,
+                        runtime,
+                        nodes,
+                        next,
+                        metrics,
+                        content,
+                    );
                 }
                 Scene::Emote => {
                     self.append_emote_screen(runtime, nodes, next, metrics, content, now_millis)?;

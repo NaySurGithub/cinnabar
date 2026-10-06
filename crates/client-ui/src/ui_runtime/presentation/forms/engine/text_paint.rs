@@ -86,12 +86,12 @@ pub(in super::super) fn width_64(logical: f64) -> u32 {
     (logical.clamp(1.0, UNWRAPPED_LOGICAL) * 64.0).ceil() as u32
 }
 
-pub(super) struct Measure<'a, 'b> {
-    pub(super) layouts: &'b RefCell<&'a mut TextLayoutCache>,
-    pub(super) font: &'a RuntimeFontCatalog,
-    pub(super) metrics: TextMetrics,
-    pub(super) px: f32,
-    pub(super) translate: &'a dyn Fn(&str) -> Option<Arc<str>>,
+pub(in super::super) struct Measure<'a, 'b> {
+    pub(in super::super) layouts: &'b RefCell<&'a mut TextLayoutCache>,
+    pub(in super::super) font: &'a RuntimeFontCatalog,
+    pub(in super::super) metrics: TextMetrics,
+    pub(in super::super) px: f32,
+    pub(in super::super) translate: &'a dyn Fn(&str) -> Option<Arc<str>>,
 }
 
 impl TextMeasure for Measure<'_, '_> {

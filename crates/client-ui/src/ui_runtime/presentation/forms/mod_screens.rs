@@ -90,7 +90,7 @@ impl UiPresentationRuntime {
                     input.id,
                     input.files,
                     page,
-                    super::super::dynamic_textures::MOD_UI_PAGES,
+                    super::super::dynamic_textures::MOD_SCREEN_UI_PAGES,
                 ),
                 overlay: TemplateScreen::default(),
                 view: TemplateScreen::default(),
@@ -377,7 +377,7 @@ impl UiPresentationRuntime {
 }
 
 /// Every `#item_id_aux` integer the bound values and rows name.
-fn icon_keys(data: &screen::Modal) -> BTreeSet<i64> {
+pub(super) fn icon_keys(data: &screen::Modal) -> BTreeSet<i64> {
     let key = |name: &String, value: &screen::Value| match value {
         screen::Value::Integer(key) if name == "#item_id_aux" => Some(*key),
         _ => None,
@@ -397,7 +397,7 @@ fn icon_keys(data: &screen::Modal) -> BTreeSet<i64> {
 
 /// Each key's icon: vanilla's `#item_id_aux` is the network id over 16 bits of aux, which the
 /// session's item registry names.
-fn item_icons(
+pub(super) fn item_icons(
     keys: &BTreeSet<i64>,
     player_runtime: &player_state::PlayerState,
     runtime: &UiRuntime,

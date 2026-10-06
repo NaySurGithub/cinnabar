@@ -31,6 +31,7 @@ pub mod menu_latency;
 pub mod menu_screens;
 pub mod menus;
 pub mod mod_hud;
+pub mod mod_hud_layer;
 pub mod mod_panel;
 pub mod mod_screens;
 pub mod model;
@@ -88,6 +89,7 @@ pub use emote_screen::{EMOTE_EQUIP_POPUP, EMOTE_SCREEN, EmoteHit};
 pub use experience_modal::ExperienceModal;
 pub use loading_screen::{LOADING_SCREEN, LoadingStage};
 pub use menu_screens::menu_reference;
+pub use mod_hud_layer::{ModHudInput, ModText};
 pub use mod_screens::ModScreensInput;
 pub use npc::NPC_SCREEN;
 pub use oreui::BedHit;
@@ -136,6 +138,8 @@ pub(super) struct FormPresentation {
     experience_modal: Option<experience_modal::ModalScreen>,
     /// A player mod's overlay and view; carried across the per-frame reset.
     mod_screens: Option<mod_screens::ModScreens>,
+    /// A player mod's template over the HUD; carried across the per-frame reset.
+    mod_hud_layer: Option<mod_hud_layer::ModHudLayer>,
     /// The last container screen's layout; carried across the per-frame reset.
     container_cache: Option<containers::ScreenCache>,
     /// Immutable creative rows reused across hover and scroll frames.
@@ -271,8 +275,10 @@ impl UiPresentationRuntime {
             .engine
             .as_mut()
             .is_some_and(|engine| engine.take_server_pages().is_some());
-        let changed =
-            self.refresh_experience_modal_pages() | self.refresh_mod_screen_pages() | server;
+        let changed = self.refresh_experience_modal_pages()
+            | self.refresh_mod_screen_pages()
+            | self.refresh_mod_hud_pages()
+            | server;
         // Server textures too big for a server page draw from full-resolution art.
         let set = super::menu_artwork::ArtworkSet {
             paths: self.menu_artwork_set.paths.clone(),
@@ -465,6 +471,7 @@ impl UiPresentationRuntime {
             experience: state.experience,
             experience_modal: state.experience_modal,
             mod_screens: state.mod_screens,
+            mod_hud_layer: state.mod_hud_layer,
             container_cache: state.container_cache,
             book_cache: state.book_cache,
             ready_menu: state.ready_menu,
@@ -482,6 +489,9 @@ impl UiPresentationRuntime {
         };
         if let Some(screens) = self.form_presentation.mod_screens.as_mut() {
             screens.begin_frame();
+        }
+        if let Some(layer) = self.form_presentation.mod_hud_layer.as_mut() {
+            layer.begin_frame();
         }
     }
 

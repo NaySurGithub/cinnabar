@@ -28,7 +28,7 @@ pub use runtime::cinnabar::session::target::{
     MiningState as TargetMining, StateValue as TargetStateValue,
 };
 #[cfg(feature = "execution")]
-pub use screens::{DataSource, HudLayout, KeyModifiers, LoadedPackage, ModEvent, ModScreens};
+pub use screens::{DataSource, KeyModifiers, LoadedPackage, ModEvent, ModScreens};
 #[cfg(feature = "execution")]
 pub use target::{HarvestRules, MAX_HARVEST_CANDIDATES, MAX_TEXT_BYTES, TargetFrame, TextSource};
 

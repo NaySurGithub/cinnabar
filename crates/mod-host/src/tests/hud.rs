@@ -2,10 +2,10 @@
 
 use super::screens::{action, probe, probe_with, text, value};
 use crate::{
-    HarvestRules, HudLayout, ModEvent, TargetBlock, TargetBlockHit, TargetBlockPos, TargetFrame,
+    HarvestRules, ModEvent, TargetBlock, TargetBlockHit, TargetBlockPos, TargetFrame,
     TargetHarvest, TargetHit, TargetLook, TargetMining, TextSource,
 };
-use server_experience::screen::{GuiSize, Rect, Value};
+use server_experience::screen::{GuiSize, HudLayout, Rect, Value};
 use std::sync::Arc;
 
 fn hud_value<'a>(host: &'a crate::ModHost, name: &str) -> Option<&'a Value> {

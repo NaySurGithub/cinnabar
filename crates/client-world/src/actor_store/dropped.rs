@@ -94,20 +94,23 @@ impl ActorStore {
         views
     }
 
-    fn dropped_item_view(&self, actor: &ActorSnapshot, alpha: f32) -> Option<DroppedItemView> {
+    /// A dropped-item actor's resolved, nonempty stack.
+    pub(crate) fn dropped_item_stack(&self, runtime_id: u64) -> Option<&CanonicalItemStack> {
+        let actor = self.actors.get(&runtime_id)?;
         let ActorKind::Entity { identifier } = &actor.kind else {
             return None;
         };
         if identifier.as_ref() != "minecraft:item" {
             return None;
         }
-        let item = self
-            .equipment_in_hand(actor.runtime_id, ActorHandedness::Right)?
-            .item
-            .clone();
-        if item.identity.is_empty() {
-            return None;
-        }
+        let item = &self
+            .equipment_in_hand(runtime_id, ActorHandedness::Right)?
+            .item;
+        (!item.identity.is_empty()).then_some(item)
+    }
+
+    fn dropped_item_view(&self, actor: &ActorSnapshot, alpha: f32) -> Option<DroppedItemView> {
+        let item = self.dropped_item_stack(actor.runtime_id)?.clone();
         let ticks = actor.status.age_ticks as f32 + alpha;
         let mut position = actor.interpolated_position(alpha)?;
         // Vanilla renders actors from their network position,

@@ -163,6 +163,10 @@ impl WorldAuthority {
     pub fn actor_player_profile(&self, runtime_id: u64) -> Option<&PlayerProfile> {
         self.actors.player_profile(runtime_id)
     }
+    /// The stack a dropped-item actor holds.
+    pub fn dropped_item_stack(&self, runtime_id: u64) -> Option<&crate::item::CanonicalItemStack> {
+        self.actors.dropped_item_stack(runtime_id)
+    }
     /// Dropped-item stacks with interpolated pose, spin, and pickup flight at `partial_tick`.
     pub fn dropped_items(&self, partial_tick: f32) -> Vec<crate::DroppedItemView> {
         self.actors.dropped_items(partial_tick)

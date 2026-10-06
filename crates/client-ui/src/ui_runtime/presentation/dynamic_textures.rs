@@ -22,8 +22,13 @@ pub(super) const MODAL_UI_PAGE: usize = SERVER_UI_PAGE + SERVER_UI_PAGES;
 pub(super) const MODAL_UI_PAGES: usize = 4;
 /// Dynamic page offset of a player mod's screen textures, after the modal's.
 pub(super) const MOD_UI_PAGE: usize = MODAL_UI_PAGE + MODAL_UI_PAGES;
-/// Dynamic pages reserved for the player mod's package textures, before the local font page.
-pub(super) const MOD_UI_PAGES: usize = 4;
+/// Dynamic pages reserved for the player mods' package textures, before the local font page:
+/// the screen owner's first, then the HUD owner's.
+pub(super) const MOD_UI_PAGES: usize = MOD_SCREEN_UI_PAGES + MOD_HUD_UI_PAGES;
+pub(super) const MOD_SCREEN_UI_PAGES: usize = 2;
+pub(super) const MOD_HUD_UI_PAGES: usize = 2;
+/// Dynamic page offset of the HUD owner's textures, after the screen owner's.
+pub(super) const MOD_HUD_UI_PAGE: usize = MOD_UI_PAGE + MOD_SCREEN_UI_PAGES;
 
 pub(super) fn observe_session(runtime: &mut UiPresentationRuntime, session: u64) {
     let changed = runtime
@@ -254,13 +259,17 @@ pub(super) fn rebuild(runtime: &mut UiPresentationRuntime) {
             .cloned()
             .unwrap_or_else(|| runtime.blank_dynamic_page.clone())
     }));
-    let mod_pages = runtime.mod_screen_pages();
-    dynamic.extend((0..MOD_UI_PAGES).map(|offset| {
-        mod_pages
-            .get(offset)
-            .cloned()
-            .unwrap_or_else(|| runtime.blank_dynamic_page.clone())
-    }));
+    for (pages, count) in [
+        (runtime.mod_screen_pages(), MOD_SCREEN_UI_PAGES),
+        (runtime.mod_hud_pages(), MOD_HUD_UI_PAGES),
+    ] {
+        dynamic.extend((0..count).map(|offset| {
+            pages
+                .get(offset)
+                .cloned()
+                .unwrap_or_else(|| runtime.blank_dynamic_page.clone())
+        }));
+    }
     dynamic.push(
         runtime
             .mod_panel_font

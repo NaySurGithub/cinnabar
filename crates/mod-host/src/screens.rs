@@ -5,7 +5,7 @@ use crate::{ModHost, TargetFrame, TextSource, package::Package, runtime::Declare
 use anyhow::Result;
 use experience_sdk::mod_manifest::KeyDecl;
 use server_experience::{
-    screen::{self, GuiSize, Rect, ScreenLayout},
+    screen::{self, HudLayout, ScreenLayout},
     session_data::{SessionData, Stack},
 };
 use std::sync::Arc;
@@ -30,15 +30,6 @@ impl DataSource {
     pub fn read_whole(&self) -> bool {
         matches!(self, Self::Items | Self::Recipes)
     }
-}
-
-/// The gameplay HUD as laid out while a mod's HUD layer may draw.
-#[derive(Clone, Debug, PartialEq)]
-pub struct HudLayout {
-    /// The HUD root's size in GUI units and the GUI scale.
-    pub size: GuiSize,
-    /// The laid-out vanilla boss bars, when any shows.
-    pub boss_bars: Option<Rect>,
 }
 
 /// One host event for a `player-mod` component's callbacks.

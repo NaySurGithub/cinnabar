@@ -1,12 +1,11 @@
 use crate::{
-    CameraDelta, FRAME_FUEL, GameplayCameraRig, GameplayMob, GameplaySnapshot,
-    HudLayout as HostHudLayout, MAX_LABEL_BYTES, MEMORY_BYTES, ModCue, ModEvent, ModGrants,
-    ModScreens, TargetFrame, TextSource,
+    CameraDelta, FRAME_FUEL, GameplayCameraRig, GameplayMob, GameplaySnapshot, MAX_LABEL_BYTES,
+    MEMORY_BYTES, ModCue, ModEvent, ModGrants, ModScreens, TargetFrame, TextSource,
 };
 use anyhow::{Result, bail};
 use server_experience::{
     runtime::{CALLBACK_FUEL, LOAD_FUEL},
-    screen::{Modal, ScreenLayout as HostLayout},
+    screen::{HudLayout as HostHudLayout, Modal, ScreenLayout as HostLayout},
     session_data::SessionData,
 };
 use std::{collections::BTreeSet, sync::Arc};

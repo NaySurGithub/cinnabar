@@ -133,6 +133,15 @@ impl Rect {
     }
 }
 
+/// The gameplay HUD as a player mod's HUD layer sees it while the layer may draw.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HudLayout {
+    /// The HUD root's size in GUI units and the GUI scale.
+    pub size: GuiSize,
+    /// The laid-out vanilla boss bars, when any shows.
+    pub boss_bars: Option<Rect>,
+}
+
 /// An open vanilla container screen as a player mod's overlay sees it: the JSON-UI screen
 /// drawn, the root's size, the union of its laid-out panels and the other vanilla areas the
 /// overlay may not cover.

@@ -11,9 +11,12 @@ use super::{
     },
     player_mod::{host_value, set_collection, set_value, value_bytes},
 };
-use crate::{HudLayout, MAX_HARVEST_CANDIDATES, MAX_TEXT_BYTES};
+use crate::{MAX_HARVEST_CANDIDATES, MAX_TEXT_BYTES};
 use anyhow::{Result, ensure};
-use server_experience::{policy::MAX_HOST_OUTPUT, screen::Modal};
+use server_experience::{
+    policy::MAX_HOST_OUTPUT,
+    screen::{HudLayout, Modal},
+};
 
 impl State {
     /// Applies one HUD write of `bytes` to this callback's copy of the layer, within the output

@@ -30,7 +30,7 @@ mod vector_icons;
 pub(super) use pack_catalog::layer_pack_catalog;
 pub(super) mod host_edit;
 pub(super) mod screen_cache;
-mod text_paint;
+pub(super) mod text_paint;
 use super::server_pack::{ServerAtlas, ServerUiPack};
 use super::textures::{TextureSet, Textures};
 use crate::ui_runtime::{
