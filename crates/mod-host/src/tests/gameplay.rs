@@ -391,3 +391,37 @@ fn mod_host_movement() -> crate::GameplayMovementSnapshot {
         knockback_sequence: 1,
     }
 }
+
+#[test]
+fn explicit_jump_cancellation_commits_once_without_gameplay_and_wins_over_pulse() {
+    let grants = ModGrants {
+        movement: true,
+        ..Default::default()
+    };
+    let cancel = "i32.const 0 call $cancel-jump i32.const 0 i32.load if unreachable end";
+    let (_directory, mut host) = load("", cancel, grants.clone());
+    host.frame(false).unwrap();
+    assert!(host.take_jump_cancel());
+    assert!(!host.take_jump_cancel());
+    let (_directory, mut denied) = load("", cancel, ModGrants::default());
+    assert!(denied.frame(false).is_err());
+    assert!(!denied.take_jump_cancel());
+    let (_directory, mut both) = load(
+        "",
+        &format!("i32.const 0 call $jump {cancel}"),
+        grants.clone(),
+    );
+    both.frame_with_movement(
+        false,
+        Some(snapshot()),
+        Vec::new(),
+        Some(mod_host_movement()),
+        crate::empty_controls(),
+    )
+    .unwrap();
+    assert!(both.take_jump_cancel());
+    assert!(!both.take_jump_pulse());
+    let (_directory, mut trapped) = load("", &format!("{cancel} unreachable"), grants);
+    assert!(trapped.frame(false).is_err());
+    assert!(!trapped.take_jump_cancel());
+}

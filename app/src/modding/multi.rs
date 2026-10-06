@@ -213,6 +213,7 @@ pub(super) struct Merged {
     pub attack_reach: Option<f32>,
     pub attack_pulse: bool,
     pub jump_pulse: bool,
+    pub jump_cancel: bool,
     pub commands: Vec<String>,
     pub cues: Vec<ModCue>,
 }
@@ -221,6 +222,7 @@ impl Merged {
     /// Consumes `host`'s committed output, in load order.
     pub fn absorb(&mut self, host: &mut ModHost) {
         self.jump_pulse |= host.take_jump_pulse();
+        self.jump_cancel |= host.take_jump_cancel();
         let interaction = host.take_interaction();
         self.attack_reach = self.attack_reach.or(interaction.attack_reach);
         self.attack_pulse |= interaction.attack_pulse;

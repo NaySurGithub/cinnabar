@@ -345,13 +345,13 @@ fn drive_mod(
     if let Some(watcher) = watcher.as_ref() {
         watcher.remember_settings(Some(&extension.host));
     }
-    if callback_failed {
+    if callback_failed || merged.jump_cancel {
         gameplay.synchronize_jump_scope(false);
     }
     let movement_allowed = (0..extension.host_count())
         .any(|index| extension.host(index).is_active() && extension.host(index).grants().movement);
     gameplay.synchronize_jump_scope(movement_allowed && captured && !absorbed);
-    gameplay.pulse_jump(merged.jump_pulse);
+    gameplay.pulse_jump(merged.jump_pulse && !merged.jump_cancel);
     interaction.attack_reach = merged.attack_reach;
     interaction.attack_pulse = merged.attack_pulse && gameplay.pulse_attack();
     if let Some(delta) = merged.delta {

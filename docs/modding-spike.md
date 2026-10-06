@@ -412,3 +412,7 @@ physical jump is released. The request commits after a successful callback and i
 consumed once by the next physics tick. Focus loss, menus and authority changes
 revoke pending input; no velocity or movement rule is changed. Jumping remains
 subject to the simulator's ground contact and jump cooldown rules.
+
+`cancel-jump` commits an explicit cancellation even outside gameplay, allowing a
+component to revoke a sub-tick pulse as soon as its module is disabled. Cancellation
+wins over jump pulses in the same callback and never clears physical jump input.

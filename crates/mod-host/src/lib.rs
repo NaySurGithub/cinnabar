@@ -166,6 +166,11 @@ impl ModHost {
         self.instance.take_jump_pulse()
     }
 
+    /// Consumes an explicit cancellation of pending jump input once.
+    pub fn take_jump_cancel(&mut self) -> bool {
+        self.instance.take_jump_cancel()
+    }
+
     /// The retained camera rig from the last successful callback.
     pub fn camera_rig(&self) -> Option<GameplayCameraRig> {
         self.instance.camera_rig()

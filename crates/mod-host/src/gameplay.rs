@@ -214,6 +214,18 @@ impl cinnabar::extension::gameplay::Host for State {
         Ok(Ok(self.movement.clone()))
     }
 
+    fn cancel_jump(&mut self) -> Result<Result<(), String>> {
+        self.movement_writes += 1;
+        if self.movement_writes > MAX_IMPORT_WRITES {
+            bail!("movement import budget exhausted");
+        }
+        if !self.grants.movement {
+            return Ok(Err("movement capability denied".into()));
+        }
+        self.pending_jump_cancel = true;
+        Ok(Ok(()))
+    }
+
     fn pulse_jump(&mut self) -> Result<Result<(), String>> {
         self.movement_writes += 1;
         if self.movement_writes > MAX_IMPORT_WRITES {

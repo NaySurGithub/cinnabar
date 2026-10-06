@@ -38,6 +38,8 @@ struct State {
     snapshot: Option<GameplaySnapshot>,
     movement: Option<GameplayMovementSnapshot>,
     pending_jump: bool,
+    pending_jump_cancel: bool,
+    jump_cancel: bool,
     jump_pulse: bool,
     movement_writes: u32,
     gameplay_reads: u32,
@@ -79,6 +81,8 @@ impl State {
             snapshot: None,
             movement: None,
             pending_jump: false,
+            pending_jump_cancel: false,
+            jump_cancel: false,
             jump_pulse: false,
             movement_writes: 0,
             gameplay_reads: 0,
@@ -202,6 +206,8 @@ impl Instance {
         state.snapshot = None;
         state.movement = None;
         state.pending_jump = false;
+        state.pending_jump_cancel = false;
+        state.jump_cancel = false;
         state.jump_pulse = false;
         state.movement_writes = 0;
         state.pending_camera = None;
@@ -245,6 +251,8 @@ impl Instance {
             self.store.data_mut().snapshot = None;
             self.store.data_mut().movement = None;
             self.store.data_mut().pending_jump = false;
+            self.store.data_mut().pending_jump_cancel = false;
+            self.store.data_mut().jump_cancel = false;
             self.store.data_mut().jump_pulse = false;
             self.store.data_mut().pending_camera = None;
             self.store.data_mut().camera_delta = None;
@@ -265,6 +273,10 @@ impl Instance {
         self.store.data_mut().world.incoming = Vec::new();
         self.store.data_mut().controls.frame = crate::empty_controls();
         Ok(())
+    }
+
+    pub(super) fn take_jump_cancel(&mut self) -> bool {
+        std::mem::take(&mut self.store.data_mut().jump_cancel)
     }
 
     pub(super) fn take_jump_pulse(&mut self) -> bool {
@@ -352,7 +364,8 @@ impl Instance {
 /// Publishes retained presentation changes after the entire callback succeeds.
 fn commit(store: &mut Store<State>) {
     let state = store.data_mut();
-    state.jump_pulse = std::mem::take(&mut state.pending_jump);
+    state.jump_cancel = std::mem::take(&mut state.pending_jump_cancel);
+    state.jump_pulse = std::mem::take(&mut state.pending_jump) && !state.jump_cancel;
     state.controls.commit();
     state.render.commit();
     state.block_highlights.commit();
