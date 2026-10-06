@@ -183,7 +183,7 @@ func TestVisualBlocksReachThePack(t *testing.T) {
 		online = append(online, key)
 	}
 	if len(online) != 1 || len(flipbooks) != 1 || flipbooks[0]["atlas_tile"] != online[0] ||
-		flipbooks[0]["ticks_per_frame"] != float64(10) || flipbooks[0]["blend_frames"] != true {
+		flipbooks[0]["ticks_per_frame"] != float64(10) || flipbooks[0]["blend_frames"] == false {
 		t.Errorf("flipbooks = %v, the controller animates %v", flipbooks, online)
 	}
 	if _, ok := files["textures/blocks/"+online[0]+".png"]; !ok {

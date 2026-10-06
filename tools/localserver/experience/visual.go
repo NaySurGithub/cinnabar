@@ -413,7 +413,7 @@ func checkFlipbook(f Flipbook, img image.Image) (customblock.Flipbook, error) {
 		}
 		frames[i] = int(frame)
 	}
-	return customblock.Flipbook{TicksPerFrame: int(f.TicksPerFrame), Frames: frames, BlendFrames: f.BlendFrames}, nil
+	return customblock.Flipbook{TicksPerFrame: int(f.TicksPerFrame), Frames: frames, NoBlend: !f.BlendFrames}, nil
 }
 
 // covered checks that materials give every instance that shape, or the full cube, draws with a
