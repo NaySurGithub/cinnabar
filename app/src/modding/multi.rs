@@ -3,8 +3,8 @@
 use std::path::{Path, PathBuf};
 
 use mod_host::{
-    CameraDelta, ControlFrame, GameplayCameraRig, GameplayMob, GameplaySnapshot, MAX_LOADED_MODS,
-    ModCue, ModGrants, ModHost,
+    CameraDelta, ControlFrame, GameplayCameraRig, GameplayMob, GameplayMovementSnapshot,
+    GameplaySnapshot, MAX_LOADED_MODS, ModCue, ModGrants, ModHost,
 };
 use serde::Deserialize;
 
@@ -171,21 +171,28 @@ pub(super) struct FrameInput<'a> {
 pub(super) fn run_frame(
     runtime: &mut ModRuntime,
     input: FrameInput<'_>,
-    mut world: impl FnMut(&ModGrants) -> (Option<GameplaySnapshot>, Vec<GameplayMob>),
+    mut world: impl FnMut(
+        &ModGrants,
+    ) -> (
+        Option<GameplaySnapshot>,
+        Vec<GameplayMob>,
+        Option<GameplayMovementSnapshot>,
+    ),
     mut failed: impl FnMut(usize, String),
 ) -> Merged {
     let owner = runtime.panel_owner();
     let mut claimed = Vec::new();
     let mut merged = Merged::default();
     for index in 0..runtime.host_count() {
-        let (snapshot, mobs) = world(runtime.host(index).grants());
+        let (snapshot, mobs, movement) = world(runtime.host(index).grants());
         let mut controls = claim_controls(input.controls, &claimed, index == owner);
-        controls.gameplay = snapshot.is_some();
+        controls.gameplay = snapshot.is_some() || movement.is_some();
         claimed.extend(runtime.host(index).reserved_keys().iter().cloned());
         let host = runtime.host_mut(index);
         host.deliver_cues(input.previous_cues.to_vec());
         if host.is_active()
-            && let Err(error) = host.frame_with_world(input.pressed, snapshot, mobs, controls)
+            && let Err(error) =
+                host.frame_with_movement(input.pressed, snapshot, mobs, movement, controls)
         {
             failed(index, format!("{error:#}"));
         }
@@ -205,6 +212,7 @@ pub(super) struct Merged {
     pub time_override: Option<u32>,
     pub attack_reach: Option<f32>,
     pub attack_pulse: bool,
+    pub jump_pulse: bool,
     pub commands: Vec<String>,
     pub cues: Vec<ModCue>,
 }
@@ -212,6 +220,7 @@ pub(super) struct Merged {
 impl Merged {
     /// Consumes `host`'s committed output, in load order.
     pub fn absorb(&mut self, host: &mut ModHost) {
+        self.jump_pulse |= host.take_jump_pulse();
         let interaction = host.take_interaction();
         self.attack_reach = self.attack_reach.or(interaction.attack_reach);
         self.attack_pulse |= interaction.attack_pulse;

@@ -25,6 +25,8 @@ impl LocalPhysicsController {
             self.server_motions.clear();
             self.previous_jump_held = false;
             self.jump_edge_pending = false;
+            self.jump_pulse_pending = false;
+            self.jump_pulse_scope = None;
             self.fly_toggle_pending = false;
             self.processed_jump_arc_active = false;
             self.modes.reset();

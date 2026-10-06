@@ -687,3 +687,73 @@ fn in_session_snap_preserves_swimming_blend_and_mode_edges() {
     assert!(!has(flags, PlayerInputFlags::START_SWIMMING));
     assert!(!has(flags, PlayerInputFlags::STOP_SWIMMING));
 }
+
+#[test]
+fn mod_jump_pulse_survives_subtick_frames_and_consumes_one_tick() {
+    let mut physics = settled_controller();
+    physics.set_jump_pulse_scope(Some((1, 0)));
+    physics.request_jump_pulse();
+    let early = physics.advance(
+        Duration::from_millis(10),
+        MovementInput::default(),
+        &VersionedFloor(1),
+    );
+    assert_eq!(early.completed_ticks, 0);
+    let frame = physics.advance(
+        Duration::from_millis(90),
+        MovementInput::default(),
+        &VersionedFloor(1),
+    );
+    assert_eq!(frame.completed_ticks, 2);
+    assert!(frame.samples[0].jumping);
+    assert!(frame.samples[0].processed.jump_initiated);
+    assert!(!frame.samples[1].jumping);
+}
+
+#[test]
+fn mod_jump_pulse_scope_revocation_and_reanchor_discard_pending_input() {
+    for reset in 0..3 {
+        let mut physics = settled_controller();
+        physics.set_jump_pulse_scope(Some((1, 0)));
+        physics.request_jump_pulse();
+        match reset {
+            0 => physics.set_jump_pulse_scope(None),
+            1 => physics.set_jump_pulse_scope(Some((2, 0))),
+            _ => physics.reanchor_network_position([0.0, 2.620_01, 0.0], 100, true),
+        }
+        let frame = physics.advance(TICK, MovementInput::default(), &VersionedFloor(1));
+        assert!(!frame.samples[0].jumping);
+        assert!(!frame.samples[0].processed.jump_initiated);
+    }
+}
+
+#[test]
+fn mod_jump_pulse_preserves_physically_held_jump() {
+    let mut physics = settled_controller();
+    physics.set_jump_pulse_scope(Some((1, 0)));
+    physics.request_jump_pulse();
+    let frame = physics.advance(
+        Duration::from_millis(100),
+        MovementInput {
+            jumping: true,
+            ..Default::default()
+        },
+        &VersionedFloor(1),
+    );
+    assert!(frame.samples.iter().all(|sample| sample.jumping));
+}
+
+#[test]
+fn movement_motion_sequence_counts_only_admitted_impulses() {
+    let mut physics = settled_controller();
+    assert_eq!(physics.knockback_sequence(), 0);
+    physics.queue_server_motion([0.1, 0.2, 0.3], 0);
+    assert_eq!(physics.knockback_sequence(), 1);
+    physics.queue_server_motion([f32::NAN, 0.2, 0.3], 0);
+    assert_eq!(physics.knockback_sequence(), 1);
+    physics.queue_server_motion([0.3, 0.2, 0.1], physics.state().unwrap().tick);
+    assert_eq!(physics.knockback_sequence(), 2);
+    physics.deactivate();
+    physics.queue_server_motion([0.1, 0.2, 0.3], 0);
+    assert_eq!(physics.knockback_sequence(), 2);
+}

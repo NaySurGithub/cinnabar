@@ -221,6 +221,9 @@ pub struct LocalPhysicsController {
     previous_jump_held: bool,
     jump_edge_pending: bool,
     fly_toggle_pending: bool,
+    jump_pulse_pending: bool,
+    jump_pulse_scope: Option<(u64, i32)>,
+    knockback_sequence: u64,
     /// Open processed-jump-arc fold state carried across ticks. Reset with the
     /// rest of prediction state; rebuilt across correction replays.
     processed_jump_arc_active: bool,
@@ -258,6 +261,9 @@ impl Default for LocalPhysicsController {
             previous_jump_held: false,
             jump_edge_pending: false,
             fly_toggle_pending: false,
+            jump_pulse_pending: false,
+            jump_pulse_scope: None,
+            knockback_sequence: 0,
             processed_jump_arc_active: false,
             dropped_tick_count: 0,
             last_world_identity: None,
@@ -307,6 +313,8 @@ impl LocalPhysicsController {
         self.previous_jump_held = false;
         self.jump_edge_pending = false;
         self.fly_toggle_pending = false;
+        self.jump_pulse_pending = false;
+        self.jump_pulse_scope = None;
         self.processed_jump_arc_active = false;
         self.last_world_identity = None;
         self.sample_history.clear();
@@ -358,6 +366,8 @@ impl LocalPhysicsController {
         self.previous_jump_held = false;
         self.jump_edge_pending = false;
         self.fly_toggle_pending = false;
+        self.jump_pulse_pending = false;
+        self.jump_pulse_scope = None;
         self.processed_jump_arc_active = false;
         self.dropped_tick_count = 0;
         self.last_world_identity = None;
@@ -391,6 +401,35 @@ impl LocalPhysicsController {
     ) {
         self.reanchor_network_position(network_position, tick, on_ground);
         self.discard_next_elapsed = self.is_active();
+    }
+
+    /// Drops unconsumed mod input when gameplay ownership or its world changes.
+    pub fn set_jump_pulse_scope(&mut self, scope: Option<(u64, i32)>) {
+        if scope.is_none() || scope != self.jump_pulse_scope {
+            self.jump_pulse_pending = false;
+        }
+        self.jump_pulse_scope = scope;
+    }
+
+    /// Queues one ordinary jump input for the next successful fixed tick.
+    pub fn request_jump_pulse(&mut self) {
+        if self.jump_pulse_scope.is_some() && self.is_active() {
+            self.jump_pulse_pending = true;
+        }
+    }
+
+    /// Whether the retained simulation is ordinary walking outside liquids.
+    pub fn jump_pulse_eligible(&self) -> bool {
+        self.is_active()
+            && self.modes.mode().is_walking()
+            && !self.last_environment.in_water
+            && !self.last_environment.in_lava
+            && !self.dimension_waiting
+    }
+
+    /// Advances only when a finite, simulable server motion enters live prediction.
+    pub const fn knockback_sequence(&self) -> u64 {
+        self.knockback_sequence
     }
 
     pub fn advance(
@@ -446,6 +485,7 @@ impl LocalPhysicsController {
             .due_ticks
             .min(MAX_LOCAL_PHYSICS_TICKS_PER_FRAME as u64) as usize;
 
+        let physical_jump_held = input.jumping;
         let sprint_request = input.sprinting;
         let requested_movement_speed = input.movement_speed;
         let sneak_request = input.sneaking;
@@ -472,13 +512,14 @@ impl LocalPhysicsController {
             // once the player is grounded again. Preserve the render-frame edge
             // latch for taps shorter than one fixed tick, but never inject the
             // repeated edge while airborne or during the jump-delay window.
+            input.jumping = physical_jump_held || self.jump_pulse_pending;
             let grounded_before_tick = state.on_ground;
             let jump_repeated = !input.immobile
                 && input.jumping
                 && grounded_before_tick
                 && state.jump_delay == 0
                 && !self.jump_edge_pending;
-            input.jump_pressed = self.jump_edge_pending || jump_repeated;
+            input.jump_pressed = self.jump_edge_pending || self.jump_pulse_pending || jump_repeated;
             input.effects = effects.snapshot();
             input.sprinting = sprint_request;
             input.movement_speed = requested_movement_speed;
@@ -672,6 +713,7 @@ impl LocalPhysicsController {
                             .clone(),
                     );
                     self.jump_edge_pending = false;
+                    self.jump_pulse_pending = false;
                     self.fly_toggle_pending = false;
                     input.jump_pressed = false;
                 }

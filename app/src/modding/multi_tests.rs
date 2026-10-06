@@ -207,7 +207,7 @@ fn run(probes: &[Probe], frames: usize) -> (ModRuntime, Merged, Vec<usize>) {
                 controls: &controls,
                 previous_cues: &previous,
             },
-            |_| (Some(snapshot()), Vec::new()),
+            |_| (Some(snapshot()), Vec::new(), None),
             |index, _| failures.push(index),
         );
         previous = merged.cues.clone();
@@ -293,7 +293,7 @@ fn grants_stay_per_mod() {
             controls: &controls,
             previous_cues: &[],
         },
-        |_| (Some(snapshot()), Vec::new()),
+        |_| (Some(snapshot()), Vec::new(), None),
         |_, error| panic!("{error}"),
     );
     // The ungranted first mod cannot claim time, rig or commands ahead of the granted one.

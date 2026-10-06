@@ -2434,3 +2434,7 @@ was not used as version evidence.
 - `crates/client-ui/src/ui_runtime/presentation/primitive_shapes.rs`: current `ScriptTextPrimitive::applyUpdatedData` `0x109193240` retains parsed `TextObjectRoot` or literal; `Renderer::onBeginRender` `0x104446fa0` resolves only when the helper dirty flag or player input/interaction mode changes. Domain dynamic-text markers preserve common-patch refresh without rebuilding literal text geometry.
 
 - Equal packet updates: current `ClientScriptPrimitiveShapesDataComponent::handlePacket` `0x1022bab10` unconditionally marks an existing present-type entry dirty after its updater, with no equality check. `generateDiscVerts` `0x10443ed90` zero-segment branch initializes both closing vertices and packed colors to zero, then appends the closing pair unconditionally.
+
+## Ground jump and incoming motion
+
+- `crates/sim/tests/jump_knockback.rs`: Lens client artifact 6, `1.26.50.26`, source-backed canonical ground-jump body RVA `0xa5dacf0` retains vertical velocity above the jump impulse and preserves horizontal velocity except for the additive sprint impulse. Local-player wrapper RVA `0xa5db340` calls it from the `LocalPlayerJumpRequestComponent` tick RVA `0xa60ea50`. Current data at `0x150167294` is the ordinary jump impulse `0.42f`; `0x15005b350` is the sprint impulse `0.2f`. Ground-contact gating and retained ground drag are exercised as existing simulator contracts; no horizontal knockback cancellation or server timing guarantee is inferred.

@@ -24,6 +24,8 @@ const CAMERA_ENV: &str = "CINNABAR_MOD_CAMERA";
 #[cfg(feature = "local-mods")]
 const CONTROLS_ENV: &str = "CINNABAR_MOD_CONTROLS";
 #[cfg(feature = "local-mods")]
+const MOVEMENT_ENV: &str = "CINNABAR_MOD_MOVEMENT";
+#[cfg(feature = "local-mods")]
 const INTERACTION_ENV: &str = "CINNABAR_MOD_INTERACTION";
 #[cfg(feature = "local-mods")]
 const SETTINGS_ENV: &str = "CINNABAR_MOD_SETTINGS";
@@ -117,6 +119,7 @@ fn configure(app: &mut App, path: Option<&Path>) {
         players: std::env::var(PLAYERS_ENV).is_ok_and(|value| value == "1"),
         camera: std::env::var(CAMERA_ENV).is_ok_and(|value| value == "1"),
         controls: std::env::var(CONTROLS_ENV).is_ok_and(|value| value == "1"),
+        movement: std::env::var(MOVEMENT_ENV).is_ok_and(|value| value == "1"),
         interaction: std::env::var(INTERACTION_ENV).is_ok_and(|value| value == "1"),
         settings: std::env::var(SETTINGS_ENV).is_ok_and(|value| value == "1"),
         render: std::env::var(RENDER_ENV).is_ok_and(|value| value == "1"),
@@ -261,6 +264,23 @@ fn drive_mod(
     render_scene: Option<ResMut<::render::ModRenderScene>>,
     mut outputs: ModOutputs,
 ) {
+    let focused = windows.single().is_ok_and(|(window, _)| window.focused);
+    let absorbed = crate::screen_policy::absorbs_input(
+        &player_runtime,
+        Some(&ui),
+        menu.as_deref(),
+        Some(&presentation),
+    );
+    let captured = windows.single().is_ok_and(|(window, cursor)| {
+        cursor.is_some_and(|cursor| crate::camera::input_is_active(window, cursor))
+    });
+    let movement_allowed = extension.as_ref().is_some_and(|runtime| {
+        !runtime.suspended
+            && (0..runtime.host_count()).any(|index| {
+                runtime.host(index).is_active() && runtime.host(index).grants().movement
+            })
+    });
+    gameplay.synchronize_jump_scope(movement_allowed && captured && !absorbed);
     let (Some(mut extension), Some(mut time_override), Some(mut interaction)) =
         (extension, time_override, interaction)
     else {
@@ -269,6 +289,7 @@ fn drive_mod(
     if extension.suspended {
         return;
     }
+    let mut reloaded = false;
     if extension.last_reload.elapsed() >= RELOAD_INTERVAL {
         extension.last_reload = Instant::now();
         let first = usize::from(!extension.reload_on_main);
@@ -276,6 +297,7 @@ fn drive_mod(
             match extension.host_mut(index).reload_if_changed() {
                 // A new instance never sees cues from before it existed.
                 Ok(true) => {
+                    reloaded = true;
                     if let Some(cues) = outputs.2.as_mut() {
                         cues.0.clear();
                     }
@@ -285,21 +307,16 @@ fn drive_mod(
             }
         }
     }
-    let focused = windows.single().is_ok_and(|(window, _)| window.focused);
-    let absorbed = crate::screen_policy::absorbs_input(
-        &player_runtime,
-        Some(&ui),
-        menu.as_deref(),
-        Some(&presentation),
-    );
+    if reloaded {
+        gameplay.synchronize_jump_scope(false);
+        gameplay.synchronize_jump_scope(movement_allowed && captured && !absorbed);
+    }
     let pressed = keybind_allowed(focused, absorbed) && keys.just_pressed(DEMO_KEY);
-    let captured = windows.single().is_ok_and(|(window, cursor)| {
-        cursor.is_some_and(|cursor| crate::camera::input_is_active(window, cursor))
-    });
     let controls = std::mem::replace(&mut extension.controls, mod_host::empty_controls());
     let (network, camera, cues) = outputs;
     let previous_cues = cues.as_ref().map_or_else(Vec::new, |feed| feed.0.clone());
     let registration = extension.registration_request.clone();
+    let mut callback_failed = false;
     let merged = multi::run_frame(
         &mut extension,
         multi::FrameInput {
@@ -310,9 +327,11 @@ fn drive_mod(
         |grants| {
             let snapshot = gameplay.snapshot(captured && !absorbed, grants);
             let mobs = gameplay.mobs(snapshot.as_ref(), grants);
-            (snapshot, mobs)
+            let movement = gameplay.movement_snapshot(captured && !absorbed, grants);
+            (snapshot, mobs, movement)
         },
         |index, error| {
+            callback_failed = true;
             if index == 0
                 && let Some((generation, request_id)) = &registration
                 && let Some(watcher) = watcher.as_ref()
@@ -326,6 +345,13 @@ fn drive_mod(
     if let Some(watcher) = watcher.as_ref() {
         watcher.remember_settings(Some(&extension.host));
     }
+    if callback_failed {
+        gameplay.synchronize_jump_scope(false);
+    }
+    let movement_allowed = (0..extension.host_count())
+        .any(|index| extension.host(index).is_active() && extension.host(index).grants().movement);
+    gameplay.synchronize_jump_scope(movement_allowed && captured && !absorbed);
+    gameplay.pulse_jump(merged.jump_pulse);
     interaction.attack_reach = merged.attack_reach;
     interaction.attack_pulse = merged.attack_pulse && gameplay.pulse_attack();
     if let Some(delta) = merged.delta {
