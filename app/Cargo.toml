@@ -30,6 +30,7 @@ reports = []
 acceptance = { path = "../crates/acceptance", optional = true }
 diagnostics = { path = "../crates/diagnostics" }
 developer-control = { path = "../crates/developer-control", optional = true }
+discord-presence = { path = "../crates/discord-presence" }
 client-presentation = { path = "../crates/client-presentation" }
 gameplay = { path = "../crates/gameplay" }
 client-session = { path = "../crates/client-session" }

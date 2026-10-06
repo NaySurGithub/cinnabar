@@ -88,6 +88,7 @@ Mojang assets are never committed or embedded. `make assets` fetches Mojang's of
 | `crates/bridge` | The local stream between the client and the Go core. |
 | `crates/client-world` | Authoritative world state, actors, items, decoding and ordered commits. |
 | `crates/chunk-pipeline` | Terrain residency, mesh scheduling and bounded publication. |
+| `crates/discord-presence` | Discord Rich Presence card and its IPC worker; toggled in Video settings. |
 | `crates/experience-runtime`, `crates/experience-sdk` | Runs a server Experience out of process; the guest SDK generated from `wit/server.wit`. |
 | `crates/input` | Device-independent input actions. |
 | `crates/inventory` | Engine-independent inventory authority, prediction, crafting and commands. |

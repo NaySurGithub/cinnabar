@@ -66,6 +66,8 @@ pub(crate) struct SessionController {
     connecting: bool,
     /// Polls the per-session core this join started for its server trust question.
     trust: Option<SessionTrust>,
+    /// The current session's join address and whether it names a local world.
+    target: Option<(String, bool)>,
 }
 
 impl Default for SessionController {
@@ -85,6 +87,7 @@ impl SessionController {
             transfer_hops_remaining: MAX_TRANSFER_CHAIN_HOPS,
             connecting: false,
             trust: None,
+            target: None,
         }
     }
 
@@ -174,9 +177,16 @@ impl SessionController {
         self.directory = None;
     }
 
-    #[cfg(test)]
     pub(crate) fn generation(&self) -> u64 {
         self.generation
+    }
+
+    /// The current session's join address and whether it names a local world;
+    /// `None` for a direct `--address` session.
+    pub(crate) fn target(&self) -> Option<(&str, bool)> {
+        self.target
+            .as_ref()
+            .map(|(address, local_world)| (address.as_str(), *local_world))
     }
 
     #[cfg(all(test, unix))]
@@ -280,6 +290,7 @@ impl SessionResources<'_> {
             .core
             .stop_detached(move || drop((join, directory)));
         controller.connecting = false;
+        controller.target = None;
         let generation = controller.next_generation();
         self.resource_packs.begin_generation(generation);
         begin_session(&mut self.runtime, &mut self.player_runtime, generation);
@@ -352,6 +363,7 @@ fn attempt_connect(
             }
         }
     };
+    controller.target = Some((address.clone(), local_world));
     controller.join = Some(JoinAttempt {
         generation,
         address,

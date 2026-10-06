@@ -183,6 +183,13 @@ path = "crates/developer-control"
 allowed_dependencies = []
 forbidden_dependencies = ["asset-compiler", "bevy", "wgpu"]
 
+# Discord Rich Presence card and IPC worker.
+[[crates]]
+name = "discord-presence"
+path = "crates/discord-presence"
+allowed_dependencies = []
+forbidden_dependencies = ["asset-compiler", "bevy", "wgpu"]
+
 [[crates]]
 name = "render-api"
 path = "crates/render-api"
@@ -218,7 +225,7 @@ forbidden_transitive_dependencies = ["client-world", "chunk-pipeline", "protocol
 [[crates]]
 name = "app"
 path = "app"
-allowed_dependencies = ["acceptance", "assets", "chunk-pipeline", "client-presentation", "client-session", "client-ui", "client-world", "developer-control", "diagnostics", "gameplay", "inventory", "json-ui", "launcher", "meshing", "mod-host", "objc2", "objc2-app-kit", "pack-compiler", "particles", "player-state", "protocol", "render", "render-model", "resource-pack", "semantic-input", "server-experience", "sim", "ui", "world"]
+allowed_dependencies = ["acceptance", "assets", "chunk-pipeline", "client-presentation", "client-session", "client-ui", "client-world", "developer-control", "diagnostics", "discord-presence", "gameplay", "inventory", "json-ui", "launcher", "meshing", "mod-host", "objc2", "objc2-app-kit", "pack-compiler", "particles", "player-state", "protocol", "render", "render-model", "resource-pack", "semantic-input", "server-experience", "sim", "ui", "world"]
 forbidden_dependencies = ["asset-compiler"]
 forbidden_transitive_dependencies = ["asset-compiler"]
 

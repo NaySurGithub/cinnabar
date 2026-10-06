@@ -16,6 +16,7 @@ members = [
     "examples/experiences/probe",
     "crates/input",
     "crates/developer-control",
+    "crates/discord-presence",
     "crates/json-ui",
     "crates/meshing",
     "crates/mod-api",

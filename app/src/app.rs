@@ -692,6 +692,7 @@ pub fn run(args: args::ClientArgs) -> Result<()> {
     app.add_plugins(FxaaPlugin);
     app.add_systems(Update, crate::window_icon::apply);
     app.add_plugins(crate::local_worlds::LocalWorldsPlugin);
+    app.add_plugins(crate::discord_presence::DiscordPresencePlugin);
     app.add_plugins(crate::hud_tools::HudToolsPlugin {
         screenshots_dir: layout.screenshots_dir(),
         debug_overlay: args.dev_debug_overlay,
