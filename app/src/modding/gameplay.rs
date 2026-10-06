@@ -38,10 +38,11 @@ impl GameplayContext<'_> {
                 .server_camera
                 .as_ref()
                 .is_some_and(|camera| camera.is_active())
-            || self
-                .ui
-                .as_ref()
-                .is_some_and(|ui| ui.hud().health().current() == 0)
+            || self.ui.as_ref().is_some_and(|ui| {
+                ui.hud()
+                    .health()
+                    .is_some_and(|health| health.current() == 0)
+            })
         {
             return None;
         }
