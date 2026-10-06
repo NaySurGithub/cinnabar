@@ -324,7 +324,7 @@ fn movement_input_requires_explicit_grant_and_eligible_frame() {
     granted.pulse_jump().unwrap().unwrap();
     assert!(granted.pending_jump);
     assert!(!granted.jump_pulse, "not committed during guest callback");
-    for _ in 1..MAX_IMPORT_WRITES {
+    for _ in granted.movement_writes..MAX_IMPORT_WRITES {
         granted.pulse_jump().unwrap().unwrap();
     }
     assert!(granted.pulse_jump().is_err(), "bounded import budget traps");
