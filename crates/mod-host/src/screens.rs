@@ -25,13 +25,6 @@ pub enum DataSource {
     Recipes,
 }
 
-impl DataSource {
-    /// A mod reads this source whole, which takes the load budget.
-    pub fn read_whole(&self) -> bool {
-        matches!(self, Self::Items | Self::Recipes)
-    }
-}
-
 /// One host event for a `player-mod` component's callbacks.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ModEvent {

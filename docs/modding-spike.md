@@ -11,10 +11,10 @@ From the repository root, with the Rust toolchain pinned by the repository:
 ```sh
 rustup target add wasm32-unknown-unknown
 cargo build -p hello-mod --target wasm32-unknown-unknown --locked
-cargo run -p mod-host --locked -- pack \
+cargo run -p mod-host --bin mod-host --locked -- pack \
   target/wasm32-unknown-unknown/debug/hello_mod.wasm /tmp/cinnabar-hello.wasm
-cargo run -p mod-host --locked -- probe /tmp/cinnabar-hello.wasm
-cargo run -p mod-host --locked -- bench /tmp/cinnabar-hello.wasm
+cargo run -p mod-host --bin mod-host --locked -- probe /tmp/cinnabar-hello.wasm
+cargo run -p mod-host --bin mod-host --locked -- bench /tmp/cinnabar-hello.wasm
 CINNABAR_MOD_COMPONENT=/tmp/cinnabar-hello.wasm cargo run -p bedrock-client --features local-mods --locked
 ```
 
@@ -59,9 +59,9 @@ install it separately with `rustup target add wasm32-unknown-unknown`):
 
 ```sh
 cargo build -p time-changer-mod --target wasm32-unknown-unknown --locked
-cargo run -p mod-host --locked -- pack \
+cargo run -p mod-host --bin mod-host --locked -- pack \
   target/wasm32-unknown-unknown/debug/time_changer_mod.wasm /tmp/cinnabar-time-changer.wasm
-cargo run -p mod-host --locked -- probe-environment /tmp/cinnabar-time-changer.wasm
+cargo run -p mod-host --bin mod-host --locked -- probe-environment /tmp/cinnabar-time-changer.wasm
 CINNABAR_MOD_COMPONENT=/tmp/cinnabar-time-changer.wasm cargo run -p bedrock-client --features local-mods --locked
 ```
 
@@ -138,9 +138,10 @@ callbacks (see "Mod packages and screens" below). One host linker serves both. (
 server Experience's client part is another world, `server-bundle`, which `experience-sdk`'s
 `client` feature builds; see [server-experiences.md](server-experiences.md).) The guest
 SDK uses `wit-bindgen`; the host independently generates Wasmtime bindings from
-those same files. Copy `examples/mods/hello` to start a bare mod (`mod_api::bindings`), or
-`examples/mods/screen-probe` for a package (`mod_api::player_mod`), adjust its dependency
-path, and implement its generated `Guest` trait. `pack` converts the core WASM
+those same files. Copy `examples/mods/hello` to start a bare mod (`mod_api::bindings`) and
+implement its generated `Guest` trait, or `examples/mods/screen-probe` for a package: implement
+`mod_api::PlayerMod`, overriding only the events the mod uses, and export it with
+`mod_api::export_player_mod!`. Adjust the copy's dependency path. `pack` converts the core WASM
 module and embedded WIT metadata to a component. The guest's actual imports
 declare its requirements; unknown imports fail linking. The prototype's
 grant is HUD, the demo action and environment for the developer-selected mod,
@@ -239,9 +240,9 @@ pulsing ring at the player's feet:
 
 ```sh
 cargo build -p render-sample-mod --target wasm32-unknown-unknown --locked
-cargo run -p mod-host --locked -- pack \
+cargo run -p mod-host --bin mod-host --locked -- pack \
   target/wasm32-unknown-unknown/debug/render_sample_mod.wasm /tmp/cinnabar-render.wasm
-cargo run -p mod-host --locked -- probe-render /tmp/cinnabar-render.wasm
+cargo run -p mod-host --bin mod-host --locked -- probe-render /tmp/cinnabar-render.wasm
 CINNABAR_MOD_COMPONENT=/tmp/cinnabar-render.wasm CINNABAR_MOD_RENDER=1 CINNABAR_MOD_PLAYERS=1 \
   cargo run -p bedrock-client --features local-mods --locked
 ```

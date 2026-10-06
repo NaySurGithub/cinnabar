@@ -284,9 +284,7 @@ impl Instance {
         }
         self.store.data().check_event(event)?;
         let fuel = match event {
-            ModEvent::DataChanged(sources) if sources.iter().any(crate::DataSource::read_whole) => {
-                LOAD_FUEL
-            }
+            ModEvent::DataChanged(_) => LOAD_FUEL,
             _ => CALLBACK_FUEL,
         };
         self.run(fuel, commit_event, |exports, store| {

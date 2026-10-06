@@ -4,8 +4,9 @@
 //! `probe.flood` binds until the host refuses, and `probe.read_all` reads the whole session in
 //! an ordinary event, as `data-changed` does on the load budget.
 
+use mod_api::PlayerMod;
 use mod_api::player_mod::{
-    DataSource, Guest, ScreenLayout, Stack,
+    DataSource, ScreenLayout, Stack,
     cinnabar::extension::screen,
     cinnabar::server_experience::ui::Value,
     cinnabar::session::{items, recipes},
@@ -83,7 +84,7 @@ fn read_all() {
     report("#recipes_read", Value::Integer(recipes.into()));
 }
 
-impl Guest for Probe {
+impl PlayerMod for Probe {
     fn init() {
         let _ = screen::set_overlay(Some(declared::templates::OVERLAY));
         read_session();
@@ -194,4 +195,4 @@ impl Guest for Probe {
     }
 }
 
-mod_api::player_mod::export_player_mod!(Probe with_types_in mod_api::player_mod);
+mod_api::export_player_mod!(Probe);
