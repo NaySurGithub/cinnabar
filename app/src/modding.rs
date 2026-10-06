@@ -81,6 +81,27 @@ struct ModRuntime {
     suspended: bool,
 }
 
+/// Bounded personal-extension diagnostics, only through the developer control endpoint.
+#[cfg(all(feature = "developer-control", feature = "local-mods"))]
+pub(crate) fn developer_state(world: &World) -> Option<serde_json::Value> {
+    let runtime = world.get_resource::<ModRuntime>()?;
+    let hosts: Vec<_> = (0..runtime.host_count())
+        .map(|index| {
+            let host = runtime.host(index);
+            serde_json::json!({
+                "index": index,
+                "active": host.is_active(),
+                "label": host.label(),
+                "panel_open": host.panel_open(),
+                "reserved_keys": host.reserved_keys(),
+                "movement_granted": host.grants().movement,
+                "panel": host.panel(),
+            })
+        })
+        .collect();
+    Some(serde_json::json!({ "suspended": runtime.suspended, "hosts": hosts }))
+}
+
 /// Installs the developer extension only when its component path is explicit.
 pub(crate) fn configure_from_environment(app: &mut App) {
     let path = std::env::var_os(COMPONENT_ENV);
