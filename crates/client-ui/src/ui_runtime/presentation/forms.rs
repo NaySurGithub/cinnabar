@@ -78,9 +78,9 @@ pub mod sign_editor;
 #[cfg(any(test, feature = "test-support"))]
 pub mod snapshot;
 pub mod start_feed;
-mod template_screen;
 #[cfg(test)]
 mod store_tests;
+mod template_screen;
 #[cfg(test)]
 pub mod tests;
 pub mod textures;
