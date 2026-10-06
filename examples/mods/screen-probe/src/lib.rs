@@ -5,7 +5,7 @@
 //! an ordinary event, as `data-changed` does on the load budget.
 
 use mod_api::player_mod::{
-    Guest, ScreenLayout, Stack,
+    DataSource, Guest, ScreenLayout, Stack,
     cinnabar::extension::screen,
     cinnabar::server_experience::ui::Value,
     cinnabar::session::{items, recipes},
@@ -174,7 +174,15 @@ impl Guest for Probe {
         text("#key", format!("{id}:{hovered}:{row:?}"));
     }
 
-    fn data_changed() {
+    fn data_changed(sources: Vec<DataSource>) {
+        let names: Vec<&str> = sources
+            .iter()
+            .map(|source| match source {
+                DataSource::Items => "items",
+                DataSource::Recipes => "recipes",
+            })
+            .collect();
+        text("#data_sources", names.join(","));
         read_session();
         read_all();
     }

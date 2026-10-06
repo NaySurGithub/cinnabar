@@ -19,7 +19,7 @@ use server_experience::{
     session_data as data,
 };
 
-pub(super) use super::{Modifiers, ScreenLayout as Layout};
+pub(super) use super::{DataSource, Modifiers, ScreenLayout as Layout};
 
 /// Host calls one callback may make, reads included.
 const MAX_HOST_CALLS: usize = 1024;
@@ -88,7 +88,7 @@ impl State {
             }
             ModEvent::ScreenChanged(_)
             | ModEvent::Scrolled { .. }
-            | ModEvent::DataChanged
+            | ModEvent::DataChanged(_)
             | ModEvent::ViewClosed => {}
         }
         Ok(())

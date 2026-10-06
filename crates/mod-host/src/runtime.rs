@@ -197,7 +197,7 @@ impl Instance {
         store.set_fuel(FRAME_FUEL)?;
         let instance = linker.instantiate(&mut store, &component)?;
         let (init, exports) = exports::Exports::find(&mut store, &instance)?;
-        let budget = if exports.has_events() {
+        let budget = if exports.loads_session() {
             store.set_fuel(LOAD_FUEL)?;
             LOAD_FUEL
         } else {
@@ -257,12 +257,14 @@ impl Instance {
     /// Delivers one event callback, `data-changed` with `LOAD_FUEL` and every other event with
     /// `CALLBACK_FUEL`. An `extension` component has no event exports and receives nothing.
     pub(super) fn dispatch(&mut self, event: &ModEvent) -> Result<()> {
-        if !self.active || !self.exports.has_events() {
+        if !self.active {
             return Ok(());
         }
         self.store.data().check_event(event)?;
         let fuel = match event {
-            ModEvent::DataChanged => LOAD_FUEL,
+            ModEvent::DataChanged(sources) if sources.iter().any(crate::DataSource::read_whole) => {
+                LOAD_FUEL
+            }
             _ => CALLBACK_FUEL,
         };
         self.run(fuel, commit_event, |exports, store| {

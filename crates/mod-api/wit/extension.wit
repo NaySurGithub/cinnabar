@@ -221,6 +221,10 @@ world extension {
 
 /// `extension` plus screens beside the container screens, the session's read-only items and
 /// recipes, declared keys and event callbacks. A mod package (`mod.toml`) targets this world.
+///
+/// Every event export is optional: the host type-checks each one a component exports, refusing
+/// one of another signature, and never calls one it lacks. New events arrive as new exports, so
+/// a built component keeps working. `init` and `frame` stay required.
 world player-mod {
     include extension;
     import screen;
@@ -229,6 +233,12 @@ world player-mod {
 
     use screen.{screen-layout, modifiers};
     use cinnabar:session/items@0.1.0.{stack};
+
+    /// What a `data-changed` reports as changed.
+    enum data-source {
+        items,
+        recipes,
+    }
 
     /// A container screen opened, closed (`none`) or was laid out anew.
     export screen-changed: func(layout: option<screen-layout>);
@@ -249,8 +259,10 @@ world player-mod {
     /// collection name and index of the mod's control under the pointer, overlay or view, by
     /// the rule `action` uses (its nearest collection).
     export key: func(id: string, hovered: option<stack>, row: option<tuple<string, u32>>);
-    /// The session's items or recipes changed revision; gets the load fuel budget.
-    export data-changed: func();
+    /// The listed session sources changed revision. A change that includes `items` or
+    /// `recipes`, which a mod reads whole, gets the load fuel budget; any other gets the
+    /// per-event budget. A component that exports this also gets the load budget for `init`.
+    export data-changed: func(sources: list<data-source>);
     /// The host closed the view (Escape, or the container closing), not the mod.
     export view-closed: func();
 }

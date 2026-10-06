@@ -18,6 +18,20 @@ pub struct KeyModifiers {
     pub alt: bool,
 }
 
+/// A session source a `data-changed` reports.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum DataSource {
+    Items,
+    Recipes,
+}
+
+impl DataSource {
+    /// A mod reads this source whole, which takes the load budget.
+    pub fn read_whole(&self) -> bool {
+        matches!(self, Self::Items | Self::Recipes)
+    }
+}
+
 /// One host event for a `player-mod` component's callbacks.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ModEvent {
@@ -48,7 +62,8 @@ pub enum ModEvent {
     },
     /// The host closed the view: Escape, or the container closing.
     ViewClosed,
-    DataChanged,
+    /// The sources that changed, each once, in order.
+    DataChanged(Vec<DataSource>),
 }
 
 impl ModEvent {
@@ -63,8 +78,21 @@ impl ModEvent {
         {
             out.push(layout.clone());
         }
-        if events.contains(&Self::DataChanged) {
-            out.push(Self::DataChanged);
+        let mut sources: Vec<DataSource> = events
+            .iter()
+            .filter_map(|event| match event {
+                Self::DataChanged(sources) => Some(sources.iter().copied()),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        sources.sort();
+        sources.dedup();
+        if events
+            .iter()
+            .any(|event| matches!(event, Self::DataChanged(_)))
+        {
+            out.push(Self::DataChanged(sources));
         }
         for (index, event) in events.iter().enumerate() {
             let later_text = |control: &str| {
@@ -73,7 +101,7 @@ impl ModEvent {
                 })
             };
             match event {
-                Self::ScreenChanged(_) | Self::DataChanged => {}
+                Self::ScreenChanged(_) | Self::DataChanged(_) => {}
                 Self::TextChanged { control, .. } if later_text(control) => {}
                 event => out.push(event.clone()),
             }
@@ -129,12 +157,23 @@ impl ModHost {
     /// The session's items and recipes the guest reads from now on; a changed revision
     /// delivers `data-changed`.
     pub fn set_session(&mut self, session: Arc<SessionData>) -> Result<()> {
-        let changed = session.item_revision != self.session.item_revision
-            || session.recipe_revision != self.session.recipe_revision;
+        let sources: Vec<DataSource> = [
+            (
+                DataSource::Items,
+                session.item_revision != self.session.item_revision,
+            ),
+            (
+                DataSource::Recipes,
+                session.recipe_revision != self.session.recipe_revision,
+            ),
+        ]
+        .into_iter()
+        .filter_map(|(source, changed)| changed.then_some(source))
+        .collect();
         self.session = Arc::clone(&session);
         self.instance.set_session(session);
-        if changed {
-            return self.dispatch(vec![ModEvent::DataChanged]);
+        if !sources.is_empty() {
+            return self.dispatch(vec![ModEvent::DataChanged(sources)]);
         }
         Ok(())
     }

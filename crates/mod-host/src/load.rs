@@ -1,7 +1,7 @@
 //! Bounded component and package admission and deferred settings activation.
 
 use crate::{
-    MAX_COMPONENT_BYTES, ModEvent, ModGrants, ModHost, Source,
+    DataSource, MAX_COMPONENT_BYTES, ModEvent, ModGrants, ModHost, Source,
     package::{self, Package},
     runtime::{Declared, Instance},
     screens::{declared, loaded},
@@ -205,7 +205,8 @@ impl ModHost {
         self.queue_settings();
         if self.instance.has_events() {
             let layout = ModEvent::ScreenChanged(self.layout.clone());
-            self.dispatch(vec![layout, ModEvent::DataChanged])?;
+            let data = ModEvent::DataChanged(vec![DataSource::Items, DataSource::Recipes]);
+            self.dispatch(vec![layout, data])?;
         }
         Ok(true)
     }

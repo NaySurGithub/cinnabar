@@ -473,16 +473,21 @@ reaches the mod during gameplay.
 
 **Callbacks.** `player-mod` exports `screen-changed`, `action`, `secondary-action`,
 `scrolled`, `text-changed`, `key`, `data-changed` and `view-closed` beside `init` and `frame`.
+Each event export is optional: the host type-checks every one a component exports (refusing
+one of another signature) and never calls one it lacks, so new events arrive as new exports
+without breaking built mods. `data-changed(sources)` lists what changed (`items`, `recipes`).
 `scrolled` reports wheel notches (a pixel wheel's pixels / 16), positive scrolling down, and
 the Ctrl, Shift and Alt held. An event callback commits the label, visual time, panel,
-settings and screens; render, camera and command output is `frame`'s alone. A `player-mod`
-component's `init` and `data-changed`, which copy the whole session across the ABI, get
-`LOAD_FUEL` (100,000,000; twice vanilla's session measured 27.7M in the probe), after the
-Experience runtime's `REGISTER_FUEL`; every other event callback gets `CALLBACK_FUEL`
-(10,000,000) and `frame` keeps 100,000. A bare `extension` component's instantiation and
-`init` keep the frame budget. A session that outgrows the load budget calls for a host-side query API
+settings and screens; render, camera and command output is `frame`'s alone.
+
+A `data-changed` that includes `items` or `recipes`, which a mod copies whole across the ABI,
+and the `init` of a component exporting `data-changed` get `LOAD_FUEL` (100,000,000; twice
+vanilla's session measured 27.7M in the probe), after the Experience runtime's
+`REGISTER_FUEL`. Every other event callback gets `CALLBACK_FUEL` (10,000,000) and `frame`
+keeps 100,000; any other component's instantiation and `init` keep the frame budget. A
+session that outgrows the load budget calls for a host-side query API
 (items and recipes on demand) rather than a larger copy. One frame's events are
-coalesced: the latest layout first, one data change, then the rest in order with the latest
+coalesced: the latest layout first, one data change naming every source, then the rest in order with the latest
 text per edit box. A trap or exhausted fuel quarantines the mod and removes its overlay and
 view; a refused template does too. An undeclared action or key is refused without
 quarantine. Reload re-reads the whole package and delivers the current layout and data to

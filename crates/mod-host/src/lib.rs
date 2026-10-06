@@ -17,7 +17,7 @@ mod settings;
 #[cfg(feature = "execution")]
 pub use experience_sdk::mod_manifest::{KEY_NAMES, KeyDecl, Modifier};
 #[cfg(feature = "execution")]
-pub use screens::{KeyModifiers, LoadedPackage, ModEvent, ModScreens};
+pub use screens::{DataSource, KeyModifiers, LoadedPackage, ModEvent, ModScreens};
 
 #[cfg(feature = "execution")]
 pub use mod_api::{

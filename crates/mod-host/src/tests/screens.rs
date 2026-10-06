@@ -2,6 +2,7 @@
 //! packaged with its `mod.toml`, reports what each callback saw as bound values.
 
 use super::*;
+use crate::DataSource;
 use server_experience::{
     screen::{GuiSize, Rect, ScreenLayout, Value},
     session_data::{
@@ -407,17 +408,17 @@ fn coalescing_keeps_the_latest_layout_and_text_per_box() {
     let events = ModEvent::coalesce(vec![
         text("a", "1"),
         ModEvent::ScreenChanged(None),
-        ModEvent::DataChanged,
+        ModEvent::DataChanged(vec![DataSource::Recipes]),
         text("b", "x"),
         text("a", "2"),
         ModEvent::ScreenChanged(Some(layout())),
-        ModEvent::DataChanged,
+        ModEvent::DataChanged(vec![DataSource::Items, DataSource::Recipes]),
     ]);
     assert_eq!(
         events,
         vec![
             ModEvent::ScreenChanged(Some(layout())),
-            ModEvent::DataChanged,
+            ModEvent::DataChanged(vec![DataSource::Items, DataSource::Recipes]),
             text("b", "x"),
             text("a", "2"),
         ]
@@ -514,4 +515,70 @@ fn an_extension_init_stays_on_the_frame_budget() {
     assert!(ModHost::load(&path).is_err());
     let (_dir, host) = probe();
     assert!(host.last_fuel_used() <= server_experience::runtime::LOAD_FUEL);
+}
+
+/// A component exporting `init`, `frame` and the given event exports, lifted from `$body`
+/// core functions named after them.
+fn partial_component(dir: &Path, exports: &[(&str, &str, &str)]) -> std::path::PathBuf {
+    let core: String = exports
+        .iter()
+        .map(|(name, params, body)| format!("(func (export \"{name}\") {params} {body})"))
+        .collect();
+    let lifted: String = exports
+        .iter()
+        .map(|(name, params, _)| {
+            let params = params.replace("(param i32)", "(param \"x\" u32)");
+            format!("(func (export \"{name}\") {params} (canon lift (core func $i \"{name}\")))")
+        })
+        .collect();
+    let path = dir.join("partial.wat");
+    std::fs::write(
+        &path,
+        format!(
+            r#"(component
+                (core module $m (func (export "init")) (func (export "frame")) {core})
+                (core instance $i (instantiate $m))
+                (func (export "init") (canon lift (core func $i "init")))
+                (func (export "frame") (canon lift (core func $i "frame")))
+                {lifted})"#
+        ),
+    )
+    .unwrap();
+    path
+}
+
+#[test]
+fn a_component_exporting_some_events_gets_only_those() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = partial_component(dir.path(), &[("view-closed", "", "unreachable")]);
+    let mut host = ModHost::load(&path).unwrap();
+    assert!(host.has_events());
+    // Not exported: nothing is called.
+    host.dispatch(vec![ModEvent::ScreenChanged(Some(layout()))])
+        .unwrap();
+    host.dispatch(vec![ModEvent::DataChanged(vec![DataSource::Items])])
+        .unwrap();
+    assert!(host.is_active());
+    // Exported: called, and its trap quarantines.
+    assert!(host.dispatch(vec![ModEvent::ViewClosed]).is_err());
+    assert!(!host.is_active());
+}
+
+#[test]
+fn an_event_export_of_another_signature_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = partial_component(dir.path(), &[("view-closed", "(param i32)", "")]);
+    let error = ModHost::load(&path).err().expect("refused");
+    assert!(format!("{error:#}").contains("view-closed"), "{error:#}");
+}
+
+#[test]
+fn data_changed_names_what_changed() {
+    let (_dir, mut host) = probe();
+    host.set_session(session(5, 1)).unwrap();
+    assert_eq!(text(&host, "#data_sources"), "items,recipes");
+    let mut recipes_only = (*session(5, 1)).clone();
+    recipes_only.recipe_revision = 2;
+    host.set_session(Arc::new(recipes_only)).unwrap();
+    assert_eq!(text(&host, "#data_sources"), "recipes");
 }
