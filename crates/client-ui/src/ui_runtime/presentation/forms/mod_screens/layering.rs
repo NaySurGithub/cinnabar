@@ -92,6 +92,28 @@ pub(super) fn drawn_bounds(nodes: &[UiNode], content: [f32; 2], scale: f32) -> O
     })
 }
 
+/// Which of a mod's screens a pointer belongs to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Surface {
+    View,
+    Overlay,
+}
+
+/// The screen under GUI `point`: beside an open view, wherever the overlay may draw, the
+/// overlay's, so its list stays usable beside the view; elsewhere the view's while it is open.
+pub(super) fn pointer_surface(
+    view_open: bool,
+    layout: Option<&ScreenLayout>,
+    point: [f64; 2],
+) -> Surface {
+    let beside = layout.is_some_and(|layout| layout.overlay_allows(point));
+    if view_open && !beside {
+        Surface::View
+    } else {
+        Surface::Overlay
+    }
+}
+
 /// The collection name and index of the topmost enabled control at GUI `point` that sits in a
 /// collection, by the rule `action` reports rows with (the control's nearest collection).
 /// `regions` are `(rect, collection and index, enabled)` in draw order.

@@ -31,7 +31,7 @@ pub(super) struct TemplateArt {
     catalog: Option<Result<Arc<Catalog>, String>>,
     textures: Option<TextureSet>,
     /// The atlas's page images last handed to the dynamic pages.
-    pages: Vec<render::UiTexturePage>,
+    pages: Vec<render_model::UiTexturePage>,
     /// The first dynamic page and the number of pages reserved to this package's atlas.
     page: u16,
     page_count: usize,
@@ -94,7 +94,7 @@ impl TemplateArt {
         true
     }
 
-    pub(super) fn pages(&self) -> &[render::UiTexturePage] {
+    pub(super) fn pages(&self) -> &[render_model::UiTexturePage] {
         &self.pages
     }
 }

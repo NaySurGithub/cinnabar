@@ -1,4 +1,4 @@
-//! Extension 0.2 through a real component: `examples/mods/screen-probe`, built for wasm32 and
+//! `player-mod` through a real component: `examples/mods/screen-probe`, built for wasm32 and
 //! packaged with its `mod.toml`, reports what each callback saw as bound values.
 
 use super::*;
@@ -8,6 +8,7 @@ use server_experience::{
         Ingredient, IngredientKind, Item, ItemKey, Recipe, RecipeCategory, SessionData, Stack,
     },
 };
+use sha2::{Digest, Sha256};
 use std::{path::Path, sync::OnceLock};
 
 const PROBE: &str = concat!(
@@ -272,6 +273,10 @@ fn input_events_reach_their_callbacks() {
             delta: -2.0,
             x: 400.0,
             y: 30.0,
+            modifiers: KeyModifiers {
+                shift: true,
+                ..KeyModifiers::default()
+            },
         },
         ModEvent::TextChanged {
             control: "probe.search".into(),
@@ -296,6 +301,10 @@ fn input_events_reach_their_callbacks() {
     assert_eq!(
         value(&host, "#scrolled"),
         Some(&Value::Numbers(vec![-2.0, 400.0, 30.0]))
+    );
+    assert_eq!(
+        value(&host, "#scroll_modifiers"),
+        Some(&Value::Numbers(vec![0.0, 1.0, 0.0]))
     );
     assert_eq!(text(&host, "#search"), "probe.search=dirt");
     assert_eq!(
@@ -431,4 +440,78 @@ fn a_twice_vanilla_session_loads_but_an_event_may_not_spend_that_much() {
     let error = host.dispatch(vec![action("probe.read_all")]).unwrap_err();
     assert!(format!("{error:#}").contains("fuel"), "{error:#}");
     assert!(!host.is_active());
+}
+
+#[test]
+fn a_package_in_a_set_needs_both_the_manifest_ask_and_the_loader_grant() {
+    let dir = tempfile::tempdir().unwrap();
+    write_probe(dir.path(), str::to_owned);
+    let only_screen = ModGrants {
+        screen: true,
+        ..ModGrants::default()
+    };
+    let mut host = ModHost::load_package_with_grants(dir.path(), only_screen).unwrap();
+    assert_eq!(host.screens().overlay.as_deref(), Some("ui/overlay.json"));
+    host.set_session(session(5, 1)).unwrap();
+    assert!(text(&host, "#items_error").contains("denied"));
+    let unasked = tempfile::tempdir().unwrap();
+    write_probe(unasked.path(), |manifest| {
+        manifest.replace(
+            "permissions = [\"screen\", \"items\", \"recipes\", \"keys\"]",
+            "permissions = [\"items\"]",
+        )
+    });
+    let all = ModGrants {
+        screen: true,
+        items: true,
+        recipes: true,
+        keys: true,
+        ..ModGrants::default()
+    };
+    let host = ModHost::load_package_with_grants(unasked.path(), all).unwrap();
+    assert!(!host.grants().screen);
+    assert!(host.grants().items);
+}
+
+#[test]
+fn a_package_keeps_its_settings_beside_its_directory() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = root.path().join("bei-0.1.0");
+    write_probe(&dir, str::to_owned);
+    let grants = ModGrants {
+        settings: true,
+        ..ModGrants::default()
+    };
+    let host = ModHost::load_package(&dir, grants).unwrap();
+    let path = host.settings_path().unwrap();
+    assert_eq!(path.file_name().unwrap(), "bei-0.1.0.settings.json");
+    assert_eq!(
+        path.parent().unwrap().canonicalize().unwrap(),
+        root.path().canonicalize().unwrap()
+    );
+}
+
+#[test]
+fn an_extension_init_stays_on_the_frame_budget() {
+    // About half a million instructions: within `LOAD_FUEL`, beyond `FRAME_FUEL`.
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("busy.wat");
+    std::fs::write(
+        &path,
+        r#"(component
+            (core module $m
+                (func (export "init") (local $n i32)
+                    (local.set $n (i32.const 100000))
+                    (loop $l
+                        (local.set $n (i32.sub (local.get $n) (i32.const 1)))
+                        (br_if $l (local.get $n))))
+                (func (export "frame")))
+            (core instance $i (instantiate $m))
+            (func (export "init") (canon lift (core func $i "init")))
+            (func (export "frame") (canon lift (core func $i "frame"))))"#,
+    )
+    .unwrap();
+    assert!(ModHost::load(&path).is_err());
+    let (_dir, host) = probe();
+    assert!(host.last_fuel_used() <= server_experience::runtime::LOAD_FUEL);
 }

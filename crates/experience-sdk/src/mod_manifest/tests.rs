@@ -4,7 +4,7 @@ const WASM: &str = "000000000000000000000000000000000000000000000000000000000000
 
 fn manifest(body: &str) -> String {
     format!(
-        "id = \"bei\"\nversion = \"0.1.0\"\napi = \"0.2\"\n\
+        "id = \"bei\"\nversion = \"0.1.0\"\napi = \"{API}\"\n\
          permissions = [\"screen\", \"items\", \"recipes\", \"keys\"]\n{body}"
     )
 }
@@ -114,7 +114,7 @@ fn unknown_keys_modifiers_permissions_and_api_are_refused() {
     );
     assert!(
         ModManifest::parse(&format!(
-            "id = \"bei\"\nversion = \"0.1.0\"\napi = \"0.2\"\npermissions = [\"world\"]\n{}",
+            "id = \"bei\"\nversion = \"0.1.0\"\napi = \"{API}\"\npermissions = [\"world\"]\n{}",
             files(&[])
         ))
         .is_err()
@@ -150,7 +150,7 @@ fn paths_stay_inside_the_package() {
 #[test]
 fn an_id_that_is_not_a_lowercase_name_is_refused() {
     let error = refusal(&format!(
-        "id = \"Bei Mod\"\nversion = \"0.1.0\"\napi = \"0.2\"\npermissions = []\n{}",
+        "id = \"Bei Mod\"\nversion = \"0.1.0\"\napi = \"{API}\"\npermissions = []\n{}",
         files(&[])
     ));
     assert!(error.contains("Bei Mod"), "{error}");

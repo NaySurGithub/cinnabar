@@ -199,7 +199,7 @@ impl UiPresentationRuntime {
     }
 
     /// The modal atlas's pages, for the dynamic pages reserved to it.
-    pub(in super::super) fn experience_modal_pages(&self) -> &[render::UiTexturePage] {
+    pub(in super::super) fn experience_modal_pages(&self) -> &[render_model::UiTexturePage] {
         self.form_presentation
             .experience_modal
             .as_ref()

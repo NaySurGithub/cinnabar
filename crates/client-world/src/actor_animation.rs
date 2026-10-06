@@ -19,9 +19,8 @@ const ANIMATION_TICK_SECONDS: f32 = ACTOR_TICK_DURATION.as_secs_f32();
 pub const MAX_CONTROLLER_TRANSITIONS_PER_TICK: usize = 8;
 pub const MAX_MOLANG_OPS_PER_ACTOR_TICK: usize = 4_096;
 pub const MAX_MOLANG_OPS_PER_WORLD_TICK: usize = 262_144;
-/// Ordinary actor rendering only interpolates completed tick snapshots. Native held
-/// attachables instead evaluate render-time item queries under the actor evaluation budget.
-pub const MAX_MOLANG_OPS_PER_RENDER_FRAME: usize = 0;
+/// World-wide ceiling for authored render-time layer expressions; pose histories stay tick-owned.
+pub const MAX_MOLANG_OPS_PER_RENDER_FRAME: usize = MAX_MOLANG_OPS_PER_WORLD_TICK;
 pub const MAX_ACTOR_ACTION_HISTORY: usize = 32;
 const MAX_RUNTIME_POSE_WORK_PER_ACTOR_TICK: usize = 4_096;
 const MAX_RUNTIME_BINDINGS_PER_RIG: usize = 4_096;
@@ -165,6 +164,8 @@ pub(crate) struct ActorAnimationStore {
     next_reset_generation: u64,
     next_rest_reset_generation: u64,
     stats: ActorAnimationStats,
+    #[cfg(test)]
+    schedule: schedule::TestSchedule,
 }
 
 #[derive(Debug)]
@@ -227,6 +228,9 @@ struct ActorRigState {
     skin: Option<skin::SkinModel>,
     skin_layers: Vec<SkinRenderLayer>,
     variables: MolangVariables,
+    samples_render_frames: bool,
+    samples_camera_poses: bool,
+    render_frame: Option<render_frame::FrameState>,
     initialized: bool,
     /// Outside the animation view at its last tick, holding its pose.
     culled: bool,
@@ -294,6 +298,7 @@ struct EvaluatedState {
     controllers: Vec<ControllerState>,
     clip_clocks: clock::ClipClocks,
     variables: MolangVariables,
+    render_frame: Option<render_frame::FrameState>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -370,6 +375,8 @@ impl ActorAnimationStore {
             next_reset_generation: 1,
             next_rest_reset_generation: 1,
             stats: ActorAnimationStats::default(),
+            #[cfg(test)]
+            schedule: Default::default(),
         }
     }
 
@@ -489,259 +496,6 @@ impl ActorAnimationStore {
             },
             context,
         );
-    }
-
-    fn evaluate_tick(
-        &mut self,
-        actors: &HashMap<u64, ActorSnapshot>,
-        view: Option<&ActorAnimationView>,
-        exempt: Option<u64>,
-        step: PoseStep,
-        context: impl Fn(&ActorSnapshot) -> ActorTickContext,
-    ) {
-        let PoseStep {
-            evaluate,
-            reset_motion_history,
-            refresh_view,
-        } = step;
-        if !refresh_view {
-            self.completed_tick = self.completed_tick.saturating_add(1);
-        }
-        let Some(assets) = self.assets.clone() else {
-            return;
-        };
-        let mut world_left = MAX_MOLANG_OPS_PER_WORLD_TICK;
-        let mut stack = Vec::new();
-        // Start where the world budget ran out last tick so no actor starves every tick.
-        let lifetimes = if refresh_view {
-            exempt
-                .and_then(|id| self.runtime_to_lifetime.get(&id).copied())
-                .into_iter()
-                .collect()
-        } else {
-            match evaluate.then(|| self.first_starved.take()).flatten() {
-                Some(start) => self
-                    .rigs
-                    .range(start..)
-                    .chain(self.rigs.range(..start))
-                    .map(|(lifetime, _)| *lifetime)
-                    .collect::<Vec<_>>(),
-                None => self.rigs.keys().copied().collect(),
-            }
-        };
-        let mut starved = None;
-        for lifetime in lifetimes {
-            let Some(actor) = actors.get(&lifetime.runtime_id) else {
-                continue;
-            };
-            let Some(state) = self.rigs.get_mut(&lifetime) else {
-                continue;
-            };
-            // Observe ownership before any evaluation budget branch. A failed
-            // animation cannot starve static publication for this or later actors.
-            if actor.runtime_id == lifetime.runtime_id
-                && actor.spawn_revision == lifetime.spawn_revision
-                && self.runtime_to_lifetime.get(&lifetime.runtime_id) == Some(&lifetime)
-            {
-                if state.rest_reset_pending {
-                    if let Some(next) = self.next_rest_reset_generation.checked_add(1) {
-                        state.rest_reset_generation = self.next_rest_reset_generation;
-                        self.next_rest_reset_generation = next;
-                        state.rest_reset_pending = false;
-                    } else {
-                        state.rest_reset_generation = 0;
-                    }
-                }
-                state.rest_completed_tick =
-                    if state.rest_reset_generation != 0 && !state.rest_reset_pending {
-                        self.completed_tick
-                    } else {
-                        0
-                    };
-            } else {
-                state.rest_completed_tick = 0;
-            }
-            let context = context(actor);
-            if reset_motion_history
-                && skin::sync_skin(state, context.skin_geometry.as_ref(), &assets)
-            {
-                self.stats.invalid_skin_geometries =
-                    self.stats.invalid_skin_geometries.saturating_add(1);
-            }
-            if !refresh_view {
-                advance_motion(state, actor, &context, reset_motion_history);
-            }
-            let view_changed = state
-                .view_context
-                .is_some_and(|old| old != context.is_local_first_person);
-            if !evaluate {
-                continue;
-            }
-            if state.fallback == EntityRigFallback::GeometryOnly {
-                state.previous.clone_from(&state.current);
-                if state.reset_pending {
-                    state.reset_pending = false;
-                    state.reset_generation = self.next_reset_generation;
-                    self.next_reset_generation = self.next_reset_generation.saturating_add(1);
-                    state.animation_epoch = self.completed_tick;
-                }
-                state.completed_tick = self.completed_tick;
-                continue;
-            }
-            let (state_assets, state_layout) = if state.pack {
-                match &self.pack {
-                    Some(pack) => (&pack.assets, &pack.layout),
-                    None => continue,
-                }
-            } else {
-                (&assets, &self.layout)
-            };
-            if let Some(view) = view
-                && exempt != Some(actor.runtime_id)
-            {
-                let scale = model_scale(state, state_assets) * actor.render_scale();
-                let player = matches!(actor.kind, ActorKind::Player { .. });
-                let bounds = state
-                    .skin_skeleton()
-                    .and_then(|skin| skin.geometry.visible_bounds)
-                    .unwrap_or_default();
-                if !view.admits(actor.position, scale, player, bounds)
-                    && !view.admits(actor.previous_pose.position, scale, player, bounds)
-                {
-                    state.culled = true;
-                    state.previous.clone_from(&state.current);
-                    state.completed_tick = self.completed_tick;
-                    continue;
-                }
-            }
-            if world_left == 0 {
-                self.stats.world_budget_exhaustions =
-                    self.stats.world_budget_exhaustions.saturating_add(1);
-                self.stats.frozen_actors = self.stats.frozen_actors.saturating_add(1);
-                starved.get_or_insert(lifetime);
-                // A frozen tick holds the pose instead of replaying the last change.
-                state.previous.clone_from(&state.current);
-                continue;
-            }
-            let mut budget = EvalBudget {
-                actor_left: MAX_MOLANG_OPS_PER_ACTOR_TICK,
-                world_left: &mut world_left,
-                work_left: MAX_RUNTIME_POSE_WORK_PER_ACTOR_TICK,
-                transitions_left: MAX_CONTROLLER_TRANSITIONS_PER_TICK,
-                used: 0,
-                stack: std::mem::take(&mut stack),
-            };
-            if state.fallback != EntityRigFallback::GeometryOnly {
-                render::cache_layer_skeletons(state_assets, state);
-                geometry::reselect_geometry(
-                    state_assets,
-                    state_layout,
-                    state,
-                    actor,
-                    &context,
-                    &mut budget,
-                );
-                state.refresh_skin_drivers();
-            }
-            let result = evaluate_state(
-                state_assets,
-                state_layout,
-                state,
-                actor,
-                &context,
-                self.completed_tick,
-                &mut budget,
-                None,
-            );
-            if exempt == Some(actor.runtime_id) {
-                let ui_context = ActorTickContext {
-                    is_local_first_person: false,
-                    is_in_ui: true,
-                    ..context.clone()
-                };
-                hud::evaluate(
-                    state_assets,
-                    state_layout,
-                    state,
-                    actor,
-                    &ui_context,
-                    self.completed_tick,
-                    &mut budget,
-                );
-            } else {
-                state.ui_pose = None;
-                state.ui_animation = None;
-            }
-            self.stats.evaluated_molang_ops = self
-                .stats
-                .evaluated_molang_ops
-                .saturating_add(budget.used as u64);
-            stack = std::mem::take(&mut budget.stack);
-            match result {
-                Ok(mut evaluated) => {
-                    // A rig back in view starts from its new pose, not the one it held.
-                    let resumed = std::mem::take(&mut state.culled);
-                    state.controllers = evaluated.controllers;
-                    state.clip_clocks = evaluated.clip_clocks;
-                    state.scale = evaluated.scale;
-                    state.variables = evaluated.variables;
-                    skin_layers::carry(
-                        &state.skin_layers,
-                        &mut evaluated.skin_layers,
-                        state.reset_pending || resumed || view_changed,
-                    );
-                    state.skin_layers = evaluated.skin_layers;
-                    if let Some(mut render) = evaluated.render {
-                        render::carry_layer_poses(
-                            &state.render,
-                            &mut render,
-                            state.reset_pending || resumed || view_changed,
-                        );
-                        state.render = render;
-                    }
-                    state.initialized = true;
-                    if state.reset_pending {
-                        state.previous.clone_from(&evaluated.pose);
-                        state.current = evaluated.pose;
-                        state.reset_pending = false;
-                        state.reset_generation = self.next_reset_generation;
-                        self.next_reset_generation = self.next_reset_generation.saturating_add(1);
-                        state.animation_epoch = self.completed_tick;
-                    } else if resumed || view_changed {
-                        state.previous.clone_from(&evaluated.pose);
-                        state.current = evaluated.pose;
-                    } else {
-                        state.previous = std::mem::replace(&mut state.current, evaluated.pose);
-                    }
-                    if view_changed {
-                        state.reset_generation = self.next_reset_generation;
-                        self.next_reset_generation = self.next_reset_generation.saturating_add(1);
-                    }
-                    state.view_context = Some(context.is_local_first_person);
-                    state.completed_tick = self.completed_tick;
-                }
-                Err(EvalError::ActorBudget) => {
-                    self.stats.actor_budget_exhaustions =
-                        self.stats.actor_budget_exhaustions.saturating_add(1);
-                    self.stats.frozen_actors = self.stats.frozen_actors.saturating_add(1);
-                    state.previous.clone_from(&state.current);
-                }
-                Err(EvalError::WorldBudget) => {
-                    self.stats.world_budget_exhaustions =
-                        self.stats.world_budget_exhaustions.saturating_add(1);
-                    self.stats.frozen_actors = self.stats.frozen_actors.saturating_add(1);
-                    starved.get_or_insert(lifetime);
-                    state.previous.clone_from(&state.current);
-                }
-                Err(EvalError::Invalid) => {
-                    self.stats.frozen_actors = self.stats.frozen_actors.saturating_add(1);
-                    state.previous.clone_from(&state.current);
-                }
-            }
-        }
-        if evaluate && !refresh_view {
-            self.first_starved = starved;
-        }
     }
 
     pub(crate) fn get(&self, runtime_id: u64) -> Option<ActorRigSnapshot<'_>> {
@@ -895,6 +649,9 @@ mod motion;
 mod pose;
 mod query;
 mod render;
+mod render_frame;
+pub use render_frame::ActorRenderFrame;
+mod schedule;
 mod skin;
 mod skin_layers;
 mod tick;
@@ -919,3 +676,6 @@ mod tests;
 #[cfg(test)]
 #[path = "actor_animation/crystal_tests.rs"]
 mod crystal_tests;
+
+#[cfg(test)]
+mod dragon_tests;

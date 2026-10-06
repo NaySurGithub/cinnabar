@@ -1,4 +1,5 @@
 use super::*;
+use experience_sdk::mod_manifest::API;
 
 const TEMPLATE: &str = r#"{"namespace":"demo","overlay":{"type":"panel"}}"#;
 
@@ -24,7 +25,7 @@ fn write_package(files: &[(&str, &[u8])], edit: impl FnOnce(&Path)) -> tempfile:
     std::fs::write(
         dir.path().join(MANIFEST),
         format!(
-            "id = \"demo\"\nversion = \"0.1.0\"\napi = \"0.2\"\npermissions = [\"screen\"]\n\
+            "id = \"demo\"\nversion = \"0.1.0\"\napi = \"{API}\"\npermissions = [\"screen\"]\n\
              templates = [{}]\ntextures = [{}]\n{hashes}",
             templates.join(","),
             textures.join(",")

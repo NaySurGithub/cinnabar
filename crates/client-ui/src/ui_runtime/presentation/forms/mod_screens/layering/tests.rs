@@ -187,3 +187,23 @@ fn the_row_under_the_pointer_is_the_topmost_controls_nearest_collection() {
     assert_eq!(row([50.0, 50.0]), Some(("grid".to_owned(), 4)));
     assert_eq!(row([200.0, 200.0]), None);
 }
+
+#[test]
+fn beside_an_open_view_the_pointer_is_the_overlays() {
+    let layout = view_layout();
+    // On the view.
+    assert_eq!(
+        pointer_surface(true, Some(&layout), [200.0, 100.0]),
+        Surface::View
+    );
+    // Beside the view, where the overlay draws.
+    assert_eq!(
+        pointer_surface(true, Some(&layout), [380.0, 100.0]),
+        Surface::Overlay
+    );
+    // Without a view the overlay takes what the container's panels leave it.
+    assert_eq!(
+        pointer_surface(false, Some(&layout), [200.0, 100.0]),
+        Surface::Overlay
+    );
+}

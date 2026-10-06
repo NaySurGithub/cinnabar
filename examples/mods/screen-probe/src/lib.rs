@@ -1,12 +1,12 @@
-//! The host tests' extension 0.2 mod. Each callback reports what it received or read as a bound
+//! The host tests' `player-mod` package. Each callback reports what it received or read as a bound
 //! value, so a test reads the guest's view of the host from the committed screens. A few inputs
 //! misbehave on purpose: the `probe.trap` key traps, the text `loop` never returns,
 //! `probe.flood` binds until the host refuses, and `probe.read_all` reads the whole session in
 //! an ordinary event, as `data-changed` does on the load budget.
 
-use mod_api::v0_2::{
+use mod_api::player_mod::{
     Guest, ScreenLayout, Stack,
-    cinnabar::extension0_2_0::screen,
+    cinnabar::extension::screen,
     cinnabar::server_experience::ui::Value,
     cinnabar::session::{items, recipes},
 };
@@ -142,8 +142,15 @@ impl Guest for Probe {
         text("#secondary", format!("{id}:{collection_index:?}"));
     }
 
-    fn scrolled(delta: f64, x: f64, y: f64) {
+    fn scrolled(delta: f64, x: f64, y: f64, modifiers: screen::Modifiers) {
+        let held = |modifier| f64::from(u8::from(modifiers.contains(modifier)));
+        let (ctrl, shift, alt) = (
+            held(screen::Modifiers::CTRL),
+            held(screen::Modifiers::SHIFT),
+            held(screen::Modifiers::ALT),
+        );
         report("#scrolled", Value::Numbers(vec![delta, x, y]));
+        report("#scroll_modifiers", Value::Numbers(vec![ctrl, shift, alt]));
     }
 
     fn text_changed(control: String, text_now: String) {
@@ -179,4 +186,4 @@ impl Guest for Probe {
     }
 }
 
-mod_api::v0_2::export_player_mod!(Probe with_types_in mod_api::v0_2);
+mod_api::player_mod::export_player_mod!(Probe with_types_in mod_api::player_mod);

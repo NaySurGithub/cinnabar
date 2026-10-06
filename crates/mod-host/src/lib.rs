@@ -2,6 +2,8 @@
 
 pub mod helper;
 #[cfg(feature = "execution")]
+mod load;
+#[cfg(feature = "execution")]
 pub mod package;
 #[cfg(feature = "execution")]
 mod runtime;
@@ -9,18 +11,38 @@ mod runtime;
 mod screens;
 #[cfg(feature = "execution")]
 pub mod server;
-
 #[cfg(feature = "execution")]
-pub use screens::{LoadedPackage, ModEvent, ModScreens};
+mod settings;
 
 #[cfg(feature = "execution")]
 pub use experience_sdk::mod_manifest::{KEY_NAMES, KeyDecl, Modifier};
 #[cfg(feature = "execution")]
-pub use mod_api::{MAX_CAMERA_DELTA_RADIANS, MAX_GAMEPLAY_PLAYERS};
+pub use screens::{KeyModifiers, LoadedPackage, ModEvent, ModScreens};
+
+#[cfg(feature = "execution")]
+pub use mod_api::{
+    MAX_CAMERA_DELTA_RADIANS, MAX_CONTROL_KEYS, MAX_GAMEPLAY_MOBS, MAX_GAMEPLAY_PLAYERS,
+    MAX_LOADED_MODS, MAX_MOB_RANGE_BLOCKS, MAX_MOB_TYPE_BYTES,
+};
+#[cfg(feature = "execution")]
+pub use mod_render;
 #[cfg(feature = "execution")]
 pub use runtime::cinnabar::extension::gameplay::{
-    Player as GameplayPlayer, Snapshot as GameplaySnapshot, Vector3 as GameplayVector3,
+    CameraRig as GameplayCameraRig, Mob as GameplayMob, Player as GameplayPlayer,
+    Snapshot as GameplaySnapshot, Vector3 as GameplayVector3,
 };
+#[cfg(feature = "execution")]
+pub use runtime::cinnabar::extension::{
+    events::Cue as ModCue, input::Controls as ControlFrame, panel::Event as ControlEvent,
+};
+
+/// Successfully committed local interaction requests, consumed once per frame.
+#[cfg(feature = "execution")]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct InteractionOutput {
+    pub attack_reach: Option<f32>,
+    pub attack_pulse: bool,
+}
 
 /// Committed local actor rotation; yaw turns left and pitch turns up, in radians.
 #[cfg(feature = "execution")]
@@ -31,17 +53,10 @@ pub struct CameraDelta {
 }
 #[cfg(feature = "execution")]
 use {
-    anyhow::{Context, Result},
-    experience_sdk::mod_manifest::{ModManifest, ModPermission},
-    package::{Package, engine, read_component},
-    runtime::{Declared, Instance},
-    screens::{declared, grant, loaded},
+    anyhow::Result,
+    runtime::Instance,
     server_experience::{screen::ScreenLayout, session_data::SessionData},
-    sha2::{Digest, Sha256},
-    std::{
-        path::{Path, PathBuf},
-        sync::Arc,
-    },
+    std::{path::PathBuf, sync::Arc},
     wasmtime::Engine,
 };
 
@@ -55,8 +70,10 @@ pub(crate) const FRAME_FUEL: u64 = 100_000;
 pub(crate) const MEMORY_BYTES: usize = 16 * 1024 * 1024;
 
 /// Explicit per-instance authority; optional capabilities are denied by default.
+/// Field names are the registration and set-file grant names.
 #[cfg(feature = "execution")]
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct ModGrants {
     /// Allows this instance to replace visual time only.
     pub environment: bool,
@@ -64,30 +81,30 @@ pub struct ModGrants {
     pub players: bool,
     /// Allows bounded, transactional local camera rotation.
     pub camera: bool,
-    /// Allows the overlay and view beside the container screens.
+    /// Allows local key edges, reserved bindings and the retained settings panel.
+    pub controls: bool,
+    /// Allows bounded actor attack range and held-attack press requests.
+    pub interaction: bool,
+    /// Allows the selected component's bounded companion settings file.
+    pub settings: bool,
+    /// Allows sandboxed post passes and bounded world primitives.
+    pub render: bool,
+    /// Lets render passes read scene depth.
+    pub render_depth: bool,
+    /// Allows current-frame reads of nearby non-player actors.
+    pub entities: bool,
+    /// Command names this instance may request; empty denies command requests.
+    pub commands: Vec<String>,
+    /// Allows bounded post-login packet delay through the private core endpoint.
+    pub packet_delay: bool,
+    /// Allows a package's overlay and view beside the container screens.
     pub screen: bool,
     /// Allows reading the session's items.
     pub items: bool,
     /// Allows reading the session's recipes.
     pub recipes: bool,
-    /// Allows delivering the package's declared keys.
+    /// Allows delivering a package's declared keys.
     pub keys: bool,
-}
-
-#[cfg(feature = "execution")]
-impl ModGrants {
-    /// The developer profile: what a package's manifest asks for, except `inventory`, which no
-    /// import carries yet.
-    pub fn from_manifest(manifest: &ModManifest) -> Self {
-        let asks = |permission| manifest.permissions.contains(&permission);
-        Self {
-            screen: asks(ModPermission::Screen),
-            items: asks(ModPermission::Items),
-            recipes: asks(ModPermission::Recipes),
-            keys: asks(ModPermission::Keys),
-            ..Self::default()
-        }
-    }
 }
 
 /// Where a mod came from, which reload reads again.
@@ -105,6 +122,8 @@ pub struct ModHost {
     source: Source,
     attempted: [u8; 32],
     grants: ModGrants,
+    settings_writer: Option<settings::SettingsWriter>,
+    settings_seed: Option<String>,
     package: Option<LoadedPackage>,
     layout: Option<ScreenLayout>,
     session: Arc<SessionData>,
@@ -112,47 +131,6 @@ pub struct ModHost {
 
 #[cfg(feature = "execution")]
 impl ModHost {
-    /// Loads a local component with HUD and demo input, denying optional capabilities.
-    pub fn load(path: &Path) -> Result<Self> {
-        Self::load_with_grants(path, ModGrants::default())
-    }
-
-    /// Loads a component with the developer's explicit per-mod capability grants.
-    pub fn load_with_grants(path: &Path, grants: ModGrants) -> Result<Self> {
-        let bytes = read_component(path)?;
-        let engine = engine()?;
-        let instance = Instance::new(&engine, &bytes, grants, Declared::default())?;
-        Ok(Self {
-            engine,
-            instance,
-            source: Source::Component(path.to_owned()),
-            attempted: Sha256::digest(&bytes).into(),
-            grants,
-            package: None,
-            layout: None,
-            session: Arc::default(),
-        })
-    }
-
-    /// Loads the package at `dir` with `grants` added to what its manifest asks for, as the
-    /// developer profile allows.
-    pub fn load_package(dir: &Path, extra: ModGrants) -> Result<Self> {
-        let package = Package::read(dir)?;
-        let grants = grant(&package.manifest, extra);
-        let engine = engine()?;
-        let instance = Instance::new(&engine, &package.component, grants, declared(&package))?;
-        Ok(Self {
-            engine,
-            instance,
-            source: Source::Package(dir.to_owned()),
-            attempted: package.digest,
-            grants,
-            package: Some(loaded(package)),
-            layout: None,
-            session: Arc::default(),
-        })
-    }
-
     /// Runs one bounded callback; a trap revokes its presentation and disables the guest.
     pub fn frame(&mut self, pressed: bool) -> Result<()> {
         self.frame_with_gameplay(pressed, None)
@@ -164,64 +142,102 @@ impl ModHost {
         pressed: bool,
         snapshot: Option<GameplaySnapshot>,
     ) -> Result<()> {
-        self.instance.frame(pressed, snapshot)
+        self.frame_with_controls(pressed, snapshot, empty_controls())
     }
 
-    /// Delivers one frame's events, coalesced, each with its own `CALLBACK_FUEL`. A layout
-    /// event also sets what `screen.layout` returns. Stops at the first failure: an undeclared
-    /// event is refused, and a trap quarantines the guest.
-    pub fn dispatch(&mut self, events: Vec<ModEvent>) -> Result<()> {
-        for event in ModEvent::coalesce(events) {
-            let mut closed = false;
-            if let ModEvent::ScreenChanged(layout) = &event {
-                self.layout.clone_from(layout);
-                closed = layout.is_none() && self.instance.view_open();
-                self.instance.set_layout(layout.clone());
-            }
-            self.instance.dispatch(&event)?;
-            if closed {
-                self.instance.dispatch(&ModEvent::ViewClosed)?;
-            }
-        }
+    /// Receives only bounded host-owned edges, alongside the current gameplay frame.
+    pub fn frame_with_controls(
+        &mut self,
+        pressed: bool,
+        snapshot: Option<GameplaySnapshot>,
+        controls: ControlFrame,
+    ) -> Result<()> {
+        self.frame_with_world(pressed, snapshot, Vec::new(), controls)
+    }
+
+    /// Adds nearby mobs, readable only with the entities grant and a current snapshot.
+    pub fn frame_with_world(
+        &mut self,
+        pressed: bool,
+        snapshot: Option<GameplaySnapshot>,
+        mobs: Vec<GameplayMob>,
+        controls: ControlFrame,
+    ) -> Result<()> {
+        self.instance.frame(pressed, snapshot, mobs, controls)?;
+        self.queue_settings();
         Ok(())
     }
 
-    /// The session's items and recipes the guest reads from now on; a changed revision
-    /// delivers `data-changed`.
-    pub fn set_session(&mut self, session: Arc<SessionData>) -> Result<()> {
-        let changed = session.item_revision != self.session.item_revision
-            || session.recipe_revision != self.session.recipe_revision;
-        self.session = Arc::clone(&session);
-        self.instance.set_session(session);
-        if changed {
-            return self.dispatch(vec![ModEvent::DataChanged]);
+    /// The retained camera rig from the last successful callback.
+    pub fn camera_rig(&self) -> Option<GameplayCameraRig> {
+        self.instance.camera_rig()
+    }
+
+    /// Consumes the last successful frame's granted command requests once.
+    pub fn take_commands(&mut self) -> Vec<String> {
+        self.instance.take_commands()
+    }
+
+    /// Cues the next callback can poll, typically last frame's from every loaded mod.
+    pub fn deliver_cues(&mut self, cues: Vec<ModCue>) {
+        self.instance.deliver_cues(cues);
+    }
+
+    /// Consumes the last successful frame's presentation cues once.
+    pub fn take_cues(&mut self) -> Vec<ModCue> {
+        self.instance.take_cues()
+    }
+
+    fn queue_settings(&mut self) {
+        if let Some(writer) = &self.settings_writer
+            && writer.is_active()
+            && let Some(json) = self.instance.settings_write()
+        {
+            writer.submit(json.to_owned());
+            self.instance.settings_written();
         }
-        Ok(())
     }
 
-    /// Stops the guest as a trap would, removing everything it presented: the host refused
-    /// what it asked to draw.
-    pub fn quarantine(&mut self) {
-        self.instance.quarantine();
+    /// Consumes an asynchronous persistence error without quarantining the guest.
+    pub fn take_settings_error(&self) -> Option<String> {
+        self.settings_writer
+            .as_ref()
+            .and_then(settings::SettingsWriter::take_error)
     }
 
-    /// Closes the view as Escape does over it, and tells the guest with `view-closed`.
-    pub fn close_view(&mut self) -> Result<()> {
-        if self.instance.close_view() {
-            self.instance.dispatch(&ModEvent::ViewClosed)?;
-        }
-        Ok(())
+    pub fn panel(&self) -> Option<&ui::mod_panel::Panel> {
+        self.instance.panel()
+    }
+    pub fn panel_open(&self) -> bool {
+        self.instance.panel_open()
+    }
+    pub fn set_panel_open(&mut self, open: bool) {
+        self.instance.set_panel_open(open);
+    }
+    pub fn reserved_keys(&self) -> &[String] {
+        self.instance.reserved_keys()
+    }
+    pub fn take_interaction(&mut self) -> InteractionOutput {
+        self.instance.take_interaction()
     }
 
-    /// The fuel the last `init` or callback consumed: `init` and `data-changed` get
-    /// `LOAD_FUEL`, other events `CALLBACK_FUEL`, `frame` its own.
-    pub fn last_fuel_used(&self) -> u64 {
-        self.instance.last_fuel()
+    /// Retained request from a successful callback, independent of UI focus.
+    pub fn packet_delay_ms(&self) -> u32 {
+        self.instance.packet_delay_ms()
+    }
+    /// Explicit opt-in to the private core's last-relayed local position witness.
+    pub fn show_real_position(&self) -> bool {
+        self.instance.show_real_position()
     }
 
     /// Consumes the last successful frame's rotation once, without entering the guest.
     pub fn take_camera_delta(&mut self) -> Option<CameraDelta> {
         self.instance.take_camera_delta()
+    }
+
+    /// Committed render output and a process-unique generation that changes with it.
+    pub fn render(&self) -> (&mod_render::RenderOutput, u64) {
+        self.instance.render()
     }
 
     /// Returns only the last successfully committed plain-text label.
@@ -234,61 +250,22 @@ impl ModHost {
         self.instance.time_override()
     }
 
-    /// The committed overlay, view and bound data; empty after a trap.
-    pub fn screens(&self) -> &ModScreens {
-        self.instance.screens()
-    }
-
-    /// The loaded package, when the mod came from one.
-    pub fn package(&self) -> Option<&LoadedPackage> {
-        self.package.as_ref()
-    }
-
-    /// Whether the component exports 0.2's event callbacks.
-    pub fn has_events(&self) -> bool {
-        self.instance.has_events()
-    }
-
     /// Whether this guest can still receive callbacks.
     pub fn is_active(&self) -> bool {
         self.instance.active
     }
+}
 
-    /// Replaces an instance only after changed bytes compile and initialize. The new instance
-    /// gets the current layout and session, and `screen-changed` and `data-changed` when it has
-    /// events.
-    pub fn reload_if_changed(&mut self) -> Result<bool> {
-        let (bytes, digest, package) = match &self.source {
-            Source::Component(path) => {
-                let bytes = read_component(path)?;
-                let digest = Sha256::digest(&bytes).into();
-                (bytes, digest, None)
-            }
-            Source::Package(dir) => {
-                let package = Package::read(dir)?;
-                (Vec::new(), package.digest, Some(package))
-            }
-        };
-        if self.attempted == digest {
-            return Ok(false);
-        }
-        self.attempted = digest;
-        let (bytes, declared) = match &package {
-            Some(package) => (&package.component, declared(package)),
-            None => (&bytes, Declared::default()),
-        };
-        let mut candidate = Instance::new(&self.engine, bytes, self.grants, declared)
-            .context("reload rejected; previous mod retained")?;
-        candidate.set_session(Arc::clone(&self.session));
-        self.instance = candidate;
-        if let Some(package) = package {
-            self.package = Some(loaded(package));
-        }
-        if self.instance.has_events() {
-            let layout = ModEvent::ScreenChanged(self.layout.clone());
-            self.dispatch(vec![layout, ModEvent::DataChanged])?;
-        }
-        Ok(true)
+#[cfg(feature = "execution")]
+pub fn empty_controls() -> ControlFrame {
+    ControlFrame {
+        seconds: 0.0,
+        focused: false,
+        gameplay: false,
+        panel_open: false,
+        keys_pressed: Vec::new(),
+        keys_held: Vec::new(),
+        events: Vec::new(),
     }
 }
 

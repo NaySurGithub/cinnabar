@@ -1,7 +1,7 @@
-//! The guest's callbacks, found and type-checked once. A 0.1 component exports `init` and
-//! `frame`; a 0.2 component also exports every event callback.
+//! The guest's callbacks, found and type-checked once. An `extension` component exports `init`
+//! and `frame`; a `player-mod` component also exports every event callback.
 
-use super::{State, v0_2};
+use super::{State, player_mod};
 use crate::ModEvent;
 use anyhow::{Result, bail};
 use wasmtime::{
@@ -14,12 +14,12 @@ type Index = Option<u32>;
 type Row = Option<(String, u32)>;
 
 struct Events {
-    screen_changed: TypedFunc<(Option<v0_2::Layout>,), ()>,
+    screen_changed: TypedFunc<(Option<player_mod::Layout>,), ()>,
     action: TypedFunc<(String, Index), ()>,
     secondary: TypedFunc<(String, Index), ()>,
-    scrolled: TypedFunc<(f64, f64, f64), ()>,
+    scrolled: TypedFunc<(f64, f64, f64, player_mod::Modifiers), ()>,
     text: TypedFunc<(String, String), ()>,
-    key: TypedFunc<(String, Option<v0_2::GuestStack>, Row), ()>,
+    key: TypedFunc<(String, Option<player_mod::GuestStack>, Row), ()>,
     data_changed: TypedFunc<(), ()>,
     view_closed: TypedFunc<(), ()>,
 }
@@ -29,7 +29,7 @@ pub(super) struct Exports {
     events: Option<Events>,
 }
 
-/// The 0.2 event exports, all or none of which a component has.
+/// The `player-mod` event exports, all or none of which a component has.
 const EVENTS: [&str; 8] = [
     "screen-changed",
     "action",
@@ -66,7 +66,7 @@ impl Exports {
                     view_closed: func(7).typed(&*store)?,
                 })
             }
-            _ => bail!("component exports only some of the 0.2 event callbacks"),
+            _ => bail!("component exports only some of the player-mod event callbacks"),
         };
         Ok((
             init.typed(&*store)?,
@@ -102,20 +102,33 @@ impl Exports {
             ModEvent::ScreenChanged(layout) => call(
                 &events.screen_changed,
                 store,
-                (layout.as_ref().map(v0_2::layout),),
+                (layout.as_ref().map(player_mod::layout),),
             ),
             ModEvent::Action { id, index } => call(&events.action, store, (id.clone(), *index)),
             ModEvent::SecondaryAction { id, index } => {
                 call(&events.secondary, store, (id.clone(), *index))
             }
-            ModEvent::Scrolled { delta, x, y } => call(&events.scrolled, store, (*delta, *x, *y)),
+            ModEvent::Scrolled {
+                delta,
+                x,
+                y,
+                modifiers,
+            } => call(
+                &events.scrolled,
+                store,
+                (*delta, *x, *y, player_mod::modifiers(*modifiers)),
+            ),
             ModEvent::TextChanged { control, text } => {
                 call(&events.text, store, (control.clone(), text.clone()))
             }
             ModEvent::Key { id, hovered, row } => call(
                 &events.key,
                 store,
-                (id.clone(), hovered.as_ref().map(v0_2::stack), row.clone()),
+                (
+                    id.clone(),
+                    hovered.as_ref().map(player_mod::stack),
+                    row.clone(),
+                ),
             ),
             ModEvent::DataChanged => call(&events.data_changed, store, ()),
             ModEvent::ViewClosed => call(&events.view_closed, store, ()),

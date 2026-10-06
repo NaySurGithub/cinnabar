@@ -1,15 +1,24 @@
-//! What a player mod package's screens exchange with the host: the events its 0.2 callbacks
+//! What a player mod package's screens exchange with the host: the events its callbacks
 //! receive, the screens it commits, and the declarations a package carries.
 
-use crate::{ModGrants, package::Package, runtime::Declared};
-use experience_sdk::mod_manifest::{KeyDecl, ModManifest};
+use crate::{ModHost, package::Package, runtime::Declared};
+use anyhow::Result;
+use experience_sdk::mod_manifest::KeyDecl;
 use server_experience::{
     screen::{self, ScreenLayout},
-    session_data::Stack,
+    session_data::{SessionData, Stack},
 };
 use std::sync::Arc;
 
-/// One host event for a 0.2 mod's callbacks.
+/// The modifier keys held with an input.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct KeyModifiers {
+    pub ctrl: bool,
+    pub shift: bool,
+    pub alt: bool,
+}
+
+/// One host event for a `player-mod` component's callbacks.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ModEvent {
     ScreenChanged(Option<ScreenLayout>),
@@ -25,6 +34,7 @@ pub enum ModEvent {
         delta: f64,
         x: f64,
         y: f64,
+        modifiers: KeyModifiers,
     },
     TextChanged {
         control: String,
@@ -90,14 +100,78 @@ pub struct LoadedPackage {
     pub files: Arc<screen::Files>,
 }
 
-pub(crate) fn grant(manifest: &ModManifest, extra: ModGrants) -> ModGrants {
-    let asked = ModGrants::from_manifest(manifest);
-    ModGrants {
-        screen: asked.screen,
-        items: asked.items,
-        recipes: asked.recipes,
-        keys: asked.keys,
-        ..extra
+impl ModHost {
+    /// Delivers one frame's events, coalesced, each with its own budget. A layout event also
+    /// sets what `screen.layout` returns. Stops at the first failure: an undeclared event is
+    /// refused, and a trap quarantines the guest.
+    pub fn dispatch(&mut self, events: Vec<ModEvent>) -> Result<()> {
+        let result = self.dispatch_coalesced(events);
+        self.queue_settings();
+        result
+    }
+
+    fn dispatch_coalesced(&mut self, events: Vec<ModEvent>) -> Result<()> {
+        for event in ModEvent::coalesce(events) {
+            let mut closed = false;
+            if let ModEvent::ScreenChanged(layout) = &event {
+                self.layout.clone_from(layout);
+                closed = layout.is_none() && self.instance.view_open();
+                self.instance.set_layout(layout.clone());
+            }
+            self.instance.dispatch(&event)?;
+            if closed {
+                self.instance.dispatch(&ModEvent::ViewClosed)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// The session's items and recipes the guest reads from now on; a changed revision
+    /// delivers `data-changed`.
+    pub fn set_session(&mut self, session: Arc<SessionData>) -> Result<()> {
+        let changed = session.item_revision != self.session.item_revision
+            || session.recipe_revision != self.session.recipe_revision;
+        self.session = Arc::clone(&session);
+        self.instance.set_session(session);
+        if changed {
+            return self.dispatch(vec![ModEvent::DataChanged]);
+        }
+        Ok(())
+    }
+
+    /// Stops the guest as a trap would, removing everything it presented: the host refused
+    /// what it asked to draw.
+    pub fn quarantine(&mut self) {
+        self.instance.quarantine();
+    }
+
+    /// Closes the view as Escape does over it, and tells the guest with `view-closed`.
+    pub fn close_view(&mut self) -> Result<()> {
+        if self.instance.close_view() {
+            self.dispatch(vec![ModEvent::ViewClosed])?;
+        }
+        Ok(())
+    }
+
+    /// The fuel the last `init` or callback consumed: a `player-mod` component's `init` and
+    /// `data-changed` get `LOAD_FUEL`, its other events `CALLBACK_FUEL`, `frame` its own.
+    pub fn last_fuel_used(&self) -> u64 {
+        self.instance.last_fuel()
+    }
+
+    /// The committed overlay, view and bound data; empty after a trap.
+    pub fn screens(&self) -> &ModScreens {
+        self.instance.screens()
+    }
+
+    /// The loaded package, when the mod came from one.
+    pub fn package(&self) -> Option<&LoadedPackage> {
+        self.package.as_ref()
+    }
+
+    /// Whether the component exports `player-mod`'s event callbacks.
+    pub fn has_events(&self) -> bool {
+        self.instance.has_events()
     }
 }
 

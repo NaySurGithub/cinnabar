@@ -1,5 +1,6 @@
-// The one definition of the session's read-only data. Player mods (`cinnabar:extension` 0.2)
-// import it, and a later client part world imports the same package rather than its own copy.
+// The one definition of the session's read-only data. Player mods (`cinnabar:extension`'s
+// `player-mod` world) import it, and a later client part world imports the same package
+// rather than its own copy.
 package cinnabar:session@0.1.0;
 
 /// The session's items as the vanilla creative screen and recipe book know them: the server's

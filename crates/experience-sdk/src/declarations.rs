@@ -296,6 +296,7 @@ fn constant(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{constant, mod_source, source};
+    use crate::mod_manifest::API;
 
     const HEADER: &str = "id = \"demo\"\nversion = \"0.1.0\"\napi = \"0.3\"\ndata-schema = 1\n";
 
@@ -361,7 +362,7 @@ mod tests {
         let text = format!(
             "id = \"bei\"
 version = \"0.1.0\"
-api = \"0.2\"
+api = \"{API}\"
 permissions = [\"keys\"]
              templates = [\"ui/overlay.json\"]
 actions = [\"bei.next-page\"]

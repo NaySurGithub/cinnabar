@@ -18,6 +18,8 @@ use crate::ui_runtime::UiRuntime;
 
 mod layering;
 
+use layering::Surface;
+
 /// What a player mod draws, as its host committed it.
 pub struct ModScreensInput<'a> {
     /// The mod's id, which owns its catalog and textures.
@@ -49,6 +51,22 @@ impl ModScreens {
         self.layout = None;
         self.overlay.frame = None;
         self.view.frame = None;
+    }
+
+    /// The screen under window-logical `point`; see [`layering::pointer_surface`].
+    fn surface_at(&mut self, point: [f32; 2]) -> Option<&mut TemplateScreen> {
+        let view_open = self.view.frame.is_some();
+        let frame = match &self.view.frame {
+            Some(frame) => frame,
+            None => self.overlay.frame.as_ref()?,
+        };
+        let gui = layering::to_gui(frame, point);
+        Some(
+            match layering::pointer_surface(view_open, self.layout.as_ref(), gui) {
+                Surface::View => &mut self.view,
+                Surface::Overlay => &mut self.overlay,
+            },
+        )
     }
 }
 
@@ -89,11 +107,9 @@ impl UiPresentationRuntime {
             && *revision > screens.focus_applied
         {
             screens.focus_applied = *revision;
-            // The view takes focus requests while it is open, as it takes the keyboard.
-            match screens.view.template {
-                Some(_) => screens.view.focus(control),
-                None => screens.overlay.focus(control),
-            }
+            // The box may be on either screen; each selects only its own box by that name.
+            screens.view.focus(control);
+            screens.overlay.focus(control);
         }
     }
 
@@ -135,13 +151,11 @@ impl UiPresentationRuntime {
     }
 
     /// The collection name and index of the mod's control under window-logical `point`, on the
-    /// view while it is shown, else the overlay; what a declared key reports as its row.
-    pub fn mod_screens_row(&self, point: [f32; 2]) -> Option<(String, u32)> {
-        let screens = self.form_presentation.mod_screens.as_ref()?;
-        let frame = match &screens.view.frame {
-            Some(frame) => frame,
-            None => screens.overlay.frame.as_ref()?,
-        };
+    /// screen the pointer is over (the overlay beside an open view); what a declared key
+    /// reports as its row.
+    pub fn mod_screens_row(&mut self, point: [f32; 2]) -> Option<(String, u32)> {
+        let screens = self.form_presentation.mod_screens.as_mut()?;
+        let frame = screens.surface_at(point)?.frame.as_ref()?;
         let regions = frame.hits.iter().map(|hit| {
             let row = hit.collection.as_deref().zip(hit.collection_index);
             (
@@ -153,15 +167,14 @@ impl UiPresentationRuntime {
         layering::nearest_row(regions, layering::to_gui(frame, point))
     }
 
-    /// Lights the control under the pointer on the view, else the overlay.
+    /// Lights the control under the pointer on the view or, beside it, the overlay; the
+    /// overlay's controls never meet the view's bounds, so each lights only its own.
     pub fn hover_mod_screens(&mut self, point: Option<[f32; 2]>) {
         let Some(screens) = self.form_presentation.mod_screens.as_mut() else {
             return;
         };
         screens.view.hover(point);
-        screens
-            .overlay
-            .hover(point.filter(|_| screens.view.frame.is_none()));
+        screens.overlay.hover(point);
     }
 
     /// Wheel `notches` (positive scrolls down) at window-logical `point`: a scroll view under it
@@ -173,24 +186,18 @@ impl UiPresentationRuntime {
             return None;
         }
         let view_open = screens.view.frame.is_some();
-        let screen = if view_open {
-            &mut screens.view
-        } else {
-            &mut screens.overlay
-        };
+        let layout = screens.layout.clone();
+        let screen = screens.surface_at(point)?;
         let gui = layering::to_gui(screen.frame.as_ref()?, point);
-        let allowed = view_open
-            || screens
-                .layout
-                .as_ref()
-                .is_some_and(|layout| layout.overlay_allows(gui));
+        let allowed = view_open || layout.is_some_and(|layout| layout.overlay_allows(gui));
         if !allowed || screen.scroll(notches) {
             return None;
         }
         Some(gui)
     }
 
-    /// Tracks a left press on the view, else the overlay; see [`TemplateScreen::press`].
+    /// Tracks a left press on the view and the overlay beside it, whose controls never meet;
+    /// see [`TemplateScreen::press`].
     pub fn press_mod_screens(
         &mut self,
         point: Option<[f32; 2]>,
@@ -198,13 +205,12 @@ impl UiPresentationRuntime {
         released: bool,
     ) -> Option<(String, Option<usize>)> {
         let screens = self.form_presentation.mod_screens.as_mut()?;
-        match screens.view.frame {
-            Some(_) => screens.view.press(point, pressed, released),
-            None => screens.overlay.press(point, pressed, released),
-        }
+        let view = screens.view.press(point, pressed, released);
+        let overlay = screens.overlay.press(point, pressed, released);
+        view.or(overlay)
     }
 
-    /// Tracks a right press on the view, else the overlay; see
+    /// Tracks a right press on the view and the overlay beside it; see
     /// [`TemplateScreen::secondary_press`].
     pub fn secondary_press_mod_screens(
         &mut self,
@@ -213,13 +219,14 @@ impl UiPresentationRuntime {
         released: bool,
     ) -> Option<(String, Option<usize>)> {
         let screens = self.form_presentation.mod_screens.as_mut()?;
-        match screens.view.frame {
-            Some(_) => screens.view.secondary_press(point, pressed, released),
-            None => screens.overlay.secondary_press(point, pressed, released),
-        }
+        let view = screens.view.secondary_press(point, pressed, released);
+        let overlay = screens.overlay.secondary_press(point, pressed, released);
+        view.or(overlay)
     }
 
-    /// Drives the edit boxes of the view, else the overlay; see [`TemplateScreen::edit`].
+    /// Drives the edit boxes of the view and the overlay beside it: a press selects the box
+    /// under it and deselects the other screen's, typing goes to the selected box, and Escape
+    /// deselects; see [`TemplateScreen::edit`].
     pub fn edit_mod_screens(
         &mut self,
         point: Option<[f32; 2]>,
@@ -231,10 +238,11 @@ impl UiPresentationRuntime {
         let Some(screens) = self.form_presentation.mod_screens.as_mut() else {
             return ModalEdits::default();
         };
-        match screens.view.frame {
-            Some(_) => screens.view.edit(point, pressed, typed, escape, now),
-            None => screens.overlay.edit(point, pressed, typed, escape, now),
-        }
+        let mut edits = screens.view.edit(point, pressed, typed, escape, now);
+        let overlay = screens.overlay.edit(point, pressed, typed, escape, now);
+        edits.edits.extend(overlay.edits);
+        edits.escape_consumed |= overlay.escape_consumed;
+        edits
     }
 
     /// Draws the mod's view and overlay over the container screen this build drew, from node
@@ -360,7 +368,7 @@ impl UiPresentationRuntime {
     }
 
     /// The mod atlas's pages, for the dynamic pages reserved to it.
-    pub(in super::super) fn mod_screen_pages(&self) -> &[render::UiTexturePage] {
+    pub(in super::super) fn mod_screen_pages(&self) -> &[render_model::UiTexturePage] {
         self.form_presentation
             .mod_screens
             .as_ref()

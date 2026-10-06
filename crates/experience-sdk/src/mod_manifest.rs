@@ -55,8 +55,8 @@ pub struct ModManifest {
     pub files: BTreeMap<String, String>,
 }
 
-/// The `api` a package declares: the `extension` world version its component is built against.
-pub const API: &str = "0.2";
+/// The `api` a package declares: the `cinnabar:extension` package version its `player-mod` component is built against.
+pub const API: &str = "0.1";
 /// The images a package's screens may draw live under this directory.
 pub const TEXTURE_DIR: &str = "textures/";
 

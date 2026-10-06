@@ -1,6 +1,7 @@
 //! A player mod package's screens beside the container screens: the session data it reads, the
 //! layout it lays out against, and the pointer, wheel, edit box and declared-key events its
 //! callbacks receive. Input reaches the mod only while a container screen (or its view) is up.
+//! Every loaded package reads the session; one, the screen owner, draws and gets the input.
 
 use std::sync::Arc;
 
@@ -17,14 +18,18 @@ use client_ui::ui_runtime::{
     presentation::{ModScreensInput, UiPresentationRuntime, publish::hovered_stack},
     session_data::{SessionDataCache, session_data, session_stack},
 };
-use mod_host::{KeyDecl, ModEvent, ModHost, Modifier};
+use mod_host::{KeyDecl, KeyModifiers, ModEvent, ModHost, Modifier};
 use server_experience::screen::ScreenLayout;
+
+use super::ModRuntime;
 
 /// What the adapter keeps between frames.
 #[derive(Default)]
 pub(super) struct ScreenState {
     session: SessionDataCache,
-    /// The layout last delivered as `screen-changed`.
+    /// The mod that owned the screens last frame.
+    owner: Option<usize>,
+    /// The layout last delivered to the owner as `screen-changed`.
     layout: Option<ScreenLayout>,
 }
 
@@ -37,13 +42,71 @@ pub(super) struct ScreenInput<'w, 's> {
     time: Option<Res<'w, Time<Real>>>,
 }
 
-/// One frame of the package's screens: deliver the session data and this frame's events, then
-/// publish what the mod committed. A refused template quarantines the mod.
+/// One frame of the packages' screens: deliver the session data to every package and this
+/// frame's events to the screen owner, then publish what the owner committed. A refused
+/// template quarantines the owner.
 #[allow(
     clippy::too_many_arguments,
     reason = "Player authority is borrowed separately from UI state."
 )]
 pub(super) fn drive(
+    runtime: &mut ModRuntime,
+    player_runtime: &player_state::PlayerState,
+    ui: &UiRuntime,
+    presentation: &mut UiPresentationRuntime,
+    menu: Option<&crate::menu::MenuRuntime>,
+    cursor: Option<[f32; 2]>,
+    focused: bool,
+    input: &mut ScreenInput,
+) {
+    let readers: Vec<usize> = (0..runtime.host_count())
+        .filter(|&index| {
+            let host = runtime.host(index);
+            let grants = host.grants();
+            host.package().is_some() && host.is_active() && (grants.items || grants.recipes)
+        })
+        .collect();
+    if !readers.is_empty() {
+        let session = session_data(&mut runtime.screens.session, player_runtime, ui);
+        for index in readers {
+            if let Err(error) = runtime.host_mut(index).set_session(Arc::clone(&session)) {
+                eprintln!("Cinnabar mod data-changed failed: {error:#}");
+            }
+        }
+    }
+    let owner = runtime.screen_owner();
+    if owner != runtime.screens.owner {
+        runtime.screens.owner = owner;
+        runtime.screens.layout = None;
+    }
+    let Some(owner) = owner else {
+        presentation.set_mod_screens(None);
+        input.keyboard.clear();
+        input.buttons.clear();
+        input.wheel.clear();
+        return;
+    };
+    let mut state = std::mem::take(&mut runtime.screens);
+    drive_owner(
+        runtime.host_mut(owner),
+        &mut state,
+        player_runtime,
+        ui,
+        presentation,
+        menu,
+        cursor,
+        focused,
+        input,
+    );
+    runtime.screens = state;
+}
+
+/// The screen owner's frame: its layout, input events and committed screens.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Player authority is borrowed separately from UI state."
+)]
+fn drive_owner(
     host: &mut ModHost,
     state: &mut ScreenState,
     player_runtime: &player_state::PlayerState,
@@ -64,10 +127,6 @@ pub(super) fn drive(
     }
     let mut events = Vec::new();
     if host.is_active() {
-        let session = session_data(&mut state.session, player_runtime, ui);
-        if let Err(error) = host.set_session(session) {
-            eprintln!("Cinnabar mod data-changed failed: {error:#}");
-        }
         let layout = presentation.mod_screen_layout().cloned();
         if layout != state.layout {
             state.layout.clone_from(&layout);
@@ -76,12 +135,19 @@ pub(super) fn drive(
     }
     let up = state.layout.is_some();
     if up && focused {
-        let pressed = pointer_events(presentation, cursor, input, &mut events);
+        let held = |left, right| input.keys.pressed(left) || input.keys.pressed(right);
+        let modifiers = KeyModifiers {
+            ctrl: held(KeyCode::ControlLeft, KeyCode::ControlRight),
+            shift: held(KeyCode::ShiftLeft, KeyCode::ShiftRight),
+            alt: held(KeyCode::AltLeft, KeyCode::AltRight),
+        };
+        let pressed = pointer_events(presentation, cursor, modifiers, input, &mut events);
         let frame = KeyFrame {
             keys: &keys,
             menu,
             cursor,
             pressed,
+            modifiers,
         };
         key_events(
             host,
@@ -110,6 +176,7 @@ pub(super) fn drive(
 fn pointer_events(
     presentation: &mut UiPresentationRuntime,
     cursor: Option<[f32; 2]>,
+    modifiers: KeyModifiers,
     input: &mut ScreenInput,
     events: &mut Vec<ModEvent>,
 ) -> bool {
@@ -129,6 +196,7 @@ fn pointer_events(
             delta: notches,
             x,
             y,
+            modifiers,
         });
     }
     let (mut pressed, mut released) = (false, false);
@@ -170,6 +238,7 @@ struct KeyFrame<'a> {
     cursor: Option<[f32; 2]>,
     /// The primary button went down this frame.
     pressed: bool,
+    modifiers: KeyModifiers,
 }
 
 /// Typing into the mod's edit boxes, Escape (which deselects a box, else returns from the
@@ -188,13 +257,8 @@ fn key_events(
         menu,
         cursor,
         pressed,
+        modifiers,
     } = frame;
-    let held = |left, right| input.keys.pressed(left) || input.keys.pressed(right);
-    let modifiers = Held {
-        ctrl: held(KeyCode::ControlLeft, KeyCode::ControlRight),
-        shift: held(KeyCode::ShiftLeft, KeyCode::ShiftRight),
-        alt: held(KeyCode::AltLeft, KeyCode::AltRight),
-    };
     let text_focused = presentation.mod_text_focused();
     let view = presentation.mod_view_shown();
     let presses: Vec<(KeyCode, Option<String>)> = input
@@ -235,7 +299,7 @@ fn key_events(
         }
         let Some(declared) = keys
             .iter()
-            .find(|declared| key_code(&declared.key) == Some(*key) && modifiers.matches(declared))
+            .find(|declared| key_code(&declared.key) == Some(*key) && matches(modifiers, declared))
         else {
             continue;
         };
@@ -253,21 +317,12 @@ fn key_events(
     }
 }
 
-/// The modifiers held with a press.
-struct Held {
-    ctrl: bool,
-    shift: bool,
-    alt: bool,
-}
-
-impl Held {
-    /// A declared key fires only with exactly its modifiers held.
-    fn matches(&self, declared: &KeyDecl) -> bool {
-        let wants = |modifier| declared.modifiers.contains(&modifier);
-        self.ctrl == wants(Modifier::Ctrl)
-            && self.shift == wants(Modifier::Shift)
-            && self.alt == wants(Modifier::Alt)
-    }
+/// A declared key fires only with exactly its modifiers held.
+fn matches(held: KeyModifiers, declared: &KeyDecl) -> bool {
+    let wants = |modifier| declared.modifiers.contains(&modifier);
+    held.ctrl == wants(Modifier::Ctrl)
+        && held.shift == wants(Modifier::Shift)
+        && held.alt == wants(Modifier::Alt)
 }
 
 /// The key a declaration's name binds: letters, digits, F1 to F12, Backspace, Page Up and
@@ -392,13 +447,15 @@ mod tests {
             modifiers,
             label: "k".into(),
         };
-        let ctrl = Held {
+        let ctrl = KeyModifiers {
             ctrl: true,
-            shift: false,
-            alt: false,
+            ..KeyModifiers::default()
         };
-        assert!(ctrl.matches(&declared(vec![Modifier::Ctrl])));
-        assert!(!ctrl.matches(&declared(vec![])));
-        assert!(!ctrl.matches(&declared(vec![Modifier::Ctrl, Modifier::Shift])));
+        assert!(matches(ctrl, &declared(vec![Modifier::Ctrl])));
+        assert!(!matches(ctrl, &declared(vec![])));
+        assert!(!matches(
+            ctrl,
+            &declared(vec![Modifier::Ctrl, Modifier::Shift])
+        ));
     }
 }
