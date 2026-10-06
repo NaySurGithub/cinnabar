@@ -478,7 +478,7 @@ one of another signature) and never calls one it lacks, so new events arrive as 
 without breaking built mods. `data-changed(sources)` lists what changed (`items`, `recipes`);
 that enum is closed, and a new kind of change arrives as a new export.
 `scrolled` reports wheel notches (a pixel wheel's pixels / 16), positive scrolling down, and
-the Ctrl, Shift and Alt held. An event callback commits the label, visual time, panel,
+the Ctrl, Shift and Alt held. An event callback commits the label, visual time, fullbright, panel,
 settings and screens; render, camera and command output is `frame`'s alone.
 
 `data-changed`, whose sources a mod copies whole across the ABI, and the `init` of a component
@@ -499,3 +499,26 @@ fuel, traps, caps, revisions, permissions and reload), `cargo test -p experience
 (the manifest) and `cargo test -p client-ui --lib mod_screens session_data` (clipping, the
 lifted held stack, hit filtering, session data). The overlay has not been checked on a
 rendered frame yet; see `plan.md`.
+
+## Loaded block highlights
+
+The separate `block_highlights` grant (`CINNABAR_MOD_BLOCK_HIGHLIGHTS=1`) permits
+`render.set-block-highlights`. A retained specification names up to
+`mod_api::MAX_BLOCK_HIGHLIGHT_IDENTIFIERS` canonical block identifiers, a bounded
+camera-relative range, and linear RGBA colour. The host scans only loaded primary
+block layers, caches palettes and subchunk identities, and draws full unit cubes
+through terrain without changing world or packet state. Results share the
+`mod_api::MAX_BLOCK_HIGHLIGHTS` nearest-block budget; the earliest active mod wins.
+`none`, unload, reload, or a trap clears the overlay. Output commits only after a
+successful callback; repeated unchanged input rebuilds no geometry.
+## Fullbright
+
+The separate `fullbright` grant (`CINNABAR_MOD_FULLBRIGHT=1`) permits
+`environment.set-fullbright`. Enabling it replaces the shared world light table
+with full illumination without changing time, stored lighting or server state.
+Disabling it restores the current environment. The flag is retained after
+successful callbacks and clears on traps, unload and reload. Unchanged input
+uploads no new table; inactive world sessions suppress the override.
+
+Block highlights inspect received primary block layers even while collision
+readiness is incomplete. Missing subchunks and unloaded data remain excluded.

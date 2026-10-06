@@ -27,6 +27,8 @@ wasmtime::component::bindgen!({
 });
 
 const MAX_IMPORT_WRITES: u32 = 8;
+#[path = "block_highlights.rs"]
+mod block_highlights;
 #[path = "controls.rs"]
 mod controls;
 mod exports;
@@ -53,6 +55,8 @@ struct State {
     grants: ModGrants,
     time_override: Option<u32>,
     pending_time: Option<Option<u32>>,
+    fullbright: bool,
+    pending_fullbright: Option<bool>,
     environment_writes: u32,
     snapshot: Option<GameplaySnapshot>,
     gameplay_reads: u32,
@@ -76,6 +80,7 @@ struct State {
     /// Host calls and screen output bytes of the running callback.
     calls: usize,
     output: usize,
+    block_highlights: block_highlights::HighlightState,
 }
 
 impl State {
@@ -96,6 +101,8 @@ impl State {
             grants,
             time_override: None,
             pending_time: None,
+            fullbright: false,
+            pending_fullbright: None,
             environment_writes: 0,
             snapshot: None,
             gameplay_reads: 0,
@@ -117,6 +124,7 @@ impl State {
             pending_screens: None,
             calls: 0,
             output: 0,
+            block_highlights: block_highlights::HighlightState::default(),
         }
     }
 }
@@ -137,6 +145,18 @@ impl cinnabar::extension::hud::Host for State {
 }
 
 impl cinnabar::extension::environment::Host for State {
+    fn set_fullbright(&mut self, enabled: bool) -> Result<Result<(), String>> {
+        self.environment_writes += 1;
+        if self.environment_writes > MAX_IMPORT_WRITES {
+            bail!("environment import budget exhausted");
+        }
+        if !self.grants.fullbright {
+            return Ok(Err("fullbright capability denied".into()));
+        }
+        self.pending_fullbright = Some(enabled);
+        Ok(Ok(()))
+    }
+
     /// Stages a fixed visual clock only with explicit authority and a valid tick.
     fn set_time_override(&mut self, ticks: Option<u32>) -> Result<Result<(), String>> {
         self.environment_writes += 1;
@@ -230,8 +250,10 @@ impl Instance {
         state.pending_packet_delay = None;
         state.packet_delay_writes = 0;
         state.pending_show_real_position = None;
+        state.pending_fullbright = None;
         state.controls.begin_frame();
         state.render.begin_frame();
+        state.block_highlights.begin_frame();
         state.world.begin_frame();
         if !self.active {
             return Ok(());
@@ -307,11 +329,14 @@ impl Instance {
         state.label = None;
         state.pending_time = None;
         state.time_override = None;
+        state.fullbright = false;
+        state.pending_fullbright = None;
         state.snapshot = None;
         state.pending_camera = None;
         state.camera_delta = None;
         state.controls.revoke();
         state.render.revoke();
+        state.block_highlights.revoke();
         state.world = gameplay::WorldState::default();
         state.packet_delay_ms = 0;
         state.pending_packet_delay = None;
@@ -344,6 +369,12 @@ impl Instance {
 
     pub(super) fn packet_delay_ms(&self) -> u32 {
         self.store.data().packet_delay_ms
+    }
+    pub(super) fn fullbright(&self) -> bool {
+        self.store.data().fullbright
+    }
+    pub(super) fn block_highlights(&self) -> Option<&mod_api::BlockHighlightSpec> {
+        self.store.data().block_highlights.committed.as_ref()
     }
     pub(super) fn show_real_position(&self) -> bool {
         self.store.data().show_real_position
@@ -439,6 +470,7 @@ impl Instance {
 fn commit(store: &mut Store<State>) {
     let state = store.data_mut();
     state.render.commit();
+    state.block_highlights.commit();
     state.world.commit();
     state.camera_delta = state.pending_camera.take();
     if let Some(delay) = state.pending_packet_delay.take() {
@@ -456,6 +488,9 @@ fn commit(store: &mut Store<State>) {
 fn commit_event(store: &mut Store<State>) {
     let state = store.data_mut();
     state.controls.commit();
+    if let Some(enabled) = state.pending_fullbright.take() {
+        state.fullbright = enabled;
+    }
     if let Some(ticks) = state.pending_time.take() {
         state.time_override = ticks;
     }
