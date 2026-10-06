@@ -8,9 +8,9 @@ use std::{borrow::Cow, sync::Arc};
 use assets::gui_item::{CUBE_FACES, GUI_ITEM_SIDE};
 use assets::{
     BlockFace, BlockOverlay, BlockVisualId, IconSprite, MATERIAL_FLAG_ALPHA_BLEND,
-    MATERIAL_FLAG_ALPHA_CUTOUT, MODEL_TEMPLATE_FLAG_FENCE_NETHER, MODEL_TEMPLATE_FLAG_FENCE_WOOD,
-    Material, ModelQuad, ModelTemplate, NO_MODEL_TEMPLATE, NetworkIdMode, RuntimeAssets,
-    TextureArray, TexturePage, VisualKind,
+    MATERIAL_FLAG_ALPHA_CUTOUT, MATERIAL_FLAG_DISABLE_AO, MODEL_TEMPLATE_FLAG_FENCE_NETHER,
+    MODEL_TEMPLATE_FLAG_FENCE_WOOD, Material, ModelQuad, ModelTemplate, NO_MODEL_TEMPLATE,
+    NetworkIdMode, RuntimeAssets, TextureArray, TexturePage, VisualKind,
 };
 
 use super::cube::Reject;
@@ -194,8 +194,9 @@ fn tile(parts: Parts<'_>, id: u32) -> Result<(&[u8], usize, bool), Reject> {
     }
     let material = parts.materials.get(id as usize).ok_or(Reject::Material)?;
     let alpha = MATERIAL_FLAG_ALPHA_BLEND | MATERIAL_FLAG_ALPHA_CUTOUT;
-    // Tints, overlays and rotated UVs need per-biome or per-state data an icon lacks.
-    if material.flags & !alpha != 0 {
+    // Tints, overlays and rotated UVs need per-biome or per-state data an icon lacks. A thumbnail
+    // has no neighbours to occlude it, so disabled ambient occlusion draws the same.
+    if material.flags & !(alpha | MATERIAL_FLAG_DISABLE_AO) != 0 {
         return Err(Reject::Material);
     }
     let array = match parts.textures {
