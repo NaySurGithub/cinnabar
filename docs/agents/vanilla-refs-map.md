@@ -2437,4 +2437,4 @@ was not used as version evidence.
 
 ## Ground jump and incoming motion
 
-- `crates/sim/tests/jump_knockback.rs`: Lens client artifact 6, `1.26.50.26`, source-backed canonical ground-jump body RVA `0xa5dacf0` retains vertical velocity above the jump impulse and preserves horizontal velocity except for the additive sprint impulse. Local-player wrapper RVA `0xa5db340` calls it from the `LocalPlayerJumpRequestComponent` tick RVA `0xa60ea50`. Current data at `0x150167294` is the ordinary jump impulse `0.42f`; `0x15005b350` is the sprint impulse `0.2f`. Ground-contact gating and retained ground drag are exercised as existing simulator contracts; no horizontal knockback cancellation or server timing guarantee is inferred.
+- `crates/sim/tests/jump_knockback.rs`: Bedrock `1.26.50.26` ground jumping retains vertical velocity above the ordinary jump impulse and preserves horizontal velocity except for the additive sprint impulse. Ground-contact gating and retained ground drag are exercised as existing simulator contracts; no horizontal knockback cancellation or server timing guarantee is inferred.
