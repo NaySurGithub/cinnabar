@@ -55,8 +55,32 @@ fn overlay_nodes_touching_a_forbidden_area_are_dropped() {
         // At 300..320, clear of it.
         leaf(5, 3, 200.0, 10.0, 20.0, 10.0),
     ];
-    clip_overlay(&mut nodes, 2, &[[100.0, 0.0, 200.0, 300.0]]);
+    clip_overlay(&mut nodes, 2, &[[100.0, 0.0, 200.0, 300.0]], &[], &mut 10);
     assert_eq!(ids(&nodes), [1, 2, 3, 5]);
+}
+
+#[test]
+fn overlay_tooltips_survive_the_clip_and_draw_above_the_overlay() {
+    let mut nodes = vec![
+        group(1, 0.0, 0.0, 400.0, 300.0),
+        // The hovered entry's tooltip, flipped left over the forbidden area.
+        group(2, 150.0, 0.0, 120.0, 20.0),
+        leaf(3, 2, 0.0, 0.0, 120.0, 20.0),
+        // A later entry, clear of the forbidden area.
+        leaf(4, 1, 250.0, 0.0, 16.0, 16.0),
+    ];
+    let mut next = 10;
+    clip_overlay(
+        &mut nodes,
+        1,
+        &[[100.0, 0.0, 200.0, 300.0]],
+        &[1..3],
+        &mut next,
+    );
+    assert_eq!(ids(&nodes), [1, 4, 10, 11]);
+    assert_eq!(nodes[2].bounds(), rect(150.0, 0.0, 120.0, 20.0));
+    assert_eq!(nodes[3].parent(), Some(UiNodeId::new(10)));
+    ui::UiTree::new(nodes).unwrap();
 }
 
 #[test]
