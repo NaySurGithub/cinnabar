@@ -377,13 +377,7 @@ fn modal_item_renderers_draw_the_players_inventory() {
     // Rows the client part sends under the host's name point every cell at the first icon.
     modal.set_collection(
         "hotbar_items".into(),
-        vec![
-            BTreeMap::from([(
-                "#item_renderer_data".to_owned(),
-                screen::Value::Integer(0),
-            )]);
-            9
-        ],
+        vec![BTreeMap::from([("#item_renderer_data".to_owned(), screen::Value::Integer(0),)]); 9],
     );
     let files = Arc::new(files(&[("ui/terminal.json", HOTBAR)]));
     let mut presentation = super::super::tests::mini_engine_presentation();
