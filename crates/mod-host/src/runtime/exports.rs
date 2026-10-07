@@ -12,6 +12,7 @@ use wasmtime::{
 type Index = Option<u32>;
 /// A collection name and the index of a row in it.
 type Row = Option<(String, u32)>;
+type KeyFunc = TypedFunc<(String, Option<player_mod::GuestStack>, Row), ()>;
 
 #[derive(Default)]
 struct Events {
@@ -20,7 +21,7 @@ struct Events {
     secondary: Option<TypedFunc<(String, Index), ()>>,
     scrolled: Option<TypedFunc<(f64, f64, f64, player_mod::Modifiers), ()>>,
     text: Option<TypedFunc<(String, String), ()>>,
-    key: Option<TypedFunc<(String, Option<player_mod::GuestStack>, Row), ()>>,
+    key: Option<KeyFunc>,
     data_changed: Option<TypedFunc<(Vec<player_mod::DataSource>,), ()>>,
     view_closed: Option<TypedFunc<(), ()>>,
 }
