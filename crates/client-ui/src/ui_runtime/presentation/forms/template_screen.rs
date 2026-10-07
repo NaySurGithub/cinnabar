@@ -106,6 +106,8 @@ pub(super) struct TemplateScreen {
     pub(super) template: Option<String>,
     revision: Option<u64>,
     data: Arc<DataSource>,
+    /// `data` with the components' writes (an edit box's text) last bound over it.
+    bound: Option<(json_ui::Components, Arc<DataSource>)>,
     screen: CachedScreen,
     pub(super) view: ViewState,
     /// The pointer in virtual pixels; the view sees it only when a control follows it.
@@ -149,6 +151,7 @@ impl TemplateScreen {
         if self.revision != Some(modal.revision) {
             self.revision = Some(modal.revision);
             self.data = Arc::new(data_source(modal));
+            self.bound = None;
             let mut texts: Vec<_> = modal
                 .texts
                 .iter()
@@ -394,11 +397,11 @@ impl TemplateScreen {
             next,
             overlay: &[],
         };
+        let data = self.bound_data();
         let screen_art = ScreenArt {
             view: Some(&self.view),
             ..screen_art
         };
-        let data = Arc::clone(&self.data);
         let (screen, view) = (&mut self.screen, &self.view);
         let result = renderer.draw_with(textures, screen_art, inputs, out, |env, root| {
             screen.render_shared_with(
@@ -442,6 +445,24 @@ impl TemplateScreen {
 }
 
 impl TemplateScreen {
+    /// The bound data with what the components wrote, such as an edit box's text, rebuilt only
+    /// when either changed.
+    fn bound_data(&mut self) -> Arc<DataSource> {
+        if self.view.components.is_empty() {
+            return Arc::clone(&self.data);
+        }
+        if let Some((components, data)) = &self.bound
+            && *components == self.view.components
+        {
+            return Arc::clone(data);
+        }
+        let mut data = (*self.data).clone();
+        data.set_components(self.view.components.clone());
+        let data = Arc::new(data);
+        self.bound = Some((self.view.components.clone(), Arc::clone(&data)));
+        data
+    }
+
     /// Selects the drawn edit box named `control` as a primary press on it would.
     fn select_box(&mut self, control: &str) {
         let Some(frame) = &self.frame else {

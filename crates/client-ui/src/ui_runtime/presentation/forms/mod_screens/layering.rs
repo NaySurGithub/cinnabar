@@ -147,8 +147,21 @@ pub(super) fn forbidden_logical(layout: &ScreenLayout, scale: f32) -> Vec<[f32; 
 }
 
 /// Drops every visible node from `start` on whose rect meets a `forbidden` one, so the overlay
-/// never draws over vanilla's panels; empty clip groups stay as they draw nothing.
-pub(super) fn clip_overlay(nodes: &mut Vec<UiNode>, start: usize, forbidden: &[[f32; 4]]) {
+/// never draws over vanilla's panels; empty clip groups stay as they draw nothing. The overlay's
+/// `tooltips` (ranges into `nodes`) are kept whole and move above it, as vanilla's do.
+pub(super) fn clip_overlay(
+    nodes: &mut Vec<UiNode>,
+    start: usize,
+    forbidden: &[[f32; 4]],
+    tooltips: &[Range<usize>],
+    next: &mut u32,
+) {
+    let tooltips = take_lifted(nodes, tooltips);
+    drop_forbidden(nodes, start, forbidden);
+    restore_lifted(nodes, tooltips, next);
+}
+
+fn drop_forbidden(nodes: &mut Vec<UiNode>, start: usize, forbidden: &[[f32; 4]]) {
     let origins: BTreeMap<UiNodeId, [f32; 2]> = nodes
         .iter()
         .map(|node| {

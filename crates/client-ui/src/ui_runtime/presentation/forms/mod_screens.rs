@@ -333,12 +333,18 @@ impl UiPresentationRuntime {
                 }
             };
         }
+        let mut view_tooltips = None;
         if screens.view.template.is_some() {
             let view_start = nodes.len();
             if screens
                 .view
                 .draw(&mut screens.art, renderer, inputs!(), (nodes, next), art())
             {
+                // The view's tooltips draw above the overlay and never widen what it keeps
+                // clear of.
+                if let Some(view) = screens.view.frame.as_ref() {
+                    view_tooltips = Some(layering::take_lifted(nodes, &view.top));
+                }
                 // The view stands in for the container screen, which stays open underneath,
                 // and for its panels as what the overlay keeps clear of.
                 layout.view = layering::drawn_bounds(&nodes[view_start..], content, px);
@@ -352,8 +358,11 @@ impl UiPresentationRuntime {
             && let Some(overlay) = screens.overlay.frame.as_mut()
         {
             let forbidden = layering::forbidden_logical(&layout, overlay.scale);
-            layering::clip_overlay(nodes, start, &forbidden);
+            layering::clip_overlay(nodes, start, &forbidden, &overlay.top, next);
             layering::keep_allowed_hits(overlay, &layout);
+        }
+        if let Some(view_tooltips) = view_tooltips {
+            layering::restore_lifted(nodes, view_tooltips, next);
         }
         layering::restore_lifted(nodes, lifted, next);
         screens.layout = Some(layout);
