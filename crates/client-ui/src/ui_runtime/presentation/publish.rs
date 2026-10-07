@@ -637,7 +637,7 @@ pub fn hovered_stack(
                     ledger,
                     runtime.screen_state(),
                 );
-                (entries.get(position).copied().map(|item| &item.stack), None)
+                (entries.get(position).map(|item| &item.stack), None)
             }
             Hit::Widget(super::screens::Widget::BookRecipe(index)) => {
                 let skip = runtime.screen_state().book_page * super::screens::BOOK_CELLS
