@@ -434,6 +434,10 @@ Data binds through the engine's own `#name` bindings:
   a JSON array of objects from `#name` to a value in the same encoding as channel leaves,
   `{"type":"bool|integer|number|text|numbers","value":…}`, so each row can carry its own
   text, texture path, count or visibility.
+- The host fills `inventory_items` (main inventory) and `hotbar_items` read-only with the
+  player's stacks, as vanilla's container screens bind them: vanilla's `common.item_renderer`
+  with `$item_collection_name` draws each slot's icon, and its count and durability bind as
+  there. Rows a client part sets under those names are replaced.
 - A button whose `$pressed_button_name` is a declared manifest action delivers
   `action(id, collection-index)` on release, with the row of its nearest collection, if
   the bundle holds `input`; other presses do nothing. A secondary press (a right click)

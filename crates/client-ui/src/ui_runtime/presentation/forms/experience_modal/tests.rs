@@ -353,3 +353,90 @@ fn named_scroll_views_report_their_range_on_change() {
     };
     assert_eq!((view.as_str(), range.offset), ("demo.list", 36.0));
 }
+
+/// A hotbar of item renderers over the host's `hotbar_items`.
+const HOTBAR: &str = r##"{"namespace": "demo",
+    "terminal": {"type": "panel", "size": ["100%", "100%"], "controls": [
+        {"hotbar": {"type": "grid", "size": [180, 20], "grid_dimensions": [9, 1],
+            "anchor_from": "top_left", "anchor_to": "top_left",
+            "collection_name": "hotbar_items", "grid_item_template": "demo.cell"}}]},
+    "cell": {"type": "custom", "renderer": "inventory_item_renderer", "size": [20, 20],
+        "bindings": [{"binding_type": "collection", "binding_collection_name": "hotbar_items",
+            "binding_name": "#item_renderer_data"}]}}"##;
+
+/// A client part's modal reads the player's inventory as vanilla's container screens do: the
+/// host fills `inventory_items` and `hotbar_items` read-only, replacing rows the client part
+/// names the same, and their item renderers draw each occupied slot's icon.
+#[test]
+fn modal_item_renderers_draw_the_players_inventory() {
+    use protocol::{
+        ContainerIdentity, InventoryEvent, InventorySlotEvent, NetworkItemStack, SlotIdentity,
+    };
+    let mut modal = screen::Modal::default();
+    modal.open(Some("ui/terminal.json".into()));
+    // Rows the client part sends under the host's name point every cell at the first icon.
+    modal.set_collection(
+        "hotbar_items".into(),
+        vec![
+            BTreeMap::from([(
+                "#item_renderer_data".to_owned(),
+                screen::Value::Integer(0),
+            )]);
+            9
+        ],
+    );
+    let files = Arc::new(files(&[("ui/terminal.json", HOTBAR)]));
+    let mut presentation = super::super::tests::mini_engine_presentation();
+    presentation.set_experience_modal(Some(ExperienceModal {
+        bundle: "demo",
+        files: &files,
+        modal: &modal,
+    }));
+    let mut player_runtime = player_state::PlayerState::new(1);
+    let stack = NetworkItemStack {
+        network_id: 2,
+        count: 5,
+        stack_network_id: 7,
+        ..NetworkItemStack::default()
+    };
+    player_runtime
+        .inventory
+        .ledger_mut()
+        .apply(&InventoryEvent::Slot(InventorySlotEvent {
+            identity: SlotIdentity {
+                container: ContainerIdentity::window(0),
+                slot: 3,
+            },
+            stack,
+            storage_item: None,
+        }));
+    let icon = super::super::super::IconRef {
+        page: 3,
+        uv: [16, 32, 48, 64],
+        glint: false,
+    };
+    presentation.hud_frame.inventory_icons.0[3] = Some(icon);
+    let runtime = UiRuntime::new(1);
+    let size = [1280, 720];
+    let dpi = ui::DpiScale::new(1.0).unwrap();
+    let (mut nodes, mut next) = (Vec::new(), 1);
+    presentation.append_experience_modal(
+        &player_runtime,
+        &runtime,
+        &mut nodes,
+        &mut next,
+        TextMetrics::for_viewport(size, dpi, None),
+        [1280.0, 720.0],
+        true,
+    );
+    let drawn: Vec<_> = nodes
+        .iter()
+        .filter_map(|node| match node.visual() {
+            ui::UiVisual::Sprite {
+                texture_page, uv, ..
+            } => Some((*texture_page, *uv)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(drawn, [(icon.page, icon.uv)]);
+}
