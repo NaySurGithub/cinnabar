@@ -2569,3 +2569,47 @@ was not used as version evidence.
 - Third-person visibility and disabling inversion are owner-requested options;
   defaults retain first-person visibility and inverted colors. The Java HUD's
   built-in fallback remains 15×15; a pack crosshair remains 16×16.
+
+
+## Image clarity: AA settings and texture sampling
+
+- `docs/reference/rendering.md`, `crates/ui/src/settings.rs`, and
+  `crates/launcher/src/menu/settings_options/antialiasing.rs`: reference
+  `by-owner/m/MinecraftOptionValue.cpp:601–819`, `getDefaultMSAA`, returns 1 for
+  `(isEduMode && getOSVersion == 3)` or `getPlatformType == 1`, otherwise 2.
+  AppPlatform vtable at `0x110a25370`, slots `0x978`, `0x7f8`, `0x6b0`, maps those
+  calls to `isEduMode`, `getOSVersion`, `getPlatformType`; OSX platform type is 0.
+  `getSupportedMSAAValues` at lines823–1200 reads renderer capability values and
+  conditionally filters counts greater than 4. The exact memory-field identity of
+  that additional filter and all current retail platform defaults remain unverified.
+- Current client artifact6 `0x10fee60`, source-backed
+  `MinecraftOptionValue::setMSAAValue`, validates positive powers of two, snaps
+  unsupported integral input to the closest power of two, and updates the framebuilder.
+  This confirms the setting semantics, not the current platform's default getter.
+- `crates/client-ui/src/ui_runtime/presentation/forms/settings_controls.rs`:
+  `resource_pack/ui/settings_sections/general_section.json:4090–4108`, `msaa_slider`,
+  binds `#msaa`, `#msaa_steps`, `#msaa_text_value`, `#msaa_slider_label`, `#show_msaa`.
+  `resource_pack/texts/en_US.lang:7286–7289` supplies the Anti-Aliasing and Texel
+  Anti-Aliasing labels. Reference `SettingsRegistryBuilderContext.cpp:4283–4290`
+  returns false from `supportsTexelAntiAliasing`; `MinecraftOptionValue.cpp:519–599`
+  enables its shared default for platform type2. Shader and retail platform scope
+  are not established by these controls alone.
+- `crates/client-presentation/src/camera/antialiasing.rs` and the world graph:
+  current source-backed artifact6 `PlayerRenderView::_declarePasses`, `0x70883f0`,
+  creates `gameplay_color_resolve` and `resolve_msaa_color_before_postprocess`.
+  Reference `by-owner/p/PlayerRenderView.cpp:780–825` confirms that resolve stage.
+  Exact per-platform hand/UI AA boundaries still need matched capture evidence.
+- Terrain filtering: reference `BgfxFrameExtractor--a8eeb08c13c5.cpp:25285–25322`
+  binds `atlasSampler=0x155` to terrain; lines25368–25377 bind `0x685` to the lightmap.
+  `TextureHelpers.cpp:210–293` maps sampler fields to bgfx flags, with predefined
+  point/linear/anisotropic values at lines303–374. Thus terrain is point min/mag,
+  linear mip, with no anisotropy. Current artifact6 `0x68e09d0` is indexed as the
+  matching terrain insertion function but its implementation was unavailable.
+- Entity/hand scope: reference `BgfxFrameExtractor--a8eeb08c13c5.cpp:10860–10861`
+  reads actor sampler from the material; lines3321–3328 bind `WrapPoint` to the
+  ordinary `RenderItemInHandDescription` color texture. This does not establish
+  every specialized entity/item mip-loading policy. UI shader evidence already
+  recorded under inventory geometry is near-patch, not exact target-version proof.
+- Terrain mip construction uses the existing current `TextureAtlas::updateTextureAtUVs`
+  and `_buildAtlasMips` mappings above. Vanilla pack `textures/terrain_texture.json`
+  declares `num_mip_levels: 4`; `textures/item_texture.json` omits that property.
