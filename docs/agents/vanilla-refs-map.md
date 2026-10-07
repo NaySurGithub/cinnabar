@@ -2674,11 +2674,32 @@ Files: `docs/reference/held-block-placement.md`, `crates/gameplay/src/block_use.
   Android/iOS/console override or platform-class enum mapping was established.
   `getSupportedMSAAValues` at lines823–1200 reads renderer capability values and
   conditionally filters counts greater than 4. The exact memory-field identity of
-  that additional filter and all current retail platform defaults remain unverified.
+  that additional filter and current mobile/console defaults remain unverified.
+- Current Windows artifact 6 default: source-backed `0x10fe1d0` matches the shared
+  getter above and occupies slot `+0x20` in the MinecraftOptionValue vtable
+  `0x15009fdb0`; supported counts and the named setter occupy `+0x28` and `+0x30`.
+  Its machine code calls AppPlatform slots `+0x988`, `+0x810`, `+0x6b8` for the
+  Education, OS and platform-class branches, then returns integer 1 or integer 2.
+  Startup `0x7fc90` installs GameCorePC vtable `0x14ffa3430`; its identity is
+  corroborated by slots `+0x278`, `+0x280`, `+0xab8` pointing to the source-backed
+  `AppPlatform_GameCorePC::pickImage`, `pickFile`, `_initializeFileStorageAreas`.
+  All three default-relevant slots point to `0x76d40`, a return-zero stub. The
+  current Windows platform therefore selects 2, not the shared class 1 branch.
+- Current Windows registration at `0x23b6a18–0x23b6b45` constructs `gfx_msaa` /
+  `options.msaa`, obtains supported counts through option-value slot `+0x28`,
+  then passes slot `+0x20`'s integer result unchanged as the default argument to
+  `0x9b87f0`. This was checked in bounded machine code because the large enclosing
+  registration function has no local readable body. Source-backed `0x9b87f0`
+  retains an available default, otherwise chooses the nearest supported integer,
+  and stores that result as current and default values; it does not exponentiate.
+  Current supported-count getter `0x10fe760` reads raw renderer capability bytes,
+  called here with its additional count-filter flag false, and falls back to `[1]`
+  if no counts are available. This establishes a requested Windows raster default
+  of 2 physical samples, subject to capabilities, not an unconditional default of 1.
 - Current client artifact6 `0x10fee60`, source-backed
   `MinecraftOptionValue::setMSAAValue`, validates positive powers of two, snaps
   unsupported integral input to the closest power of two, and updates the framebuilder.
-  This confirms the setting semantics, not the current platform's default getter.
+  Together with the registration above this confirms raw physical sample counts.
 - `crates/client-ui/src/ui_runtime/presentation/forms/settings_controls.rs`:
   `resource_pack/ui/settings_sections/general_section.json:4090–4108`, `msaa_slider`,
   binds `#msaa`, `#msaa_steps`, `#msaa_text_value`, `#msaa_slider_label`, `#show_msaa`.
