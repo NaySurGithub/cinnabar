@@ -2668,6 +2668,10 @@ Files: `docs/reference/held-block-placement.md`, `crates/gameplay/src/block_use.
   `(isEduMode && getOSVersion == 3)` or `getPlatformType == 1`, otherwise 2.
   AppPlatform vtable at `0x110a25370`, slots `0x978`, `0x7f8`, `0x6b0`, maps those
   calls to `isEduMode`, `getOSVersion`, `getPlatformType`; OSX platform type is 0.
+  `by-owner/a/AppPlatform.cpp:7733–7738` returns class1 in the base implementation;
+  `AppPlatform_OSX.cpp:2216–2221` returns class0. Base `getOSVersion` returns0 and
+  `isEduMode` returns1, so the inspected OSX Education default is2. No current
+  Android/iOS/console override or platform-class enum mapping was established.
   `getSupportedMSAAValues` at lines823–1200 reads renderer capability values and
   conditionally filters counts greater than 4. The exact memory-field identity of
   that additional filter and all current retail platform defaults remain unverified.
@@ -2711,7 +2715,7 @@ Files: `docs/reference/held-block-placement.md`, `crates/gameplay/src/block_use.
   material feature gates, not the texel shader algorithm or platform defaults.
 - Platform evidence limit: the inspected catalog contains Windows amd64 clients
   1.26.33.01, 1.26.50.26 and 1.26.60.21 plus BDS, with no Android, iOS or console
-  artifacts. The local platform owner inventory contains `AppPlatform_osx` only;
+  artifacts. The named 26.30 platform overrides contain `AppPlatform_osx` only;
   current source and symbol searches did not recover `getDefaultMSAA`,
   `getPlatformType` or `supportsTexelAntiAliasing`. Shared platform-class branches
   therefore do not independently verify retail defaults on those platforms.
