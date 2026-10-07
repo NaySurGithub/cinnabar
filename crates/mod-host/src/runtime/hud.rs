@@ -105,7 +105,7 @@ impl target::Host for State {
 
     fn mining(&mut self) -> Result<Result<Option<target::MiningState>, String>> {
         let granted = self.read(self.grants.target, "target")?;
-        Ok(granted.map(|()| self.target.mining.clone()))
+        Ok(granted.map(|()| self.target.mining))
     }
 
     fn harvest(

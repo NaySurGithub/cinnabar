@@ -150,7 +150,7 @@ pub(super) struct FormPresentation {
     mod_hud_layer: Option<mod_hud_layer::ModHudLayer>,
     /// A mod's text services and the language and GUI scale they follow; carried across the
     /// per-frame reset.
-    mod_text: Option<(([usize; 3], u32), Arc<mod_hud_layer::ModText>)>,
+    mod_text: Option<mod_hud_layer::ModTextCache>,
     /// The last container screen's layout; carried across the per-frame reset.
     container_cache: Option<containers::ScreenCache>,
     /// Immutable creative rows reused across hover and scroll frames.

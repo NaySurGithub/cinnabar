@@ -236,6 +236,9 @@ impl UiPresentationRuntime {
 const MEASURE_CACHE_ENTRIES: usize = 64;
 const MEASURE_CACHE_BYTES: usize = 256 * 1024;
 
+/// A mod's text services, keyed by the text generation and GUI scale bits they follow.
+pub(in super::super) type ModTextCache = (([usize; 3], u32), Arc<ModText>);
+
 /// The text services a mod's `text` import reads: owned, so they outlive the frame.
 pub struct ModText {
     translator: Translator,

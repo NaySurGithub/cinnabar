@@ -41,6 +41,9 @@ pub(super) struct TargetState {
     text: Option<Arc<ModText>>,
 }
 
+/// A targeted actor's shown facts: runtime id, name tag, health and dropped item network id.
+type ActorFacts = (u64, Option<Arc<str>>, Option<(f32, f32)>, Option<i32>);
+
 /// What a look depends on: the pick, the liquid on its ray, the eye, the game mode and the
 /// targeted actor's shown facts.
 #[derive(Clone, Debug, PartialEq)]
@@ -49,7 +52,7 @@ struct LookKey {
     liquid: Option<([i32; 3], u32)>,
     eye_in_liquid: bool,
     game_mode: Option<PlayerGameMode>,
-    actor: Option<(u64, Option<Arc<str>>, Option<(f32, f32)>, Option<i32>)>,
+    actor: Option<ActorFacts>,
 }
 
 /// One frame for the packages: the HUD owner's layer and layout, and the target and text for
@@ -79,8 +82,9 @@ pub(super) fn publish(
             host.package().is_some() && host.is_active() && host.grants().target
         })
         .collect();
-    if crosshair.wants_actor != !readers.is_empty() {
-        crosshair.wants_actor = !readers.is_empty();
+    let wants_actor = !readers.is_empty();
+    if crosshair.wants_actor != wants_actor {
+        crosshair.wants_actor = wants_actor;
     }
     if let Some(text) = presentation.mod_text()
         && extension
