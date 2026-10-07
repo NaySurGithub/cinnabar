@@ -2613,3 +2613,16 @@ was not used as version evidence.
 - Terrain mip construction uses the existing current `TextureAtlas::updateTextureAtUVs`
   and `_buildAtlasMips` mappings above. Vanilla pack `textures/terrain_texture.json`
   declares `num_mip_levels: 4`; `textures/item_texture.json` omits that property.
+
+- Independent current-client cross-check: artifact 6 `0x628fe10` is source-backed
+  canonical code matching reference `cg::RenderMaterialBase::modifyDefines`,
+  `by-owner/r/RenderMaterialBase--9e9191dd757d.cpp:1946–2144`. Its configuration
+  independently adds `MSAA_FRAMEBUFFER_ENABLED` and `TEXEL_AA_FEATURE`, and removes
+  `ALPHA_TO_COVERAGE` when that capability is disabled. This establishes separate
+  material feature gates, not the texel shader algorithm or platform defaults.
+- Platform evidence limit: the inspected catalog contains Windows amd64 clients
+  1.26.33.01, 1.26.50.26 and 1.26.60.21 plus BDS, with no Android, iOS or console
+  artifacts. The local platform owner inventory contains `AppPlatform_osx` only;
+  current source and symbol searches did not recover `getDefaultMSAA`,
+  `getPlatformType` or `supportsTexelAntiAliasing`. Shared platform-class branches
+  therefore do not independently verify retail defaults on those platforms.
