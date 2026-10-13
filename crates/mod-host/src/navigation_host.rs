@@ -26,14 +26,19 @@ impl cinnabar::extension::terrain::Host for State {
             }
             self.navigation.pending_queries.push(query);
         }
+        let scope = self
+            .player_state
+            .world
+            .as_ref()
+            .map_or((frame.session, frame.dimension), |world| {
+                (world.session, world.dimension)
+            });
         Ok(Ok(self
             .navigation
             .regions
             .iter()
             .find(|region| {
-                region.query == query
-                    && region.session == frame.session
-                    && region.dimension == frame.dimension
+                region.query == query && region.session == scope.0 && region.dimension == scope.1
             })
             .cloned()))
     }
@@ -159,5 +164,32 @@ mod tests {
         assert!(value.read_region(query(0)).unwrap().unwrap().is_none());
         value.navigation.regions[0].session = 1;
         assert!(value.read_region(query(0)).unwrap().unwrap().is_some());
+    }
+    #[test]
+    fn terrain_uses_the_observed_world_session_instead_of_the_actor_session() {
+        let mut value = state(ModGrants {
+            terrain: true,
+            ..Default::default()
+        });
+        value.player_state.world = Some(crate::WorldObservation {
+            session: 7,
+            dimension: 2,
+            world: "fixture".into(),
+            position: (0., 0., 0.),
+            alive: true,
+        });
+        value.navigation.regions.push(TerrainRegion {
+            session: 7,
+            dimension: 2,
+            query: query(0),
+            chunks: vec![],
+            cells: vec![],
+        });
+        assert!(value.read_region(query(0)).unwrap().unwrap().is_some());
+        value.navigation.regions[0].session = 1;
+        assert!(value.read_region(query(0)).unwrap().unwrap().is_none());
+        value.navigation.regions[0].session = 7;
+        value.navigation.regions[0].dimension = 0;
+        assert!(value.read_region(query(0)).unwrap().unwrap().is_none());
     }
 }
