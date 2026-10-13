@@ -399,6 +399,7 @@ type ModOutputs<'w> = (
 #[derive(SystemParam)]
 struct ModObservation<'w, 's> {
     environment_loader: Option<Res<'w, environment_loader::Loader>>,
+    automation_input: ResMut<'w, navigation::AutomationInput>,
     watcher: Option<Res<'w, registration::Watcher>>,
     render_scene: Option<ResMut<'w, render_scene::ModRenderScene>>,
     cameras: Query<
@@ -418,7 +419,6 @@ struct ModObservation<'w, 's> {
 )]
 fn drive_mod(
     player_runtime: bevy::prelude::Res<client_state::PlayerRuntime>,
-    mut automation_input: ResMut<navigation::AutomationInput>,
     extension: Option<ResMut<ModRuntime>>,
     keys: Res<ButtonInput<KeyCode>>,
     focus: Option<Res<client_state::CursorFocus>>,
@@ -437,6 +437,7 @@ fn drive_mod(
 ) {
     let ModObservation {
         environment_loader,
+        mut automation_input,
         watcher,
         render_scene,
         cameras,
@@ -459,6 +460,7 @@ fn drive_mod(
     let input_scope = (focused && captured && !absorbed)
         .then(|| gameplay.world_observation(&ui))
         .flatten()
+        .filter(|world| world.alive)
         .map(|world| (world.session, world.dimension));
     if automation_input.scope != input_scope {
         automation_input.overlay.reset();
