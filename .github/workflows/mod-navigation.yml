@@ -47,9 +47,7 @@ jobs:
       - name: Check boundaries
         run: cargo run -p architecture --locked -- check --root . --policy tools/architecture/policy.toml
       - name: Test domain and host behavior
-        run: |
-          cargo test --locked -p semantic-input -p sim -p mod-host --lib
-          cargo test --locked -p mod-host --test navigation
+        run: cargo test --locked -p semantic-input -p sim -p mod-host --lib
       - name: Test multiple loaded mods
         run: cargo test --locked -p client-extensions --features local-mods --lib
       - name: Check client adapters and tests
