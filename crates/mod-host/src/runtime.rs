@@ -508,7 +508,12 @@ impl Instance {
         state.world.mobs = mobs;
         state.player_state.set_snapshot(player_state)?;
         state.controls.frame = controls;
-        let result = self.run(FRAME_FUEL, commit, |exports, store| exports.frame(store));
+        let budget = if self.store.data().grants.terrain || self.store.data().grants.automation {
+            crate::NAVIGATION_FRAME_FUEL
+        } else {
+            FRAME_FUEL
+        };
+        let result = self.run(budget, commit, |exports, store| exports.frame(store));
         result.map(|_| ())
     }
 

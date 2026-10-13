@@ -70,3 +70,17 @@ fn denied_or_trapped_callbacks_publish_no_synthetic_input() {
     assert!(trapped.take_automation().is_none());
     assert!(trapped.take_hotbar().is_none());
 }
+
+#[test]
+fn navigation_compute_remains_bounded_and_revokes_input_on_exhaustion() {
+    let (directory, mut host) = load(true, false);
+    let path = directory.path().join("navigation.wat");
+    let source = std::fs::read_to_string(&path)
+        .unwrap()
+        .replace("call $hotbar", "call $hotbar (loop $forever br $forever)");
+    std::fs::write(&path, source).unwrap();
+    assert!(host.reload_if_changed().unwrap());
+    assert!(run(&mut host).is_err());
+    assert!(!host.is_active());
+    assert!(host.take_automation().is_none());
+}

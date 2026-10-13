@@ -84,6 +84,8 @@ pub const MAX_COMPONENT_SOURCE_BYTES: usize = MAX_COMPONENT_BYTES
 /// Plain-text UI limit, checked before publishing any guest output.
 pub const MAX_LABEL_BYTES: usize = 256;
 pub(crate) const FRAME_FUEL: u64 = 100_000;
+/// Bounded geometry work for explicitly authorized local navigation callbacks.
+pub(crate) const NAVIGATION_FRAME_FUEL: u64 = 500_000;
 pub(crate) const MEMORY_BYTES: usize = 16 * 1024 * 1024;
 
 /// Where a mod came from, which reload reads again.

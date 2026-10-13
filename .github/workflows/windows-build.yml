@@ -1,10 +1,15 @@
 name: Windows build
 on:
   workflow_dispatch:
+    inputs:
+      tools_only:
+        description: Build only the native developer tools
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
-  group: windows-build-${{ github.ref }}
+  group: windows-build-${{ github.ref }}-${{ inputs.tools_only && 'tools' || 'runtime' }}
   cancel-in-progress: false
 env:
   CARGO_BUILD_BUILD_DIR: "{workspace-root}/target"
@@ -65,6 +70,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
       - name: Build Windows runtime
+        if: ${{ !inputs.tools_only }}
         run: make package-binaries PACKAGE_CARGO_FLAGS="--features cinnabar/developer-control"
       - name: Verify cached source inputs
         if: ${{ always() && !cancelled() }}
@@ -83,10 +89,12 @@ jobs:
             ~/go/pkg/mod
             ~/AppData/Local/go-build
       - name: Stage payload and installers
+        if: ${{ !inputs.tools_only }}
         shell: pwsh
         run: |
           & ./packaging/windows/build-installer.ps1 -Root $env:GITHUB_WORKSPACE
       - name: Upload runtime and installers
+        if: ${{ !inputs.tools_only }}
         uses: actions/upload-artifact@v7
         with:
           name: windows-runtime
