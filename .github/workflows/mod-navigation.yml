@@ -28,7 +28,16 @@ jobs:
         with:
           go-version: stable
           cache: false
-      - uses: ./.github/actions/build-cache
+      - id: verifier-cache
+        uses: actions/cache/restore@v5
+        with:
+          key: navigation-linux-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-${{ github.sha }}
+          restore-keys: navigation-linux-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-
+          path: target
+      - name: Restore source timestamps
+        env:
+          CACHE_WORKSPACE: .
+        run: python3 .github/actions/build-cache/cache.py restore-inputs
       - name: Install desktop libraries
         run: |
           sudo apt-get update
@@ -47,3 +56,14 @@ jobs:
         run: cargo test --locked -p cinnabar --features local-mods --lib -- modding
       - name: Lint changed packages
         run: cargo clippy --locked -p semantic-input -p sim -p mod-host -p client-extensions -p cinnabar --features cinnabar/local-mods,client-extensions/local-mods --all-targets -- -D warnings
+      - name: Verify cached inputs
+        if: ${{ always() && !cancelled() }}
+        env:
+          CACHE_WORKSPACE: .
+        run: python3 .github/actions/build-cache/cache.py verify-inputs
+      - name: Retain compiler outputs
+        if: ${{ always() && !cancelled() }}
+        uses: actions/cache/save@v5
+        with:
+          key: ${{ steps.verifier-cache.outputs.cache-primary-key }}
+          path: target

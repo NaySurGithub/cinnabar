@@ -24,7 +24,7 @@ impl cinnabar::extension::terrain::Host for State {
             if self.navigation.pending_queries.len() == mod_api::MAX_TERRAIN_QUERIES {
                 return Ok(Err("terrain query budget exhausted".into()));
             }
-            self.navigation.pending_queries.push(query.clone());
+            self.navigation.pending_queries.push(query);
         }
         Ok(Ok(self
             .navigation
