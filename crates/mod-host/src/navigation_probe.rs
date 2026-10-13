@@ -98,12 +98,12 @@ pub fn probe(path: &Path) -> Result<()> {
             yaw += delta.yaw;
             pitch += delta.pitch;
         }
-        if let Some(input) = host.take_automation() {
-            if input.forward {
-                input_frames += 1;
-                feet[0] -= yaw.sin() * 0.07;
-                feet[2] -= yaw.cos() * 0.07;
-            }
+        if let Some(input) = host.take_automation()
+            && input.forward
+        {
+            input_frames += 1;
+            feet[0] -= yaw.sin() * 0.07;
+            feet[2] -= yaw.cos() * 0.07;
         }
         if host
             .label()
