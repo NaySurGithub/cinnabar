@@ -78,17 +78,6 @@ jobs:
         env:
           CACHE_WORKSPACE: .
         run: python .github/actions/build-cache/cache.py verify-inputs
-      - name: Retain compiler cache
-        if: ${{ always() && !cancelled() }}
-        uses: actions/cache/save@v5
-        with:
-          key: ${{ steps.build-cache.outputs.cache-primary-key }}
-          path: |
-            target
-            ~/.cargo/registry
-            ~/.cargo/git
-            ~/go/pkg/mod
-            ~/AppData/Local/go-build
       - name: Stage payload and installers
         if: ${{ !inputs.tools_only }}
         shell: pwsh
@@ -102,3 +91,14 @@ jobs:
           path: .local/dist/windows-release/
           if-no-files-found: error
           retention-days: 14
+      - name: Retain compiler cache
+        if: ${{ always() && !cancelled() }}
+        uses: actions/cache/save@v5
+        with:
+          key: ${{ steps.build-cache.outputs.cache-primary-key }}
+          path: |
+            target
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/go/pkg/mod
+            ~/AppData/Local/go-build
