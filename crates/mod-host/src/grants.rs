@@ -54,6 +54,12 @@ macro_rules! grants {
 
 grants! {
 
+    /// Allows bounded read-only regions and resolved block properties.
+    pub terrain: bool,
+    /// Allows ordinary movement, attack and use inputs during captured gameplay.
+    pub automation: bool,
+    /// Allows ordinary hotbar selection during captured gameplay.
+    pub hotbar: bool,
     /// Allows read-only current-session local inventory and status effect snapshots.
     pub player_state: bool,
     /// Allows this instance to replace visual time and local menu branding.
