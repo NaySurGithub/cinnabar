@@ -49,3 +49,10 @@ priority. The normal equipment queue and transport publish the selection.
 
 No raw packets, direct velocity changes, world mutation, unrestricted file access,
 container transfers, crafting or automatic chunk loading are added.
+
+## Computation limits
+
+Frames authorized for terrain or automation receive a bounded geometry-work fuel
+budget, with the same memory limit and wall-clock backstop. Navigation work must
+still be incremental. Queries are read from captured gameplay frames; screens
+suspend requests. This is not an exemption from rendered-frame performance gates.
