@@ -15,6 +15,7 @@ mod execution;
 mod load;
 pub mod local_files;
 pub mod module_observations;
+mod navigation;
 mod outputs;
 pub mod package;
 mod runtime;
@@ -39,6 +40,15 @@ pub use runtime::cinnabar::extension::player_state::{
 };
 pub use runtime::cinnabar::extension::{
     events::Cue as ModCue, input::Controls as ControlFrame, panel::Event as ControlEvent,
+};
+
+pub use runtime::cinnabar::extension::{
+    automation::Controls as AutomationControls,
+    terrain::{
+        Bounds as TerrainBounds, Cell as TerrainCell, ChunkRevision as TerrainChunkRevision,
+        Layer as TerrainLayer, Position as TerrainPosition, Properties as TerrainProperties,
+        Region as TerrainRegion, RegionQuery as TerrainQuery,
+    },
 };
 
 /// Successfully committed local interaction requests, consumed once per frame.

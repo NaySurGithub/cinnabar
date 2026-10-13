@@ -184,7 +184,10 @@ impl GameplayContext<'_> {
     /// No snapshot exists outside captured gameplay or without explicit grants.
     pub(super) fn snapshot(&self, allowed: bool, grants: &ModGrants) -> Option<GameplaySnapshot> {
         if !allowed
-            || !(grants.players
+            || !(grants.terrain
+                || grants.automation
+                || grants.hotbar
+                || grants.players
                 || grants.camera
                 || grants.item_use
                 || grants.movement

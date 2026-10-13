@@ -3,7 +3,7 @@ use crate::{Action, ActionPhase, ActionSnapshot};
 
 /// The last action frame accepted by the semantic router.
 #[derive(Debug, Default, Clone)]
-pub struct FinalizedInput(Option<ActionSnapshot>);
+pub struct FinalizedInput(pub(crate) Option<ActionSnapshot>);
 
 impl FinalizedInput {
     /// Retains a finalized router result for consumers.
@@ -67,6 +67,30 @@ impl FinalizedInput {
             return false;
         }
         attack.pressed = true;
+        true
+    }
+
+    /// Adds an ordinary number-key selection; physical hotbar actions take priority.
+    pub fn request_mod_hotbar_selection(&mut self, slot: u8) -> bool {
+        let Some(action) = crate::HOTBAR_DIGIT_ACTIONS.get(usize::from(slot)).copied() else {
+            return false;
+        };
+        let Some(snapshot) = self.0.as_mut() else {
+            return false;
+        };
+        if snapshot.authority_released
+            || crate::HOTBAR_DIGIT_ACTIONS
+                .iter()
+                .chain([Action::HotbarPrevious, Action::HotbarNext].iter())
+                .any(|action| snapshot.phases[*action as usize].pressed)
+        {
+            return false;
+        }
+        snapshot.phases[action as usize] = ActionPhase {
+            pressed: true,
+            held: true,
+            released: false,
+        };
         true
     }
 

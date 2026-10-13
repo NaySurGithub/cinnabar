@@ -41,6 +41,8 @@ mod gameplay;
 mod hud;
 #[path = "item_use.rs"]
 mod item_use;
+#[path = "navigation_host.rs"]
+mod navigation_host;
 mod player_mod;
 #[path = "player_state.rs"]
 mod player_state;
@@ -57,6 +59,7 @@ pub(crate) struct Declared {
 
 struct State {
     exclusive: crate::exclusive::Exclusive,
+    navigation: crate::navigation::NavigationState,
     limits: StoreLimits,
     pressed: bool,
     label: Option<String>,
@@ -122,6 +125,7 @@ impl State {
                 .tables(2)
                 .trap_on_grow_failure(true)
                 .build(),
+            navigation: Default::default(),
             pressed: false,
             label: None,
             exclusive: Default::default(),
@@ -431,6 +435,7 @@ impl Instance {
     /// Clears transient outputs even when no guest callback can execute this frame.
     pub(super) fn begin_frame(&mut self) {
         let state = self.store.data_mut();
+        state.navigation.begin_frame();
         state.snapshot = None;
         state.movement = None;
         state.pending_jump = false;
@@ -650,6 +655,7 @@ impl Instance {
         state.label = None;
         state.hud = hud::HudState::default();
         state.player_state.revoke();
+        state.navigation = Default::default();
         state.pending_time = None;
         state.time_override = None;
         state.fullbright = false;
@@ -699,6 +705,19 @@ impl Instance {
     /// Consumes the committed jump request once.
     pub(super) fn take_jump_pulse(&mut self) -> bool {
         std::mem::take(&mut self.store.data_mut().jump_pulse)
+    }
+
+    pub(super) fn take_terrain_queries(&mut self) -> Vec<crate::TerrainQuery> {
+        std::mem::take(&mut self.store.data_mut().navigation.queries)
+    }
+    pub(super) fn supply_terrain(&mut self, regions: Vec<crate::TerrainRegion>) {
+        self.store.data_mut().navigation.regions = regions;
+    }
+    pub(super) fn take_automation(&mut self) -> Option<crate::AutomationControls> {
+        self.store.data_mut().navigation.controls.take()
+    }
+    pub(super) fn take_hotbar(&mut self) -> Option<u8> {
+        self.store.data_mut().navigation.hotbar.take()
     }
 
     pub(super) fn camera_rig(&self) -> Option<GameplayCameraRig> {
@@ -877,6 +896,7 @@ fn commit(store: &mut Store<State>) {
     let state = store.data_mut();
     state.jump_cancel = std::mem::take(&mut state.pending_jump_cancel);
     state.jump_pulse = std::mem::take(&mut state.pending_jump) && !state.jump_cancel;
+    state.navigation.commit();
     state.render.commit();
     state.block_highlights.commit();
     state.world.commit();

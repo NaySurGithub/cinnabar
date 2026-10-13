@@ -7,6 +7,8 @@ use world::{ChunkCollisionRevision, ChunkKey, ChunkStore, SubChunkKey};
 use crate::{Aabb, Vec3};
 
 mod bamboo;
+mod observations;
+pub use observations::BlockLayerObservation;
 mod camera_collision;
 mod collision;
 mod contracts;

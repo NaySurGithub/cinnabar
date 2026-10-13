@@ -407,6 +407,9 @@ pub fn run_frame(
         }
         active = true;
         let grants = host.grants();
+        union.terrain |= grants.terrain;
+        union.automation |= grants.automation;
+        union.hotbar |= grants.hotbar;
         union.players |= grants.players;
         union.camera |= grants.camera;
         union.item_use |= grants.item_use;
@@ -496,7 +499,10 @@ pub fn run_frame(
 
 /// Whether the host may receive the common gameplay pose and input snapshot.
 fn needs_gameplay(grants: &ModGrants) -> bool {
-    grants.players
+    grants.terrain
+        || grants.automation
+        || grants.hotbar
+        || grants.players
         || grants.camera
         || grants.item_use
         || grants.movement
@@ -508,6 +514,8 @@ fn needs_gameplay(grants: &ModGrants) -> bool {
 /// One frame's combined output; for single-valued outputs the earliest mod wins.
 #[derive(Default)]
 pub struct Merged {
+    pub automation: Option<mod_host::AutomationControls>,
+    pub hotbar: Option<u8>,
     pub rig: Option<GameplayCameraRig>,
     pub preserve_teleport_rotation: bool,
     pub view_scale: Option<[f32; 2]>,
@@ -525,6 +533,8 @@ pub struct Merged {
 impl Merged {
     /// Consumes `host`'s committed output, in load order.
     pub fn absorb(&mut self, host: &mut ModHost) {
+        self.automation = self.automation.or(host.take_automation());
+        self.hotbar = self.hotbar.or(host.take_hotbar());
         self.jump_pulse |= host.take_jump_pulse();
         self.jump_cancel |= host.take_jump_cancel();
         let interaction = host.take_interaction();

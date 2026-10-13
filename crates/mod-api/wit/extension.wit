@@ -393,8 +393,58 @@ interface item-use {
     set-delay-fix: func(enabled: bool) -> result<_, string>;
 }
 
+/// Bounded local terrain observations. Requests commit after a successful frame.
+/// Poll on later frames; unknown terrain is never reported as air.
+interface terrain {
+    record position { x: s32, y: s32, z: s32 }
+    /// Inclusive minimum and exclusive maximum, at most 256 cells.
+    record region-query { min: position, max: position }
+    record bounds { min: tuple<f64,f64,f64>, max: tuple<f64,f64,f64> }
+    record properties {
+        /// Block-local shapes, including neighbor-dependent geometry and shape offsets.
+        collision: list<bounds>, selection: list<bounds>,
+        friction: f64, horizontal-speed-factor: f64, vertical-speed-factor: f64,
+        fluid-height: f64,
+        climbable: bool, water: bool, lava: bool, cobweb: bool,
+        powder-snow: bool, scaffolding: bool, passable: bool,
+        /// Native surface response name; absent facts are never inferred from identifiers.
+        surface-response: string,
+    }
+    record layer {
+        runtime-id: u32, identifier: option<string>, canonical-state: option<string>, tags: list<string>,
+        /// None when physics metadata or a required neighboring cell is unknown.
+        properties: option<properties>,
+    }
+    record cell { position: position, loaded: bool, layers: list<layer> }
+    record chunk-revision { x: s32, z: s32, revision: option<u64> }
+    record region {
+        session: u64, dimension: s32, query: region-query,
+        /// Current column revisions. Compare only within the same session/dimension.
+        chunks: list<chunk-revision>, cells: list<cell>,
+    }
+    /// Requests a region within 128 blocks of the current player; requires terrain authority.
+    /// None on the first read. Repeating refreshes the observation for the following frame.
+    read-region: func(query: region-query) -> result<option<region>, string>;
+}
+
+/// Ordinary semantic input, renewed every successful gameplay frame.
+interface automation {
+    record controls {
+        /// Digital directions; opposing directions cancel through the ordinary input carrier.
+        forward: bool, backward: bool, left: bool, right: bool,
+        jump: bool, sprint: bool, sneak: bool, attack: bool, use-item: bool,
+    }
+    /// None releases this mod's contribution. Requires automation authority.
+    /// Physical controls remain effective; focus loss, menus and traps revoke the contribution.
+    set-controls: func(value: option<controls>) -> result<_, string>;
+    /// Queues ordinary equipment selection, 0..8; requires hotbar authority.
+    select-hotbar: func(slot: u8) -> result<_, string>;
+}
+
 /// Experimental developer contract; no WASI or ambient operating-system access.
 world extension {
+    import terrain;
+    import automation;
     import player-state;
     import item-use;
     import camera;
