@@ -534,3 +534,4 @@ fn authority_revocation_never_changes_a_prior_quarantine_into_recoverable_state(
     trapped.revoke();
     assert!(!trapped.is_active() && !trapped.is_revoked());
 }
+mod navigation;

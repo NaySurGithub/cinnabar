@@ -38,6 +38,10 @@ jobs:
             ~/.cargo/git
             ~/go/pkg/mod
             ~/AppData/Local/go-build
+      - name: Restore unchanged source timestamps
+        env:
+          CACHE_WORKSPACE: .
+        run: python .github/actions/build-cache/cache.py restore-inputs
       - name: Install packaging tools
         shell: pwsh
         run: |
@@ -49,10 +53,24 @@ jobs:
           Add-Content $env:GITHUB_PATH $magick.FullName
           Add-Content $env:GITHUB_PATH "$env:USERPROFILE\.dotnet\tools"
           Add-Content $env:GITHUB_PATH "$env:ProgramData\chocolatey\bin"
+      - name: Build developer tools
+        run: cargo build --release --locked -p mod-host --bin mod-host -p cinnabar-mcp --bin cinnabar-mcp
+      - name: Upload developer tools
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-developer-tools
+          path: |
+            target/release/mod-host.exe
+            target/release/cinnabar-mcp.exe
+          if-no-files-found: error
+          retention-days: 14
       - name: Build Windows runtime
-        run: |
-          make package-binaries PACKAGE_CARGO_FLAGS="--features cinnabar/developer-control"
-          cargo build --release --locked -p mod-host --bin mod-host -p cinnabar-mcp --bin cinnabar-mcp
+        run: make package-binaries PACKAGE_CARGO_FLAGS="--features cinnabar/developer-control"
+      - name: Verify cached source inputs
+        if: ${{ always() && !cancelled() }}
+        env:
+          CACHE_WORKSPACE: .
+        run: python .github/actions/build-cache/cache.py verify-inputs
       - name: Retain compiler cache
         if: ${{ always() && !cancelled() }}
         uses: actions/cache/save@v5
@@ -68,15 +86,6 @@ jobs:
         shell: pwsh
         run: |
           & ./packaging/windows/build-installer.ps1 -Root $env:GITHUB_WORKSPACE
-      - name: Upload developer tools
-        uses: actions/upload-artifact@v7
-        with:
-          name: windows-developer-tools
-          path: |
-            target/release/mod-host.exe
-            target/release/cinnabar-mcp.exe
-          if-no-files-found: error
-          retention-days: 14
       - name: Upload runtime and installers
         uses: actions/upload-artifact@v7
         with:
