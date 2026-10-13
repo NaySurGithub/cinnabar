@@ -34,7 +34,7 @@ jobs:
         id: build-cache
         uses: actions/cache/restore@v5
         with:
-          key: windows-runtime-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'core/go.sum', 'go.work.sum') }}-${{ github.sha }}
+          key: windows-${{ inputs.tools_only && 'tools' || 'runtime' }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'core/go.sum', 'go.work.sum') }}-${{ github.sha }}
           restore-keys: |
             windows-runtime-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'core/go.sum', 'go.work.sum') }}-
           path: |
@@ -48,6 +48,7 @@ jobs:
           CACHE_WORKSPACE: .
         run: python .github/actions/build-cache/cache.py restore-inputs
       - name: Install packaging tools
+        if: ${{ !inputs.tools_only }}
         shell: pwsh
         run: |
           dotnet tool install --global wix --version 5.0.2
