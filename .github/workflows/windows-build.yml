@@ -26,7 +26,8 @@ jobs:
           go-version: stable
           cache: false
       - name: Restore Rust and Go cache
-        uses: actions/cache@v5
+        id: build-cache
+        uses: actions/cache/restore@v5
         with:
           key: windows-runtime-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'core/go.sum', 'go.work.sum') }}-${{ github.sha }}
           restore-keys: |
@@ -49,11 +50,33 @@ jobs:
           Add-Content $env:GITHUB_PATH "$env:USERPROFILE\.dotnet\tools"
           Add-Content $env:GITHUB_PATH "$env:ProgramData\chocolatey\bin"
       - name: Build Windows runtime
-        run: make package-binaries
+        run: |
+          make package-binaries PACKAGE_CARGO_FLAGS="--features cinnabar/developer-control"
+          cargo build --release --locked -p mod-host --bin mod-host -p cinnabar-mcp --bin cinnabar-mcp
+      - name: Retain compiler cache
+        if: ${{ always() && !cancelled() }}
+        uses: actions/cache/save@v5
+        with:
+          key: ${{ steps.build-cache.outputs.cache-primary-key }}
+          path: |
+            target
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/go/pkg/mod
+            ~/AppData/Local/go-build
       - name: Stage payload and installers
         shell: pwsh
         run: |
           & ./packaging/windows/build-installer.ps1 -Root $env:GITHUB_WORKSPACE
+      - name: Upload developer tools
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-developer-tools
+          path: |
+            target/release/mod-host.exe
+            target/release/cinnabar-mcp.exe
+          if-no-files-found: error
+          retention-days: 14
       - name: Upload runtime and installers
         uses: actions/upload-artifact@v7
         with:
