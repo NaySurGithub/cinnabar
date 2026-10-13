@@ -1,13 +1,11 @@
 name: Windows build
 on:
   workflow_dispatch:
-  push:
-    branches: [mod-navigation-api]
 permissions:
   contents: read
 concurrency:
   group: windows-build-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 env:
   CARGO_BUILD_BUILD_DIR: "{workspace-root}/target"
   CARGO_INCREMENTAL: "0"
