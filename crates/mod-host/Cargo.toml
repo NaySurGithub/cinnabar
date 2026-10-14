@@ -33,6 +33,7 @@ mod-api = { path = "../mod-api" }
 mod-render = { path = "../mod-render" }
 ui = { path = "../ui" }
 anyhow.workspace = true
+png = "0.18"
 sha2 = { workspace = true }
 serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = "=1.0.150"
@@ -52,6 +53,7 @@ criterion.workspace = true
 test-alloc = { path = "../test-alloc" }
 test-time = { path = "../test-time" }
 tempfile = "3"
+wasm-metadata = { version = "=0.247.0", default-features = false }
 wat = "1"
 wit-parser = "=0.247.0"
 
