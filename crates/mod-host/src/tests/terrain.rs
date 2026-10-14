@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
-    TerrainCheck, TerrainGeometry, TerrainPosition, TerrainQuery, TerrainRefresh, TerrainRegion,
-    TerrainScheduler, TerrainSource, TerrainStamp,
+    TerrainCheck, TerrainQuery, TerrainRefresh, TerrainRegion, TerrainScheduler, TerrainSource,
+    TerrainStamp,
 };
 use std::path::Path;
 #[path = "terrain_guest.rs"]
@@ -51,14 +51,6 @@ fn run(host: &mut ModHost) -> anyhow::Result<()> {
     };
     host.observe_presentation(Some(world), None, None, Vec::new())?;
     host.frame_with_gameplay(false, Some(snapshot()))
-}
-fn query() -> TerrainQuery {
-    let position = |[x, y, z]: [i32; 3]| TerrainPosition { x, y, z };
-    TerrainQuery {
-        min: position(MIN),
-        max: position(MAX),
-        geometry: TerrainGeometry::COLLISION,
-    }
 }
 fn region() -> TerrainRegion {
     TerrainRegion {

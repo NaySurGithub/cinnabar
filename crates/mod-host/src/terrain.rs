@@ -320,8 +320,10 @@ mod tests {
     }
     #[test]
     fn commits_replace_subscriptions_and_keep_their_samples() {
-        let mut state = TerrainState::default();
-        state.pending_queries = vec![query(0, 1), query(1, 2)];
+        let mut state = TerrainState {
+            pending_queries: vec![query(0, 1), query(1, 2)],
+            ..Default::default()
+        };
         state.commit();
         state.refresh(0, |_, retained| {
             assert!(retained.is_none());
