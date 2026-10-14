@@ -509,7 +509,7 @@ impl Instance {
         state.player_state.set_snapshot(player_state)?;
         state.controls.frame = controls;
         let budget = if self.store.data().grants.terrain {
-            crate::TERRAIN_FRAME_FUEL
+            crate::TERRAIN_CALLBACK_FUEL
         } else {
             FRAME_FUEL
         };
@@ -549,10 +549,14 @@ impl Instance {
         publish: fn(&mut Store<State>),
         call: impl FnOnce(&exports::Exports, &mut Store<State>) -> Result<()>,
     ) -> Result<CallbackOutcome> {
-        let allowance = self
-            .callback_budget
-            .as_ref()
-            .map_or(Some(fuel), |budget| budget.reserve(fuel));
+        let owner = self.store.data().exclusive.owner;
+        let allowance = self.callback_budget.as_ref().map_or(Some(fuel), |budget| {
+            if fuel == crate::TERRAIN_CALLBACK_FUEL {
+                budget.reserve_terrain(owner)
+            } else {
+                budget.reserve(fuel)
+            }
+        });
         let Some(allowance) = allowance else {
             self.last_fuel = 0;
             return Ok(CallbackOutcome::Deferred);
@@ -575,7 +579,7 @@ impl Instance {
             && let Some(budget) = &self.callback_budget
         {
             budget.refund(allowance - self.last_fuel);
-        } else if fuel == crate::TERRAIN_FRAME_FUEL
+        } else if fuel == crate::TERRAIN_CALLBACK_FUEL
             && let Some(budget) = &self.callback_budget
         {
             budget.refund_terrain(allowance - self.last_fuel);

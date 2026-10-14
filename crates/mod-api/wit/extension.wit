@@ -448,7 +448,7 @@ interface terrain {
     variant read-result { pending, unchanged(stamp), changed(region) }
     enum read-error { denied, unavailable, invalid-query, out-of-range, budget-exhausted, limit-exceeded }
     /// Requires terrain authority and a gameplay frame; the query lies within
-    /// `MAX_TERRAIN_DISTANCE` blocks of the player on each axis. Pass the stamp last received
+    /// `MAX_TERRAIN_DISTANCE` blocks of the player's feet on each axis. Pass the stamp last received
     /// for this query to skip unchanged data. Limits are `mod-api`'s `MAX_TERRAIN_*` constants.
     read-region: func(query: region-query, after: option<stamp>) -> result<read-result, read-error>;
 }

@@ -16,12 +16,13 @@ impl cinnabar::extension::terrain::Host for State {
         if !self.grants.terrain {
             return Ok(Err(TerrainReadError::Denied));
         }
-        let Some(frame) = self.snapshot.as_ref() else {
+        // Admission and sampling both measure from the observed feet of the terrain session.
+        let (Some(_), Some(world)) = (&self.snapshot, &self.player_state.world) else {
             return Ok(Err(TerrainReadError::Unavailable));
         };
-        if let Err(error) =
-            crate::terrain_query_size(&query, [frame.eye.x, frame.eye.y, frame.eye.z])
-        {
+        let (x, y, z) = world.position;
+        let scope = (world.session, world.dimension);
+        if let Err(error) = crate::terrain_query_size(&query, [x, y, z]) {
             return Ok(Err(error));
         }
         if !self.terrain.pending_queries.contains(&query) {
@@ -30,13 +31,6 @@ impl cinnabar::extension::terrain::Host for State {
             }
             self.terrain.pending_queries.push(query);
         }
-        let scope = self
-            .player_state
-            .world
-            .as_ref()
-            .map_or((frame.session, frame.dimension), |world| {
-                (world.session, world.dimension)
-            });
         let sample = self
             .terrain
             .samples
@@ -74,7 +68,7 @@ mod tests {
             dimension: 0,
             eye: GameplayVector3 {
                 x: 0.,
-                y: 0.,
+                y: 1.62,
                 z: 0.,
             },
             yaw: 0.,
@@ -82,6 +76,13 @@ mod tests {
             attack_held: false,
             frame_seconds: 0.016,
             players: vec![],
+        });
+        value.player_state.world = Some(crate::WorldObservation {
+            session: 1,
+            dimension: 0,
+            world: "fixture".into(),
+            position: (0., 0., 0.),
+            alive: true,
         });
         value
     }
@@ -188,11 +189,30 @@ mod tests {
             value.read_region(query(-1), None).unwrap(),
             Err(TerrainReadError::BudgetExhausted)
         );
-        value.snapshot = None;
+        value.player_state.world = None;
         assert_eq!(
             value.read_region(query(0), None).unwrap(),
             Err(TerrainReadError::Unavailable)
         );
+    }
+    /// A query admitted against the feet is one the client can sample, and the eye's height
+    /// above the feet never admits a query the client would reject.
+    #[test]
+    fn admission_and_sampling_share_the_feet_origin() {
+        let mut value = state(ModGrants {
+            terrain: true,
+            ..Default::default()
+        });
+        let feet = [0., 0., 0.];
+        for (y, admitted) in [(-128, true), (128, true), (129, false)] {
+            let mut query = query(0);
+            query.min.y = y;
+            query.max.y = y + 1;
+            let read = value.read_region(query, None).unwrap();
+            assert_eq!(read.is_ok(), admitted, "{y}");
+            assert_eq!(crate::terrain_query_size(&query, feet).is_ok(), admitted);
+            value.terrain.begin_frame();
+        }
     }
     #[test]
     fn terrain_uses_the_observed_world_session_instead_of_the_actor_session() {

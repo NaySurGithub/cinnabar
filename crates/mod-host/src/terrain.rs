@@ -44,12 +44,21 @@ impl TerrainState {
         self.queries = std::mem::take(&mut self.pending_queries);
     }
     /// Keeps samples only for queries read again, refreshing each through `refresh`.
+    /// Queries run least recently refreshed first, so a shared sampling budget reaches all.
     pub fn refresh(
         &mut self,
         mut refresh: impl FnMut(&TerrainQuery, Option<&TerrainRegion>) -> TerrainRefresh,
     ) {
         let mut previous = std::mem::take(&mut self.samples);
-        for query in std::mem::take(&mut self.queries) {
+        let mut queries = std::mem::take(&mut self.queries);
+        queries.sort_by_key(|query| {
+            previous
+                .iter()
+                .position(|(candidate, _)| candidate == query)
+                .unwrap_or(usize::MAX)
+        });
+        let mut refreshed = Vec::new();
+        for query in queries {
             let retained = previous
                 .iter()
                 .position(|(candidate, _)| *candidate == query)
@@ -73,8 +82,13 @@ impl TerrainState {
                 TerrainRefresh::Pending => Sample::Pending,
                 TerrainRefresh::Failed(error) => Sample::Failed(error),
             };
-            self.samples.push((query, sample));
+            if sample == Sample::Pending {
+                self.samples.push((query, sample));
+            } else {
+                refreshed.push((query, sample));
+            }
         }
+        self.samples.append(&mut refreshed);
     }
 }
 
@@ -225,6 +239,33 @@ mod tests {
             shape_offsets: vec![],
             shape_boxes: vec![],
             overrides: vec![],
+        }
+    }
+    /// With room for one sample per frame, every changing query is still sampled in turn.
+    #[test]
+    fn deferred_queries_are_sampled_before_earlier_ones() {
+        let queries = [query(0, 1), query(1, 2), query(2, 3)];
+        let mut state = TerrainState::default();
+        let mut sampled = [0; 3];
+        for frame in 1..=6 {
+            state.queries = queries.to_vec();
+            let mut budget = 1;
+            state.refresh(|_, _| {
+                if budget == 0 {
+                    return TerrainRefresh::Pending;
+                }
+                budget -= 1;
+                TerrainRefresh::Replace(Box::new(region()))
+            });
+            for (query, sample) in &state.samples {
+                if matches!(sample, Sample::Region(_)) {
+                    let index = queries.iter().position(|candidate| candidate == query);
+                    sampled[index.unwrap()] = frame;
+                }
+            }
+            if frame >= 3 {
+                assert!(sampled.iter().all(|&last| frame - last < 3), "{sampled:?}");
+            }
         }
     }
     #[test]

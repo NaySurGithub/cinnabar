@@ -88,8 +88,16 @@ pub const MAX_COMPONENT_SOURCE_BYTES: usize = MAX_COMPONENT_BYTES
 /// Plain-text UI limit, checked before publishing any guest output.
 pub const MAX_LABEL_BYTES: usize = 256;
 pub(crate) const FRAME_FUEL: u64 = 100_000;
-/// Bounded geometry work for frames of terrain-authorized mods.
-pub(crate) const TERRAIN_FRAME_FUEL: u64 = 2_000_000;
+/// Guest fuel of one frame callback of a terrain-authorized mod.
+pub(crate) const TERRAIN_CALLBACK_FUEL: u64 = 1_000_000;
+/// Terrain-lane fuel shared by all mods per frame; two full callbacks always fit.
+pub(crate) const TERRAIN_FRAME_FUEL: u64 = 2 * TERRAIN_CALLBACK_FUEL;
+// Callback lanes are told apart by their fuel limits.
+const _: () = assert!(
+    TERRAIN_CALLBACK_FUEL > FRAME_FUEL
+        && TERRAIN_CALLBACK_FUEL != server_experience::runtime::CALLBACK_FUEL
+        && TERRAIN_CALLBACK_FUEL != server_experience::runtime::LOAD_FUEL
+);
 pub(crate) const MEMORY_BYTES: usize = 16 * 1024 * 1024;
 
 /// Where a mod came from, which reload reads again.

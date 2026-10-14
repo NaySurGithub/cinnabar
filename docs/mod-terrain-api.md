@@ -9,8 +9,8 @@ from `gameplay.read-frame`, without other players. Limits live in `mod_api`
 
 A query names an inclusive minimum, an exclusive maximum (each extent 1 to
 `MAX_TERRAIN_EXTENT` blocks) and the `geometry` it needs: `collision`, `selection`, both or
-neither. It must lie within `MAX_TERRAIN_DISTANCE` blocks of the player on each axis. A
-callback may stage `MAX_TERRAIN_QUERIES` distinct queries. Errors are typed: `denied`,
+neither. It must lie within `MAX_TERRAIN_DISTANCE` blocks of the player's feet on each axis.
+A callback may stage `MAX_TERRAIN_QUERIES` distinct queries. Errors are typed: `denied`,
 `unavailable` (no gameplay frame), `invalid-query`, `out-of-range`, `budget-exhausted` and
 `limit-exceeded`.
 

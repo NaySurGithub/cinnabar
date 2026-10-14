@@ -227,3 +227,22 @@ fn distinct_boxes_are_bounded() {
     );
     assert!(sampler.sample(&world, [0; 3], [1; 3], BOTH, 1).is_ok());
 }
+
+/// Volumes ending at the largest block coordinate stay in range; past it they are refused.
+#[test]
+fn volumes_at_the_coordinate_limit_neither_overflow_nor_wrap() {
+    let store = ChunkStore::new();
+    let registry = registry();
+    let world = PaletteWorld::new(&store, &registry, 0, Default::default());
+    let mut sampler = TerrainSampler::default();
+    for min in [[i32::MAX - 1; 3], [i32::MAX - 16; 3], [i32::MIN; 3]] {
+        let size = [min[0].abs_diff(i32::MAX).clamp(1, 16) as u8; 3];
+        let sample = sampler.sample(&world, min, size, BOTH, 64).unwrap();
+        assert!(sample.loaded.iter().all(|&word| word == 0));
+        assert!(sample.states.iter().all(|&state| state == TERRAIN_NO_LAYER));
+    }
+    assert_eq!(
+        sampler.sample(&world, [i32::MAX - 1, 0, 0], [2, 1, 1], BOTH, 64),
+        Err(TerrainSampleError::OutOfRange)
+    );
+}

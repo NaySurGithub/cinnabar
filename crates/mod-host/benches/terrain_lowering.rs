@@ -206,11 +206,25 @@ fn flat_region(metadata: &Metadata, shape: &Shape) -> TerrainRegion {
     }
 }
 
+/// Supplies the terrain session that admission measures from.
+fn observe(host: &mut ModHost) {
+    let world = mod_host::WorldObservation {
+        session: 1,
+        dimension: 0,
+        world: "fixture".into(),
+        position: (16., 64., 16.),
+        alive: true,
+    };
+    host.observe_presentation(Some(world), None, None, Vec::new())
+        .unwrap();
+}
+
 /// Times only the guest frame; the next sample is supplied outside the measurement.
 fn frames(host: &mut ModHost, refresh: &TerrainRefresh, iterations: u64) -> Duration {
     let mut total = Duration::ZERO;
     for _ in 0..iterations {
         host.refresh_terrain(|_, _| refresh.clone());
+        observe(host);
         let start = Instant::now();
         host.frame_with_gameplay(false, Some(snapshot())).unwrap();
         total += start.elapsed();
@@ -242,6 +256,7 @@ fn lowering_benches(criterion: &mut Criterion) {
                 grants.clone(),
             )
             .unwrap();
+            observe(&mut host);
             host.frame_with_gameplay(false, Some(snapshot())).unwrap();
             host
         };
@@ -250,6 +265,7 @@ fn lowering_benches(criterion: &mut Criterion) {
         let replace = TerrainRefresh::Replace(Box::new(region));
         let mut changed = load(false);
         changed.refresh_terrain(|_, _| replace.clone());
+        observe(&mut changed);
         let ((), allocations) = test_alloc::measure(|| {
             changed
                 .frame_with_gameplay(false, Some(snapshot()))

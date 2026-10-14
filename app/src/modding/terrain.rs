@@ -171,6 +171,9 @@ impl TerrainSampling {
             .sample(&world, min, size, geometry, mod_api::MAX_TERRAIN_BOXES)
         {
             Ok(sample) => self.region(source, stamp, sample),
+            Err(sim::TerrainSampleError::OutOfRange) => {
+                TerrainRefresh::Failed(TerrainReadError::OutOfRange)
+            }
             Err(_) => TerrainRefresh::Failed(TerrainReadError::LimitExceeded),
         }
     }

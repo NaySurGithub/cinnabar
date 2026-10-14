@@ -85,6 +85,7 @@ pub struct TerrainSample {
 /// A sample that would exceed its representable or admitted size.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TerrainSampleError {
+    OutOfRange,
     TooManyStates,
     TooManyBoxes,
 }
@@ -110,6 +111,7 @@ struct Rule {
 
 impl TerrainSampler {
     /// Samples `size` blocks from `min`; at most `max_boxes` distinct boxes are emitted.
+    /// The exclusive maximum must fit in `i32`.
     pub fn sample(
         &mut self,
         world: &PaletteWorld<'_>,
@@ -124,7 +126,12 @@ impl TerrainSampler {
         self.columns.clear();
         let [sx, sy, sz] = size.map(usize::from);
         let cells = sx * sy * sz;
-        let max = [0, 1, 2].map(|axis| min[axis] + i32::from(size[axis]));
+        let mut max = min;
+        for axis in 0..3 {
+            max[axis] = min[axis]
+                .checked_add(i32::from(size[axis]))
+                .ok_or(TerrainSampleError::OutOfRange)?;
+        }
         let sections = sections(world, min, max);
         let layer_count = sections
             .iter()
@@ -149,7 +156,8 @@ impl TerrainSampler {
             }
             let origin = [key.x, key.y, key.z].map(|value| value * SUB_CHUNK_SIDE as i32);
             let low = [0, 1, 2].map(|axis| min[axis].max(origin[axis]));
-            let high = [0, 1, 2].map(|axis| max[axis].min(origin[axis] + SUB_CHUNK_SIDE as i32));
+            let high = [0, 1, 2]
+                .map(|axis| max[axis].min(origin[axis].saturating_add(SUB_CHUNK_SIDE as i32)));
             let run = (high[1] - low[1]) as usize;
             for x in low[0]..high[0] {
                 for z in low[2]..high[2] {
@@ -223,7 +231,7 @@ impl TerrainSampler {
             })
             .collect();
         if geometry.collision || geometry.selection {
-            self.resolve_geometry(world, &mut sample, min, size, geometry, max_boxes)?;
+            self.resolve_geometry(world, &mut sample, min, max, geometry, max_boxes)?;
         }
         sample.columns = self
             .columns
@@ -260,7 +268,7 @@ impl TerrainSampler {
         world: &PaletteWorld<'_>,
         sample: &mut TerrainSample,
         min: [i32; 3],
-        size: [u8; 3],
+        max: [i32; 3],
         geometry: TerrainGeometry,
         max_boxes: usize,
     ) -> Result<(), TerrainSampleError> {
@@ -268,7 +276,7 @@ impl TerrainSampler {
         self.shapes.insert(Box::new([]), TERRAIN_EMPTY_SHAPE);
         let exact = [0, 1, 2].into_iter().all(|axis| {
             min[axis].unsigned_abs() <= EXACT_COORDINATE as u32
-                && (min[axis] + i32::from(size[axis])).unsigned_abs() <= EXACT_COORDINATE as u32
+                && max[axis].unsigned_abs() <= EXACT_COORDINATE as u32
         });
         for index in 0..sample.palette.len() {
             let physics = world.registry.physics(sample.palette[index].runtime_id);
@@ -300,7 +308,7 @@ impl TerrainSampler {
         {
             return Ok(());
         }
-        let [_, sy, sz] = size.map(usize::from);
+        let [sy, sz] = [1, 2].map(|axis| (max[axis] - min[axis]) as usize);
         let cells = sample.states.len() / usize::from(sample.layer_count);
         for slot in 0..sample.states.len() {
             let index = sample.states[slot];
