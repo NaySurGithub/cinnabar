@@ -1,28 +1,32 @@
 use super::{State, cinnabar};
-use crate::{TerrainQuery, TerrainRegion};
+use crate::terrain::Sample;
+use crate::{TerrainQuery, TerrainReadError, TerrainReadResult, TerrainStamp};
 use anyhow::{Result, bail};
 
 impl cinnabar::extension::terrain::Host for State {
     fn read_region(
         &mut self,
         query: TerrainQuery,
-    ) -> Result<Result<Option<TerrainRegion>, String>> {
+        after: Option<TerrainStamp>,
+    ) -> Result<Result<TerrainReadResult, TerrainReadError>> {
         self.terrain.calls += 1;
         if self.terrain.calls > super::MAX_IMPORT_WRITES as usize {
             bail!("terrain read budget exhausted");
         }
         if !self.grants.terrain {
-            return Ok(Err("terrain capability denied".into()));
+            return Ok(Err(TerrainReadError::Denied));
         }
         let Some(frame) = self.snapshot.as_ref() else {
-            return Ok(Ok(None));
+            return Ok(Err(TerrainReadError::Unavailable));
         };
-        if !crate::terrain::query_valid(&query, [frame.eye.x, frame.eye.y, frame.eye.z]) {
-            return Ok(Err("invalid or out-of-range terrain query".into()));
+        if let Err(error) =
+            crate::terrain_query_size(&query, [frame.eye.x, frame.eye.y, frame.eye.z])
+        {
+            return Ok(Err(error));
         }
         if !self.terrain.pending_queries.contains(&query) {
             if self.terrain.pending_queries.len() == mod_api::MAX_TERRAIN_QUERIES {
-                return Ok(Err("terrain query budget exhausted".into()));
+                return Ok(Err(TerrainReadError::BudgetExhausted));
             }
             self.terrain.pending_queries.push(query);
         }
@@ -33,21 +37,35 @@ impl cinnabar::extension::terrain::Host for State {
             .map_or((frame.session, frame.dimension), |world| {
                 (world.session, world.dimension)
             });
-        Ok(Ok(self
+        let sample = self
             .terrain
-            .regions
+            .samples
             .iter()
-            .find(|region| {
-                region.query == query && region.session == scope.0 && region.dimension == scope.1
-            })
-            .cloned()))
+            .find(|(candidate, _)| *candidate == query)
+            .map(|(_, sample)| sample);
+        Ok(match sample {
+            Some(Sample::Failed(error)) => Err(*error),
+            Some(Sample::Region(region))
+                if (region.stamp.session, region.stamp.dimension) == scope =>
+            {
+                Ok(if after == Some(region.stamp) {
+                    TerrainReadResult::Unchanged(region.stamp)
+                } else {
+                    TerrainReadResult::Changed(region.clone())
+                })
+            }
+            _ => Ok(TerrainReadResult::Pending),
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{GameplaySnapshot, GameplayVector3, ModGrants, TerrainPosition};
+    use crate::{
+        GameplaySnapshot, GameplayVector3, ModGrants, TerrainGeometry, TerrainPosition,
+        TerrainRefresh, TerrainRegion,
+    };
     use cinnabar::extension::terrain::Host as _;
     fn state(grants: ModGrants) -> State {
         let mut value = State::new(grants, String::new(), Default::default());
@@ -75,33 +93,106 @@ mod tests {
                 y: 1,
                 z: 1,
             },
+            geometry: TerrainGeometry::COLLISION,
         }
+    }
+    fn region(session: u64, dimension: i32) -> TerrainRegion {
+        TerrainRegion {
+            stamp: TerrainStamp {
+                session,
+                dimension,
+                registry: 0,
+                revision: 0,
+            },
+            chunks: vec![],
+            layer_count: 1,
+            loaded: vec![1],
+            states: vec![0],
+            palette: vec![],
+            shape_offsets: vec![0, 0],
+            shape_boxes: vec![],
+            overrides: vec![],
+        }
+    }
+    /// Stages the query, then supplies `refresh` for it as the next frame would.
+    fn sample(value: &mut State, refresh: TerrainRefresh) {
+        value.terrain.commit();
+        value.terrain.refresh(|_, _| refresh.clone());
+        value.terrain.begin_frame();
     }
     #[test]
     fn terrain_is_denied_by_default() {
         let mut value = state(ModGrants::default());
-        assert!(value.read_region(query(0)).unwrap().is_err());
+        assert_eq!(
+            value.read_region(query(0), None).unwrap(),
+            Err(TerrainReadError::Denied)
+        );
         assert!(value.terrain.pending_queries.is_empty());
     }
     #[test]
-    fn region_requests_deduplicate_and_stale_sessions_never_cross_the_boundary() {
+    fn reads_deduplicate_and_deliver_changed_then_unchanged() {
         let mut value = state(ModGrants {
             terrain: true,
             ..Default::default()
         });
-        assert!(value.read_region(query(0)).unwrap().unwrap().is_none());
-        assert!(value.read_region(query(0)).unwrap().unwrap().is_none());
+        for _ in 0..2 {
+            assert_eq!(
+                value.read_region(query(0), None).unwrap(),
+                Ok(TerrainReadResult::Pending)
+            );
+        }
         assert_eq!(value.terrain.pending_queries.len(), 1);
-        value.terrain.regions.push(TerrainRegion {
-            session: 2,
-            dimension: 0,
-            query: query(0),
-            chunks: vec![],
-            cells: vec![],
+        sample(&mut value, TerrainRefresh::Replace(region(1, 0)));
+        let Ok(TerrainReadResult::Changed(first)) = value.read_region(query(0), None).unwrap()
+        else {
+            panic!("a sample was supplied");
+        };
+        assert_eq!(
+            value.read_region(query(0), Some(first.stamp)).unwrap(),
+            Ok(TerrainReadResult::Unchanged(first.stamp))
+        );
+        sample(&mut value, TerrainRefresh::Replace(region(1, 0)));
+        assert!(matches!(
+            value.read_region(query(0), Some(first.stamp)).unwrap(),
+            Ok(TerrainReadResult::Changed(next)) if next.stamp.revision > first.stamp.revision
+        ));
+        sample(
+            &mut value,
+            TerrainRefresh::Failed(TerrainReadError::LimitExceeded),
+        );
+        assert_eq!(
+            value.read_region(query(0), None).unwrap(),
+            Err(TerrainReadError::LimitExceeded)
+        );
+    }
+    #[test]
+    fn invalid_and_excess_queries_are_typed_errors() {
+        let mut value = state(ModGrants {
+            terrain: true,
+            ..Default::default()
         });
-        assert!(value.read_region(query(0)).unwrap().unwrap().is_none());
-        value.terrain.regions[0].session = 1;
-        assert!(value.read_region(query(0)).unwrap().unwrap().is_some());
+        let mut empty = query(0);
+        empty.max.x = 0;
+        assert_eq!(
+            value.read_region(empty, None).unwrap(),
+            Err(TerrainReadError::InvalidQuery)
+        );
+        assert_eq!(
+            value.read_region(query(500), None).unwrap(),
+            Err(TerrainReadError::OutOfRange)
+        );
+        for x in 0..mod_api::MAX_TERRAIN_QUERIES as i32 {
+            assert!(value.read_region(query(x), None).unwrap().is_ok());
+        }
+        assert_eq!(
+            value.read_region(query(-1), None).unwrap(),
+            Err(TerrainReadError::BudgetExhausted)
+        );
+        value.snapshot = None;
+        assert_eq!(
+            value.read_region(query(0), None).unwrap(),
+            Err(TerrainReadError::Unavailable)
+        );
     }
     #[test]
     fn terrain_uses_the_observed_world_session_instead_of_the_actor_session() {
@@ -116,18 +207,18 @@ mod tests {
             position: (0., 0., 0.),
             alive: true,
         });
-        value.terrain.regions.push(TerrainRegion {
-            session: 7,
-            dimension: 2,
-            query: query(0),
-            chunks: vec![],
-            cells: vec![],
-        });
-        assert!(value.read_region(query(0)).unwrap().unwrap().is_some());
-        value.terrain.regions[0].session = 1;
-        assert!(value.read_region(query(0)).unwrap().unwrap().is_none());
-        value.terrain.regions[0].session = 7;
-        value.terrain.regions[0].dimension = 0;
-        assert!(value.read_region(query(0)).unwrap().unwrap().is_none());
+        value.read_region(query(0), None).unwrap().unwrap();
+        for (session, dimension, delivered) in [(7, 2, true), (1, 2, false), (7, 0, false)] {
+            sample(
+                &mut value,
+                TerrainRefresh::Replace(region(session, dimension)),
+            );
+            let result = value.read_region(query(0), None).unwrap().unwrap();
+            assert_eq!(
+                matches!(result, TerrainReadResult::Changed(_)),
+                delivered,
+                "{session} {dimension}"
+            );
+        }
     }
 }

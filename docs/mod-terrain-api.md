@@ -1,37 +1,55 @@
 # Local terrain reads
 
-The `terrain` grant, denied by default, is available to local components and packages
-through the extension world. Existing components remain compatible and receive no new authority by default.
+The `terrain` grant, denied by default, lets local components and packages read nearby
+terrain through `terrain.read-region` in the extension world. It also admits the local pose
+from `gameplay.read-frame`, without other players. Limits live in `mod_api`
+(`MAX_TERRAIN_*`).
 
-## Terrain and block properties
+## Queries and polling
 
-`terrain.read-region(query)` takes inclusive minimum and exclusive maximum integer
-coordinates in the current dimension. A query contains at most 256 cells, lies
-within 128 blocks of the player's current eye on each axis, and shares a four-query
-per-frame budget. Bounds, volume and distance are checked before any terrain work.
+A query names an inclusive minimum, an exclusive maximum (each extent 1 to 16 blocks, so at
+most 4,096 cells) and the `geometry` it needs: `collision`, `selection`, both or neither. It
+must lie within 128 blocks of the player on each axis. A callback may stage four distinct
+queries. Errors are typed: `denied`, `unavailable` (no gameplay frame), `invalid-query`,
+`out-of-range`, `budget-exhausted` and `limit-exceeded`.
 
-The first read returns `none` and stages a request. After a successful frame the
-client samples requested regions before the next frame. Repeating a query returns
-that current observation and requests another refresh. A caller must handle `none`
-after changing queries, losing the session, or leaving the permitted range.
-Requests from a trapped callback are discarded.
+Reading a query stages it; the client samples staged queries before the next frame, so a
+new query first reads `pending`. Keep reading a query every frame to keep it alive. Pass the
+stamp of the last region received for that query as `after`: an unchanged sample returns
+`unchanged(stamp)` without copying any terrain, and a changed one returns the whole region.
+A stamp compares equal only within one query, session, dimension and registry generation.
 
-The response carries session, dimension, query, column revisions including a
-neighboring halo, and every cell in x/y/z scan order. `loaded: false` is unknown,
-never air. Each loaded cell retains all palette layers. Each layer carries its
-runtime identifier, optional resource identifier and canonical state JSON, tags,
-and optional resolved properties. Missing metadata or unavailable geometry
-neighbors produce absent properties rather than approximate geometry.
+The client re-samples a query only when a column it read changed revision. Re-sampling is
+bounded per frame across all mods; queries beyond the budget read `pending` that frame.
+Regions over the box, metadata or response-size limits fail with `limit-exceeded`; ask for
+a smaller region.
 
-Collision and selection shapes are block-local double-precision bounds, including
-native shape offsets and contextual geometry. Physics facts include friction,
-speed factors, fluid height, liquid and movement flags, and native surface response.
-The mod owns raycasting, pathfinding, hazard policy and caching. Compare revisions
-only within the same session and dimension; include all returned neighbor columns.
+## Region layout
 
-## Computation limits
+Cell `((x * size-z) + z) * size-y + y`, relative to the minimum, is Y-contiguous. Bit
+`cell % 64` of `loaded[cell / 64]` is set for known cells; unknown cells are never air.
+Layer `l` of a cell is `states[l * cells + cell]`, an index into `palette`, or 65535 when the
+cell has no such layer. A known section without storage is air in layer 0.
 
-Frames authorized for terrain receive a bounded geometry-work fuel
-budget, with the same memory limit and wall-clock backstop. Mod work must
-still be incremental. Queries are read from captured gameplay frames; screens
-suspend requests. This is not an exemption from rendered-frame performance gates.
+Each palette entry is one runtime ID with its identifier, canonical state JSON, tags and
+physics (friction, speed factors, fluid height, physics flags and surface response). Each
+is absent when the registry lacks it, never inferred.
+
+Shapes are shared: shape `s` is boxes `shape-offsets[s]` to `shape-offsets[s + 1]` of
+`shape-boxes`, six block-local `f64` values each, with native position offsets applied.
+Shape 0 is known-empty. A state binds collision and selection to `fixed` geometry,
+`not-requested`, or `per-cell` when geometry depends on position: paired doors, random
+offsets, neighbour-dependent or block-actor selection, and coordinates beyond single
+precision. Every per-cell occurrence has an entry in `overrides`, sorted by slot.
+`unavailable` geometry needs a neighbour or registry fact the client lacks. Selection uses
+the default interaction context.
+
+`chunks` lists every column read, including columns consulted for neighbour or actor
+geometry, with its revision; `none` is absent terrain.
+
+## Computation
+
+Frames of terrain-authorized mods get a separate, larger fuel lane with the same memory
+limit and wall-clock backstop. Pathfinding, raycasts and caching belong to the mod and
+should stay incremental. Screens suspend reads. This is not an exemption from
+rendered-frame performance gates.

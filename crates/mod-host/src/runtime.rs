@@ -716,11 +716,14 @@ impl Instance {
         std::mem::take(&mut self.store.data_mut().jump_pulse)
     }
 
-    pub(super) fn take_terrain_queries(&mut self) -> Vec<crate::TerrainQuery> {
-        std::mem::take(&mut self.store.data_mut().terrain.queries)
-    }
-    pub(super) fn supply_terrain(&mut self, regions: Vec<crate::TerrainRegion>) {
-        self.store.data_mut().terrain.regions = regions;
+    pub(super) fn refresh_terrain(
+        &mut self,
+        refresh: impl FnMut(
+            &crate::TerrainQuery,
+            Option<&crate::TerrainRegion>,
+        ) -> crate::TerrainRefresh,
+    ) {
+        self.store.data_mut().terrain.refresh(refresh);
     }
 
     pub(super) fn camera_rig(&self) -> Option<GameplayCameraRig> {

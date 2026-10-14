@@ -1,26 +1,87 @@
-//! Component-boundary cost of delivering one terrain region to a guest per frame.
+//! Component-boundary cost of delivering one terrain region to a polling guest per frame.
 
+// The bench polls without per-frame checks, so the test expectations stay unused.
+#[allow(dead_code)]
 #[path = "../src/tests/terrain_guest.rs"]
 mod terrain_guest;
 
 use std::{
     hint::black_box,
     path::Path,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
-use criterion::{Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use mod_host::{
-    GameplaySnapshot, GameplayVector3, ModGrants, ModHost, TerrainBounds, TerrainCell,
-    TerrainChunkRevision, TerrainLayer, TerrainPosition, TerrainProperties, TerrainQuery,
-    TerrainRegion,
+    GameplaySnapshot, GameplayVector3, ModGrants, ModHost, TerrainBlockState, TerrainChunkRevision,
+    TerrainDescriptors, TerrainMetadata, TerrainPhysics, TerrainPhysicsFlags, TerrainRefresh,
+    TerrainRegion, TerrainShape, TerrainShapeBinding, TerrainShapeOverride, TerrainStamp,
+    TerrainSurfaceResponse,
 };
 
 #[global_allocator]
 static ALLOCATOR: test_alloc::CountingAllocator = test_alloc::CountingAllocator;
 
-const MIN: [i32; 3] = [12, 62, 12];
-const MAX: [i32; 3] = [20, 66, 20];
+/// Collision and selection flag bits.
+const BOTH: u8 = 3;
+/// Name, minimum, size, layers, states, boxes and overrides, as the sim fixture samples them.
+const REGIONS: [(&str, [i32; 3], [i32; 3], usize, usize, usize, usize); 2] = [
+    ("256", [12, 62, 12], [8, 4, 8], 2, 10, 9, 13),
+    ("4096", [8, 56, 8], [16, 16, 16], 2, 12, 23, 58),
+];
+const BLOCKS: [(&str, &str, &[&str]); 4] = [
+    (
+        "minecraft:stone",
+        "{}",
+        &["minecraft:is_pickaxe_item_destructible", "stone"],
+    ),
+    (
+        "minecraft:oak_stairs",
+        r#"{"upside_down_bit":{"type":"byte","value":0},"weirdo_direction":{"type":"int","value":2}}"#,
+        &["minecraft:is_axe_item_destructible", "wood", "stairs"],
+    ),
+    (
+        "minecraft:water",
+        r#"{"liquid_depth":{"type":"int","value":0}}"#,
+        &["water"],
+    ),
+    (
+        "minecraft:dirt",
+        r#"{"dirt_type":{"type":"string","value":"normal"}}"#,
+        &["minecraft:is_shovel_item_destructible", "dirt"],
+    ),
+];
+
+/// Fixture registry metadata, cycling through representative blocks.
+struct Metadata(Vec<(String, String, Vec<Arc<str>>)>);
+impl Metadata {
+    fn new(states: usize) -> Self {
+        Self(
+            (0..states)
+                .map(|index| {
+                    let (identifier, state, tags) = BLOCKS[index % BLOCKS.len()];
+                    (
+                        format!("{identifier}_{index}"),
+                        state.to_owned(),
+                        tags.iter().map(|tag| Arc::from(*tag)).collect(),
+                    )
+                })
+                .collect(),
+        )
+    }
+}
+impl TerrainMetadata for Metadata {
+    fn identifier(&self, runtime_id: u32) -> Option<&str> {
+        Some(&self.0[runtime_id as usize].0)
+    }
+    fn canonical_state(&self, runtime_id: u32) -> Option<&str> {
+        Some(&self.0[runtime_id as usize].1)
+    }
+    fn tags(&self, runtime_id: u32) -> &[Arc<str>] {
+        &self.0[runtime_id as usize].2
+    }
+}
 
 fn snapshot() -> GameplaySnapshot {
     GameplaySnapshot {
@@ -39,104 +100,90 @@ fn snapshot() -> GameplaySnapshot {
     }
 }
 
-fn position([x, y, z]: [i32; 3]) -> TerrainPosition {
-    TerrainPosition { x, y, z }
+/// Palette entries with cached metadata, as the client assembles them per changed region.
+fn palette(
+    descriptors: &mut TerrainDescriptors,
+    metadata: &Metadata,
+    states: usize,
+) -> Vec<TerrainBlockState> {
+    let fixed = TerrainShapeBinding::Fixed(TerrainShape::Known(1));
+    (0..states as u32)
+        .map(|runtime_id| TerrainBlockState {
+            physics: Some(TerrainPhysics {
+                friction: 0.6,
+                horizontal_speed_factor: 1.,
+                vertical_speed_factor: 1.,
+                fluid_height: 0.,
+                flags: TerrainPhysicsFlags::empty(),
+                surface: TerrainSurfaceResponse::None,
+            }),
+            collision: fixed,
+            selection: fixed,
+            ..descriptors.describe(0, runtime_id, metadata).0.clone()
+        })
+        .collect()
 }
 
-/// A 256-cell nested response with representative strings, tags and shapes per layer.
-fn nested_region() -> TerrainRegion {
-    let cube = TerrainBounds {
-        min: (0., 0., 0.),
-        max: (1., 1., 1.),
-    };
-    let layer = |identifier: &str, state: &str, tags: &[&str], shapes: usize| TerrainLayer {
-        runtime_id: 1,
-        identifier: Some(identifier.into()),
-        canonical_state: Some(state.into()),
-        tags: tags.iter().map(|tag| (*tag).into()).collect(),
-        properties: Some(TerrainProperties {
-            collision: vec![cube; shapes],
-            selection: vec![cube; shapes],
-            friction: 0.6,
-            horizontal_speed_factor: 1.,
-            vertical_speed_factor: 1.,
-            fluid_height: 0.,
-            climbable: false,
-            water: false,
-            lava: false,
-            cobweb: false,
-            powder_snow: false,
-            scaffolding: false,
-            passable: false,
-            surface_response: "None".into(),
-        }),
-    };
-    let mut cells = Vec::new();
-    for x in MIN[0]..MAX[0] {
-        for y in MIN[1]..MAX[1] {
-            for z in MIN[2]..MAX[2] {
-                let loaded = !(x >= 16 && z >= 16);
-                let layers = match (loaded, y) {
-                    (false, _) => vec![],
-                    (true, ..64) => vec![layer(
-                        "minecraft:dirt",
-                        r#"{"dirt_type":{"type":"string","value":"normal"}}"#,
-                        &["minecraft:is_shovel_item_destructible", "dirt"],
-                        1,
-                    )],
-                    (true, 64) => vec![
-                        layer(
-                            "minecraft:oak_stairs",
-                            r#"{"upside_down_bit":{"type":"byte","value":0},"weirdo_direction":{"type":"int","value":2}}"#,
-                            &["minecraft:is_axe_item_destructible", "wood", "stairs"],
-                            2,
-                        ),
-                        layer(
-                            "minecraft:water",
-                            r#"{"liquid_depth":{"type":"int","value":0}}"#,
-                            &["water"],
-                            0,
-                        ),
-                    ],
-                    _ => vec![layer("minecraft:air", "{}", &[], 0)],
-                };
-                cells.push(TerrainCell {
-                    position: position([x, y, z]),
-                    loaded,
-                    layers,
-                });
-            }
-        }
-    }
+/// A flat response with the sim fixture's sizes; the second layer is mostly absent.
+fn flat_region(
+    metadata: &Metadata,
+    (cells, layers, states, boxes, overrides): (usize, usize, usize, usize, usize),
+) -> TerrainRegion {
+    let palette = palette(&mut TerrainDescriptors::default(), metadata, states);
     TerrainRegion {
-        session: 1,
-        dimension: 0,
-        query: TerrainQuery {
-            min: position(MIN),
-            max: position(MAX),
+        stamp: TerrainStamp {
+            session: 1,
+            dimension: 0,
+            registry: 0,
+            revision: 0,
         },
         chunks: (0..=1)
             .flat_map(|x| {
                 (0..=1).map(move |z| TerrainChunkRevision {
                     x,
                     z,
-                    revision: Some(7),
+                    revision: (x + z < 2).then_some(7),
                 })
             })
             .collect(),
-        cells,
+        layer_count: layers as u8,
+        loaded: vec![u64::MAX; cells.div_ceil(64)],
+        states: (0..cells * layers)
+            .map(|slot| {
+                if slot < cells {
+                    (slot % states) as u16
+                } else if slot % 37 == 0 {
+                    2
+                } else {
+                    u16::MAX
+                }
+            })
+            .collect(),
+        palette,
+        shape_offsets: (0..=boxes as u32 + 1)
+            .map(|index| index.saturating_sub(1))
+            .collect(),
+        shape_boxes: (0..boxes * 6)
+            .map(|value| (value % 7) as f64 / 8.)
+            .collect(),
+        overrides: (0..overrides as u32)
+            .map(|index| TerrainShapeOverride {
+                slot: index * 31,
+                collision: Some(TerrainShape::Known(index % boxes as u32)),
+                selection: None,
+            })
+            .collect(),
     }
 }
 
-/// Times only the guest frame; supplying the next response happens outside the measurement.
-fn frames(host: &mut ModHost, region: Option<&TerrainRegion>, iterations: u64) -> Duration {
+/// Times only the guest frame; the next sample is supplied outside the measurement.
+fn frames(host: &mut ModHost, refresh: &TerrainRefresh, iterations: u64) -> Duration {
     let mut total = Duration::ZERO;
     for _ in 0..iterations {
-        host.supply_terrain(region.cloned().into_iter().collect());
+        host.refresh_terrain(|_, _| refresh.clone());
         let start = Instant::now();
         host.frame_with_gameplay(false, Some(snapshot())).unwrap();
         total += start.elapsed();
-        black_box(host.take_terrain_queries());
     }
     total
 }
@@ -146,32 +193,68 @@ fn lowering_benches(criterion: &mut Criterion) {
         terrain: true,
         ..Default::default()
     };
-    let load = |present: bool| {
-        ModHost::load_snapshot_with_grants(
-            Path::new("terrain.wasm"),
-            &terrain_guest::terrain_guest(MIN, MAX, &terrain_guest::expect_region(present)),
-            grants.clone(),
-        )
-        .unwrap()
-    };
-    let region = nested_region();
-    let mut empty = load(false);
-    let mut nested = load(true);
-    nested.supply_terrain(vec![region.clone()]);
-    let ((), allocations) =
-        test_alloc::measure(|| nested.frame_with_gameplay(false, Some(snapshot())).unwrap());
-    eprintln!(
-        "terrain_lowering/nested_256: {} allocations, {} bytes per delivered frame",
-        allocations.calls, allocations.bytes
-    );
     let mut group = criterion.benchmark_group("terrain_lowering");
-    group.throughput(Throughput::Elements(256));
-    group.bench_function("no_region", |bencher| {
-        bencher.iter_custom(|iterations| frames(&mut empty, None, iterations));
-    });
-    group.bench_function("nested_256", |bencher| {
-        bencher.iter_custom(|iterations| frames(&mut nested, Some(&region), iterations));
-    });
+    for (name, min, size, layers, states, boxes, overrides) in REGIONS {
+        let max = [0, 1, 2].map(|axis| min[axis] + size[axis]);
+        let cells = size.iter().product::<i32>() as usize;
+        let load = |remember: bool| {
+            let guest = terrain_guest::terrain_guest(min, max, BOTH, remember, "");
+            let mut host = ModHost::load_snapshot_with_grants(
+                Path::new("terrain.wasm"),
+                &guest,
+                grants.clone(),
+            )
+            .unwrap();
+            host.frame_with_gameplay(false, Some(snapshot())).unwrap();
+            host
+        };
+        let metadata = Metadata::new(states);
+        let shape = (cells, layers, states, boxes, overrides);
+        let region = flat_region(&metadata, shape);
+        let replace = TerrainRefresh::Replace(region);
+        let mut changed = load(false);
+        changed.refresh_terrain(|_, _| replace.clone());
+        let ((), allocations) = test_alloc::measure(|| {
+            changed
+                .frame_with_gameplay(false, Some(snapshot()))
+                .unwrap()
+        });
+        eprintln!(
+            "terrain_lowering/changed/{name}: {} allocations, {} bytes per delivered frame",
+            allocations.calls, allocations.bytes
+        );
+        group.throughput(Throughput::Elements(cells as u64));
+        group.bench_function(BenchmarkId::new("changed", name), |bencher| {
+            bencher.iter_custom(|iterations| frames(&mut changed, &replace, iterations));
+        });
+        let mut unchanged = load(true);
+        frames(&mut unchanged, &replace, 1);
+        group.bench_function(BenchmarkId::new("unchanged", name), |bencher| {
+            bencher.iter_custom(|iterations| {
+                frames(&mut unchanged, &TerrainRefresh::Keep, iterations)
+            });
+        });
+        let mut pending = load(false);
+        group.bench_function(BenchmarkId::new("pending", name), |bencher| {
+            bencher.iter_custom(|iterations| {
+                frames(&mut pending, &TerrainRefresh::Pending, iterations)
+            });
+        });
+        let mut warm = TerrainDescriptors::default();
+        palette(&mut warm, &metadata, states);
+        group.bench_function(BenchmarkId::new("palette_warm", name), |bencher| {
+            bencher.iter(|| palette(&mut warm, &metadata, black_box(states)));
+        });
+        group.bench_function(BenchmarkId::new("palette_cold", name), |bencher| {
+            bencher.iter(|| {
+                palette(
+                    &mut TerrainDescriptors::default(),
+                    &metadata,
+                    black_box(states),
+                )
+            });
+        });
+    }
     group.finish();
 }
 

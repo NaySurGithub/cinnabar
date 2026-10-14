@@ -78,10 +78,11 @@ and block light, clouds and weather do not reach it. No parity gate closes here.
 
 ## Local terrain reads
 
-Local mods with the `terrain` grant can request bounded terrain regions with all palette
-layers, canonical states, resolved collision/selection geometry and physics facts. Unknown
-cells and unavailable contextual geometry remain explicit. Existing mods receive no new
-permission by default.
+Local mods with the `terrain` grant poll regions of up to 16³ blocks as palette-indexed
+layers with canonical states, resolved collision/selection geometry and physics facts
+([docs/mod-terrain-api.md](docs/mod-terrain-api.md)); unchanged samples return only a stamp.
+Unknown cells and unavailable contextual geometry remain explicit. Existing mods receive no
+new permission by default.
 
 Incomplete: live acceptance on Windows has not been completed. No movement or interaction
 parity gate closes here.

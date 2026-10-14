@@ -1,16 +1,21 @@
 use super::*;
-use crate::{TerrainPosition, TerrainQuery, TerrainRegion};
+use std::path::Path;
+use crate::{
+    TerrainGeometry, TerrainPosition, TerrainQuery, TerrainRefresh, TerrainRegion, TerrainStamp,
+};
 #[path = "terrain_guest.rs"]
 mod terrain_guest;
-use terrain_guest::{expect_region, terrain_guest};
+use terrain_guest::{CHANGED, PENDING, UNCHANGED, expect_error, expect_reads, terrain_guest};
 
 const MIN: [i32; 3] = [0, 63, 0];
 const MAX: [i32; 3] = [2, 65, 2];
+/// `geometry` flag bits: collision only.
+const COLLISION: u8 = 1;
 
 fn load(check: &str, terrain: bool) -> ModHost {
     ModHost::load_snapshot_with_grants(
         Path::new("terrain.wasm"),
-        &terrain_guest(MIN, MAX, check),
+        &terrain_guest(MIN, MAX, COLLISION, true, check),
         ModGrants {
             terrain,
             ..Default::default()
@@ -39,33 +44,73 @@ fn query() -> TerrainQuery {
     TerrainQuery {
         min: position(MIN),
         max: position(MAX),
+        geometry: TerrainGeometry::COLLISION,
     }
 }
 fn region() -> TerrainRegion {
     TerrainRegion {
-        session: 1,
-        dimension: 0,
-        query: query(),
+        stamp: TerrainStamp {
+            session: 1,
+            dimension: 0,
+            registry: 3,
+            revision: 0,
+        },
         chunks: vec![],
-        cells: vec![],
+        layer_count: 1,
+        loaded: vec![0xff],
+        states: vec![0; 8],
+        palette: vec![],
+        shape_offsets: vec![0, 0],
+        shape_boxes: vec![],
+        overrides: vec![],
+    }
+}
+/// Supplies the committed query's next outcome, then runs one frame.
+fn frame(host: &mut ModHost, refresh: TerrainRefresh) -> anyhow::Result<()> {
+    host.refresh_terrain(|candidate, _| {
+        assert_eq!(*candidate, query());
+        refresh.clone()
+    });
+    host.frame_with_gameplay(false, Some(snapshot()))
+}
+
+/// New queries are pending, then deliver a region once and an unchanged stamp while kept.
+#[test]
+fn polling_crosses_the_component_boundary() {
+    let mut host = load(
+        &expect_reads(&[PENDING, CHANGED, UNCHANGED, CHANGED, UNCHANGED, PENDING]),
+        true,
+    );
+    host.frame_with_gameplay(false, Some(snapshot())).unwrap();
+    for refresh in [
+        TerrainRefresh::Replace(region()),
+        TerrainRefresh::Keep,
+        TerrainRefresh::Replace(region()),
+        TerrainRefresh::Keep,
+        TerrainRefresh::Pending,
+    ] {
+        frame(&mut host, refresh).unwrap();
     }
 }
 
+/// A read result the guest does not expect traps its frame.
 #[test]
-fn requests_and_regions_cross_the_component_boundary() {
-    let mut host = load(&expect_region(false), true);
-    host.frame_with_gameplay(false, Some(snapshot())).unwrap();
-    assert_eq!(host.take_terrain_queries(), [query()]);
-    let mut host = load(&expect_region(true), true);
-    host.supply_terrain(vec![region()]);
-    host.frame_with_gameplay(false, Some(snapshot())).unwrap();
+fn unexpected_results_trap() {
+    let mut host = load(&expect_reads(&[CHANGED]), true);
+    assert!(host.frame_with_gameplay(false, Some(snapshot())).is_err());
+    assert!(!host.is_active());
 }
 
 #[test]
 fn denied_or_trapped_reads_request_nothing() {
-    let mut denied = load(&expect_region(false), false);
-    assert!(denied.frame_with_gameplay(false, Some(snapshot())).is_err());
-    assert!(denied.take_terrain_queries().is_empty());
+    let mut denied = load(&expect_error(0), false);
+    denied.frame_with_gameplay(false, Some(snapshot())).unwrap();
+    let mut requested = false;
+    denied.refresh_terrain(|_, _| {
+        requested = true;
+        TerrainRefresh::Pending
+    });
+    assert!(!requested);
     let mut trapped = load("unreachable", true);
     assert!(
         trapped
@@ -73,7 +118,7 @@ fn denied_or_trapped_reads_request_nothing() {
             .is_err()
     );
     assert!(!trapped.is_active());
-    assert!(trapped.take_terrain_queries().is_empty());
+    trapped.refresh_terrain(|_, _| unreachable!("trapped requests are discarded"));
 }
 
 #[test]
@@ -81,12 +126,11 @@ fn terrain_compute_remains_bounded() {
     let mut host = load("(loop $forever br $forever)", true);
     assert!(host.frame_with_gameplay(false, Some(snapshot())).is_err());
     assert!(!host.is_active());
-    assert!(host.take_terrain_queries().is_empty());
 }
 
 #[test]
 fn terrain_frames_run_after_the_shared_event_lane_is_used() {
-    let mut host = load(&expect_region(false), true);
+    let mut host = load(&expect_reads(&[PENDING]), true);
     let budget = CallbackBudget::new(mod_api::TOTAL_MOD_FRAME_FUEL);
     assert!(
         budget
@@ -95,6 +139,5 @@ fn terrain_frames_run_after_the_shared_event_lane_is_used() {
     );
     host.set_frame_authority(budget.clone(), false, false, 0, HudClaims::default());
     host.frame_with_gameplay(false, Some(snapshot())).unwrap();
-    assert_eq!(host.take_terrain_queries(), [query()]);
     assert_eq!(budget.remaining(), mod_api::TOTAL_MOD_FRAME_FUEL);
 }

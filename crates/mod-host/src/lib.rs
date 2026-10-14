@@ -43,9 +43,15 @@ pub use runtime::cinnabar::extension::{
 };
 
 pub use runtime::cinnabar::extension::terrain::{
-    Bounds as TerrainBounds, Cell as TerrainCell, ChunkRevision as TerrainChunkRevision,
-    Layer as TerrainLayer, Position as TerrainPosition, Properties as TerrainProperties,
-    Region as TerrainRegion, RegionQuery as TerrainQuery,
+    BlockState as TerrainBlockState, ChunkRevision as TerrainChunkRevision,
+    Geometry as TerrainGeometry, Physics as TerrainPhysics, PhysicsFlags as TerrainPhysicsFlags,
+    Position as TerrainPosition, ReadError as TerrainReadError, ReadResult as TerrainReadResult,
+    Region as TerrainRegion, RegionQuery as TerrainQuery, ResolvedShape as TerrainShape,
+    ShapeBinding as TerrainShapeBinding, ShapeOverride as TerrainShapeOverride,
+    Stamp as TerrainStamp, SurfaceResponse as TerrainSurfaceResponse,
+};
+pub use terrain::{
+    TerrainDescriptors, TerrainMetadata, TerrainRefresh, terrain_query_size, terrain_region_bytes,
 };
 
 /// Successfully committed local interaction requests, consumed once per frame.

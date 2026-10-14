@@ -28,11 +28,13 @@ pub use simulator::{
 };
 
 pub use world::{
-    BLOCK_USE_SUPPORT_DEPTH, BLOCK_USE_SUPPORT_MAX_Y, BlockHit, BlockLayerObservation,
-    BlockPhysicsFacts, BlockPhysicsFlags, BlockPhysicsSample, CameraBlockHit, CameraShapeCache,
-    CollisionIdSpace, CollisionQuery, CollisionRegistry, CollisionRegistryIdentity,
-    CollisionSnapshot, CollisionWorld, DEFAULT_SURFACE_FRICTION, DoorFacing, DoorState,
-    FlowBlockFacts, LenientCollisionBoxes, LenientSkipCounts, MAX_COLLISION_IDENTITY_CHUNKS,
+    BLOCK_USE_SUPPORT_DEPTH, BLOCK_USE_SUPPORT_MAX_Y, BlockHit, BlockPhysicsFacts,
+    BlockPhysicsFlags, BlockPhysicsSample, CameraBlockHit, CameraShapeCache, CollisionIdSpace,
+    CollisionQuery, CollisionRegistry, CollisionRegistryIdentity, CollisionSnapshot,
+    CollisionWorld, DEFAULT_SURFACE_FRICTION, DoorFacing, DoorState, FlowBlockFacts,
+    LenientCollisionBoxes, LenientSkipCounts, MAX_COLLISION_IDENTITY_CHUNKS,
     MAX_COLLISION_QUERY_EXTENT, PaletteWorld, ProvenancedCollider, RegistryError, SurfaceResponse,
-    WorldCollisionIdentity, WorldQueryError,
+    TERRAIN_EMPTY_SHAPE, TERRAIN_NO_LAYER, TerrainColumn, TerrainGeometry, TerrainSample,
+    TerrainSampleError, TerrainSampler, TerrainShape, TerrainShapeBinding, TerrainShapeOverride,
+    TerrainState, WorldCollisionIdentity, WorldQueryError,
 };

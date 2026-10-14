@@ -393,38 +393,63 @@ interface item-use {
     set-delay-fix: func(enabled: bool) -> result<_, string>;
 }
 
-/// Bounded local terrain observations. Requests commit after a successful frame.
-/// Poll on later frames; unknown terrain is never reported as air.
+/// Bounded local terrain reads. A read stages its query and returns the sample taken before
+/// this frame, so a new query reads `pending` first. Unknown terrain is never reported as air.
 interface terrain {
     record position { x: s32, y: s32, z: s32 }
-    /// Inclusive minimum and exclusive maximum, at most 256 cells.
-    record region-query { min: position, max: position }
-    record bounds { min: tuple<f64,f64,f64>, max: tuple<f64,f64,f64> }
-    record properties {
-        /// Block-local shapes, including neighbor-dependent geometry and shape offsets.
-        collision: list<bounds>, selection: list<bounds>,
+    flags geometry { collision, selection }
+    /// Inclusive minimum and exclusive maximum; each extent is 1 to 16 blocks.
+    record region-query { min: position, max: position, geometry: geometry }
+    /// Identifies one sample of one query; an equal stamp means identical contents.
+    record stamp { session: u64, dimension: s32, registry: u64, revision: u64 }
+    flags physics-flags { climbable, water, lava, cobweb, powder-snow, scaffolding, passable }
+    enum surface-response { none, slime, bed, honey, soul-sand, bubble-up, bubble-down }
+    record physics {
         friction: f64, horizontal-speed-factor: f64, vertical-speed-factor: f64,
-        fluid-height: f64,
-        climbable: bool, water: bool, lava: bool, cobweb: bool,
-        powder-snow: bool, scaffolding: bool, passable: bool,
-        /// Native surface response name; absent facts are never inferred from identifiers.
-        surface-response: string,
+        fluid-height: f64, %flags: physics-flags, surface: surface-response,
     }
-    record layer {
-        runtime-id: u32, identifier: option<string>, canonical-state: option<string>, tags: list<string>,
-        /// None when physics metadata or a required neighboring cell is unknown.
-        properties: option<properties>,
+    /// An index into the region's shapes; shape 0 is known-empty.
+    variant resolved-shape { unavailable, known(u32) }
+    variant shape-binding {
+        not-requested,
+        fixed(resolved-shape),
+        /// Every occurrence has an override.
+        per-cell,
     }
-    record cell { position: position, loaded: bool, layers: list<layer> }
+    /// One distinct runtime ID; metadata and physics are absent when the registry lacks them.
+    record block-state {
+        runtime-id: u32, identifier: option<string>, canonical-state: option<string>,
+        tags: list<string>, physics: option<physics>,
+        collision: shape-binding, selection: shape-binding,
+    }
+    /// Revision of a column the region depends on; none is absent terrain.
     record chunk-revision { x: s32, z: s32, revision: option<u64> }
+    /// Geometry of one layer slot that depends on its position; none keeps the state's binding.
+    record shape-override { slot: u32, collision: option<resolved-shape>, selection: option<resolved-shape> }
+    /// Cell `((x * size-z) + z) * size-y + y`, relative to the minimum, has layer `l` at slot
+    /// `l * cells + cell`. Shapes are block-local, with native position offsets applied.
     record region {
-        session: u64, dimension: s32, query: region-query,
-        /// Current column revisions. Compare only within the same session/dimension.
-        chunks: list<chunk-revision>, cells: list<cell>,
+        stamp: stamp,
+        /// Every column read, including those consulted for neighbour or actor geometry.
+        chunks: list<chunk-revision>,
+        layer-count: u8,
+        /// Bit `cell % 64` of word `cell / 64` is set for known cells.
+        loaded: list<u64>,
+        /// Palette index per slot; 65535 is no layer, never air.
+        states: list<u16>,
+        palette: list<block-state>,
+        /// Shape `s` is boxes `shape-offsets[s]` to `shape-offsets[s + 1]`.
+        shape-offsets: list<u32>,
+        /// Six values per box: minimum then maximum x, y and z.
+        shape-boxes: list<f64>,
+        /// Sorted by slot.
+        overrides: list<shape-override>,
     }
-    /// Requests a region within 128 blocks of the current player; requires terrain authority.
-    /// None on the first read. Repeating refreshes the observation for the following frame.
-    read-region: func(query: region-query) -> result<option<region>, string>;
+    variant read-result { pending, unchanged(stamp), changed(region) }
+    enum read-error { denied, unavailable, invalid-query, out-of-range, budget-exhausted, limit-exceeded }
+    /// Requires terrain authority and a gameplay frame; the query lies within 128 blocks of the
+    /// player on each axis. Pass the stamp last received for this query to skip unchanged data.
+    read-region: func(query: region-query, after: option<stamp>) -> result<read-result, read-error>;
 }
 
 /// Experimental developer contract; no WASI or ambient operating-system access.
