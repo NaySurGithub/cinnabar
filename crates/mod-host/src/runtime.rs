@@ -508,12 +508,7 @@ impl Instance {
         state.world.mobs = mobs;
         state.player_state.set_snapshot(player_state)?;
         state.controls.frame = controls;
-        let budget = if self.store.data().grants.terrain {
-            crate::TERRAIN_CALLBACK_FUEL
-        } else {
-            FRAME_FUEL
-        };
-        let result = self.run(budget, commit, |exports, store| exports.frame(store));
+        let result = self.run(FRAME_FUEL, commit, |exports, store| exports.frame(store));
         result.map(|_| ())
     }
 
@@ -549,14 +544,10 @@ impl Instance {
         publish: fn(&mut Store<State>),
         call: impl FnOnce(&exports::Exports, &mut Store<State>) -> Result<()>,
     ) -> Result<CallbackOutcome> {
-        let owner = self.store.data().exclusive.owner;
-        let allowance = self.callback_budget.as_ref().map_or(Some(fuel), |budget| {
-            if fuel == crate::TERRAIN_CALLBACK_FUEL {
-                budget.reserve_terrain(owner)
-            } else {
-                budget.reserve(fuel)
-            }
-        });
+        let allowance = self
+            .callback_budget
+            .as_ref()
+            .map_or(Some(fuel), |budget| budget.reserve(fuel));
         let Some(allowance) = allowance else {
             self.last_fuel = 0;
             return Ok(CallbackOutcome::Deferred);
@@ -579,10 +570,6 @@ impl Instance {
             && let Some(budget) = &self.callback_budget
         {
             budget.refund(allowance - self.last_fuel);
-        } else if fuel == crate::TERRAIN_CALLBACK_FUEL
-            && let Some(budget) = &self.callback_budget
-        {
-            budget.refund_terrain(allowance - self.last_fuel);
         }
         if let Err(error) = called {
             self.quarantine();
@@ -720,14 +707,18 @@ impl Instance {
         std::mem::take(&mut self.store.data_mut().jump_pulse)
     }
 
+    pub(super) fn terrain_subscriptions(&self) -> usize {
+        self.store.data().terrain.subscriptions.len()
+    }
     pub(super) fn refresh_terrain(
         &mut self,
-        refresh: impl FnMut(
+        index: usize,
+        refresh: impl FnOnce(
             &crate::TerrainQuery,
             Option<&crate::TerrainRegion>,
         ) -> crate::TerrainRefresh,
     ) {
-        self.store.data_mut().terrain.refresh(refresh);
+        self.store.data_mut().terrain.refresh(index, refresh);
     }
 
     pub(super) fn camera_rig(&self) -> Option<GameplayCameraRig> {

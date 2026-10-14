@@ -393,8 +393,9 @@ interface item-use {
     set-delay-fix: func(enabled: bool) -> result<_, string>;
 }
 
-/// Bounded local terrain reads. A read stages its query and returns the sample taken before
-/// this frame, so a new query reads `pending` first. Unknown terrain is never reported as air.
+/// Bounded local terrain reads. The queries a callback reads become its subscriptions, which the
+/// client samples before later frames, so a new query reads `pending` first. A deferred callback
+/// keeps its subscriptions. Unknown terrain is never reported as air.
 interface terrain {
     record position { x: s32, y: s32, z: s32 }
     flags geometry { collision, selection }

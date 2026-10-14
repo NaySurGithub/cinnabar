@@ -14,10 +14,10 @@ use std::{
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use mod_host::{
-    GameplaySnapshot, GameplayVector3, ModGrants, ModHost, TerrainBlockState, TerrainChunkRevision,
-    TerrainDescriptors, TerrainMetadata, TerrainPhysics, TerrainPhysicsFlags, TerrainRefresh,
-    TerrainRegion, TerrainShape, TerrainShapeBinding, TerrainShapeOverride, TerrainStamp,
-    TerrainSurfaceResponse,
+    GameplaySnapshot, GameplayVector3, ModGrants, ModHost, TerrainBlockState, TerrainCheck,
+    TerrainChunkRevision, TerrainDescriptors, TerrainMetadata, TerrainPhysics, TerrainPhysicsFlags,
+    TerrainQuery, TerrainRefresh, TerrainRegion, TerrainScheduler, TerrainShape,
+    TerrainShapeBinding, TerrainShapeOverride, TerrainSource, TerrainStamp, TerrainSurfaceResponse,
 };
 
 #[global_allocator]
@@ -219,11 +219,25 @@ fn observe(host: &mut ModHost) {
         .unwrap();
 }
 
-/// Times only the guest frame; the next sample is supplied outside the measurement.
-fn frames(host: &mut ModHost, refresh: &TerrainRefresh, iterations: u64) -> Duration {
+/// A world that reports one check for every subscription and samples one prepared region.
+struct Supply {
+    check: TerrainCheck,
+    region: TerrainRefresh,
+}
+impl TerrainSource for Supply {
+    fn check(&mut self, _: &TerrainQuery, _: Option<&TerrainRegion>) -> TerrainCheck {
+        self.check
+    }
+    fn sample(&mut self, _: &TerrainQuery) -> TerrainRefresh {
+        self.region.clone()
+    }
+}
+
+/// Times only the guest frame; sampling happens outside the measurement.
+fn frames(host: &mut ModHost, supply: &mut Supply, budget: usize, iterations: u64) -> Duration {
     let mut total = Duration::ZERO;
     for _ in 0..iterations {
-        host.refresh_terrain(|_, _| refresh.clone());
+        TerrainScheduler::default().refresh(&mut [&mut *host], budget, supply);
         observe(host);
         let start = Instant::now();
         host.frame_with_gameplay(false, Some(snapshot())).unwrap();
@@ -262,9 +276,13 @@ fn lowering_benches(criterion: &mut Criterion) {
         };
         let metadata = Metadata::new(states);
         let region = flat_region(&metadata, shape);
-        let replace = TerrainRefresh::Replace(Box::new(region));
+        let stale = TerrainCheck::Stale { cells };
+        let supply = |check| Supply {
+            check,
+            region: TerrainRefresh::Replace(Box::new(region.clone())),
+        };
         let mut changed = load(false);
-        changed.refresh_terrain(|_, _| replace.clone());
+        TerrainScheduler::default().refresh(&mut [&mut changed], cells, &mut supply(stale));
         observe(&mut changed);
         let ((), allocations) = test_alloc::measure(|| {
             changed
@@ -277,20 +295,26 @@ fn lowering_benches(criterion: &mut Criterion) {
         );
         group.throughput(Throughput::Elements(cells as u64));
         group.bench_function(BenchmarkId::new("changed", name), |bencher| {
-            bencher.iter_custom(|iterations| frames(&mut changed, &replace, iterations));
+            bencher.iter_custom(|iterations| {
+                frames(&mut changed, &mut supply(stale), cells, iterations)
+            });
         });
         let mut unchanged = load(true);
-        frames(&mut unchanged, &replace, 1);
+        frames(&mut unchanged, &mut supply(stale), cells, 1);
         group.bench_function(BenchmarkId::new("unchanged", name), |bencher| {
             bencher.iter_custom(|iterations| {
-                frames(&mut unchanged, &TerrainRefresh::Keep, iterations)
+                frames(
+                    &mut unchanged,
+                    &mut supply(TerrainCheck::Current),
+                    cells,
+                    iterations,
+                )
             });
         });
         let mut pending = load(false);
         group.bench_function(BenchmarkId::new("pending", name), |bencher| {
-            bencher.iter_custom(|iterations| {
-                frames(&mut pending, &TerrainRefresh::Pending, iterations)
-            });
+            bencher
+                .iter_custom(|iterations| frames(&mut pending, &mut supply(stale), 0, iterations));
         });
         let mut warm = TerrainDescriptors::default();
         palette(&mut warm, &metadata, states);

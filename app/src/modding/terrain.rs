@@ -7,9 +7,9 @@ use bevy::prelude::DetectChanges;
 use client_extensions::modding::multi::ModHosts;
 use client_interaction::movement::PhysicsCollisionRegistries;
 use mod_host::{
-    TerrainBlockState, TerrainChunkRevision, TerrainGeometry, TerrainPhysics, TerrainPhysicsFlags,
-    TerrainQuery, TerrainReadError, TerrainRefresh, TerrainRegion, TerrainShape,
-    TerrainShapeBinding, TerrainShapeOverride, TerrainStamp, TerrainSurfaceResponse,
+    TerrainBlockState, TerrainCheck, TerrainChunkRevision, TerrainGeometry, TerrainPhysics,
+    TerrainPhysicsFlags, TerrainQuery, TerrainReadError, TerrainRefresh, TerrainRegion,
+    TerrainShape, TerrainShapeBinding, TerrainShapeOverride, TerrainStamp, TerrainSurfaceResponse,
 };
 use sim::{BlockPhysicsFlags, PaletteWorld, SurfaceResponse};
 use world::{ChunkKey, ChunkStore};
@@ -31,14 +31,15 @@ const PHYSICS_FLAGS: [(BlockPhysicsFlags, TerrainPhysicsFlags); 7] = [
     (BlockPhysicsFlags::PASSABLE, TerrainPhysicsFlags::PASSABLE),
 ];
 
-/// Sampler scratch, cached block metadata and the registry generation it describes.
+/// Sampler scratch, cached block metadata, the registry generation they describe and the
+/// round-robin cursor across every mod's subscriptions.
 #[derive(Default)]
 pub(super) struct TerrainSampling {
     sampler: sim::TerrainSampler,
     descriptors: mod_host::TerrainDescriptors,
+    scheduler: mod_host::TerrainScheduler,
     scope: Option<(u64, NetworkIdMode)>,
     generation: u64,
-    rotation: usize,
 }
 
 /// The block registry's metadata in the session's runtime-ID space.
@@ -55,143 +56,83 @@ impl mod_host::TerrainMetadata for Metadata<'_> {
     }
 }
 
-/// The current world a frame's samples are taken from.
+/// This frame's world, with the scratch that samples it.
 struct Source<'a> {
     store: &'a ChunkStore,
     registries: &'a PhysicsCollisionRegistries,
     mode: NetworkIdMode,
     observation: &'a mod_host::WorldObservation,
     generation: u64,
+    sampler: &'a mut sim::TerrainSampler,
+    descriptors: &'a mut mod_host::TerrainDescriptors,
 }
 
 impl TerrainSampling {
-    /// Refreshes last frame's committed queries of every host, sharing one sampling budget
-    /// and rotating which host is served first.
+    /// Refreshes every mod's subscriptions once, before callbacks, under one cell budget.
+    /// Without a current world, subscriptions keep their samples until it returns.
     pub(super) fn refresh(
         &mut self,
         hosts: &mut ModHosts,
         context: &GameplayContext<'_>,
         observation: Option<&mod_host::WorldObservation>,
     ) {
-        let world = context.world.as_ref();
-        let authority = world
+        let authority = context
+            .world
+            .as_ref()
             .and_then(|world| world.stream.as_ref())
             .map(|stream| stream.authority());
-        let source = match (observation, authority, context.collisions.as_ref()) {
-            (Some(observation), Some(authority), Some(registries)) => {
-                let mode = authority.network_id_mode();
-                let scope = Some((observation.session, mode));
-                if self.scope != scope || registries.is_changed() {
-                    self.scope = scope;
-                    self.generation += 1;
-                }
-                Some(Source {
-                    store: authority.terrain(),
-                    registries,
-                    mode,
-                    observation,
-                    generation: self.generation,
-                })
-            }
-            _ => None,
+        let (Some(observation), Some(authority), Some(registries)) =
+            (observation, authority, context.collisions.as_ref())
+        else {
+            return;
         };
-        let count = hosts.host_count();
-        let mut budget = mod_api::MAX_TERRAIN_FRAME_CELLS;
-        self.rotation = self.rotation.wrapping_add(1);
-        for offset in 0..count {
-            let host = hosts.host_mut((self.rotation + offset) % count);
-            if !host.is_active() || !host.grants().terrain {
-                continue;
-            }
-            host.refresh_terrain(|query, retained| match &source {
-                Some(source) => self.sample(source, query, retained, &mut budget),
-                None => TerrainRefresh::Pending,
-            });
+        let mode = authority.network_id_mode();
+        let scope = Some((observation.session, mode));
+        if self.scope != scope || registries.is_changed() {
+            self.scope = scope;
+            self.generation += 1;
         }
+        let mut source = Source {
+            store: authority.terrain(),
+            registries,
+            mode,
+            observation,
+            generation: self.generation,
+            sampler: &mut self.sampler,
+            descriptors: &mut self.descriptors,
+        };
+        let mut hosts: Vec<&mut mod_host::ModHost> = std::iter::once(&mut hosts.host)
+            .chain(
+                hosts
+                    .companions
+                    .iter_mut()
+                    .map(|companion| &mut companion.host),
+            )
+            .collect();
+        self.scheduler
+            .refresh(&mut hosts, mod_api::MAX_TERRAIN_FRAME_CELLS, &mut source);
     }
+}
 
-    /// Keeps a current region, or samples within the frame budget.
-    fn sample(
-        &mut self,
-        source: &Source<'_>,
-        query: &TerrainQuery,
-        retained: Option<&TerrainRegion>,
-        budget: &mut usize,
-    ) -> TerrainRefresh {
-        let observation = source.observation;
-        let position = [
-            observation.position.0,
-            observation.position.1,
-            observation.position.2,
-        ];
-        let size = match mod_host::terrain_query_size(query, position) {
-            Ok(size) => size,
-            Err(error) => return TerrainRefresh::Failed(error),
-        };
-        let stamp = TerrainStamp {
-            session: observation.session,
-            dimension: observation.dimension,
-            registry: source.generation,
+impl Source<'_> {
+    fn stamp(&self) -> TerrainStamp {
+        TerrainStamp {
+            session: self.observation.session,
+            dimension: self.observation.dimension,
+            registry: self.generation,
             revision: 0,
-        };
-        if let Some(region) = retained
-            && (
-                region.stamp.session,
-                region.stamp.dimension,
-                region.stamp.registry,
-            ) == (stamp.session, stamp.dimension, stamp.registry)
-            && region.chunks.iter().all(|chunk| {
-                let key = ChunkKey::new(stamp.dimension, chunk.x, chunk.z);
-                source
-                    .store
-                    .collision_revision(key)
-                    .map(|value| value.revision)
-                    == chunk.revision
-            })
-        {
-            return TerrainRefresh::Keep;
-        }
-        let cells = size
-            .iter()
-            .map(|&side| usize::from(side))
-            .product::<usize>();
-        let Some(remaining) = budget.checked_sub(cells) else {
-            return TerrainRefresh::Pending;
-        };
-        *budget = remaining;
-        let geometry = sim::TerrainGeometry {
-            collision: query.geometry.contains(TerrainGeometry::COLLISION),
-            selection: query.geometry.contains(TerrainGeometry::SELECTION),
-        };
-        let registry = source.registries.registry(source.mode);
-        let world = PaletteWorld::new(source.store, registry, stamp.dimension, Default::default());
-        let min = [query.min.x, query.min.y, query.min.z];
-        match self
-            .sampler
-            .sample(&world, min, size, geometry, mod_api::MAX_TERRAIN_BOXES)
-        {
-            Ok(sample) => self.region(source, stamp, sample),
-            Err(sim::TerrainSampleError::OutOfRange) => {
-                TerrainRefresh::Failed(TerrainReadError::OutOfRange)
-            }
-            Err(_) => TerrainRefresh::Failed(TerrainReadError::LimitExceeded),
         }
     }
 
     /// Moves a sample's bulk arrays into a response and copies metadata once per state.
-    fn region(
-        &mut self,
-        source: &Source<'_>,
-        stamp: TerrainStamp,
-        sample: sim::TerrainSample,
-    ) -> TerrainRefresh {
-        let metadata = Metadata(source.registries, source.mode);
+    fn region(&mut self, sample: sim::TerrainSample) -> TerrainRefresh {
+        let metadata = Metadata(self.registries, self.mode);
         let mut bytes = 0;
         let mut palette = Vec::with_capacity(sample.palette.len());
         for state in &sample.palette {
             let (description, size) =
                 self.descriptors
-                    .describe(source.generation, state.runtime_id, &metadata);
+                    .describe(self.generation, state.runtime_id, &metadata);
             bytes += size;
             if bytes > mod_api::MAX_TERRAIN_METADATA_BYTES {
                 return TerrainRefresh::Failed(TerrainReadError::LimitExceeded);
@@ -204,7 +145,7 @@ impl TerrainSampling {
             });
         }
         TerrainRefresh::Replace(Box::new(TerrainRegion {
-            stamp,
+            stamp: self.stamp(),
             chunks: sample
                 .columns
                 .iter()
@@ -230,6 +171,68 @@ impl TerrainSampling {
                 })
                 .collect(),
         }))
+    }
+}
+
+impl mod_host::TerrainSource for Source<'_> {
+    /// Current when the session, dimension, registry and every column read are unchanged.
+    fn check(&mut self, query: &TerrainQuery, retained: Option<&TerrainRegion>) -> TerrainCheck {
+        let position = self.observation.position;
+        let size = match mod_host::terrain_query_size(query, [position.0, position.1, position.2]) {
+            Ok(size) => size,
+            Err(error) => return TerrainCheck::Failed(error),
+        };
+        let stamp = self.stamp();
+        let current = retained.is_some_and(|region| {
+            (
+                region.stamp.session,
+                region.stamp.dimension,
+                region.stamp.registry,
+            ) == (stamp.session, stamp.dimension, stamp.registry)
+                && region.chunks.iter().all(|chunk| {
+                    let key = ChunkKey::new(stamp.dimension, chunk.x, chunk.z);
+                    self.store
+                        .collision_revision(key)
+                        .map(|value| value.revision)
+                        == chunk.revision
+                })
+        });
+        if current {
+            return TerrainCheck::Current;
+        }
+        TerrainCheck::Stale {
+            cells: size.iter().map(|&side| usize::from(side)).product(),
+        }
+    }
+
+    fn sample(&mut self, query: &TerrainQuery) -> TerrainRefresh {
+        let position = self.observation.position;
+        let size = match mod_host::terrain_query_size(query, [position.0, position.1, position.2]) {
+            Ok(size) => size,
+            Err(error) => return TerrainRefresh::Failed(error),
+        };
+        let geometry = sim::TerrainGeometry {
+            collision: query.geometry.contains(TerrainGeometry::COLLISION),
+            selection: query.geometry.contains(TerrainGeometry::SELECTION),
+        };
+        let registry = self.registries.registry(self.mode);
+        let world = PaletteWorld::new(
+            self.store,
+            registry,
+            self.observation.dimension,
+            Default::default(),
+        );
+        let min = [query.min.x, query.min.y, query.min.z];
+        match self
+            .sampler
+            .sample(&world, min, size, geometry, mod_api::MAX_TERRAIN_BOXES)
+        {
+            Ok(sample) => self.region(sample),
+            Err(sim::TerrainSampleError::OutOfRange) => {
+                TerrainRefresh::Failed(TerrainReadError::OutOfRange)
+            }
+            Err(_) => TerrainRefresh::Failed(TerrainReadError::LimitExceeded),
+        }
     }
 }
 

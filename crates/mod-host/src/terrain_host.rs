@@ -33,7 +33,7 @@ impl cinnabar::extension::terrain::Host for State {
         }
         let sample = self
             .terrain
-            .samples
+            .subscriptions
             .iter()
             .find(|(candidate, _)| *candidate == query)
             .map(|(_, sample)| sample);
@@ -115,10 +115,10 @@ mod tests {
             overrides: vec![],
         }
     }
-    /// Stages the query, then supplies `refresh` for it as the next frame would.
+    /// Commits the staged query, then supplies `refresh` for it as the next frame would.
     fn sample(value: &mut State, refresh: TerrainRefresh) {
         value.terrain.commit();
-        value.terrain.refresh(|_, _| refresh.clone());
+        value.terrain.refresh(0, |_, _| refresh);
         value.terrain.begin_frame();
     }
     #[test]

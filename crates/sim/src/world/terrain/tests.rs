@@ -246,3 +246,61 @@ fn volumes_at_the_coordinate_limit_neither_overflow_nor_wrap() {
         Err(TerrainSampleError::OutOfRange)
     );
 }
+
+/// Actor-owned selection needs a versioned owner column; an absent one is unavailable.
+#[test]
+fn piston_arm_selection_requires_a_loaded_owner_column() {
+    use assets::block_shapes::{
+        CompiledBlockShapes, OutlineContext, PISTON_DIRECTIONS, PickRule, SelectionContext,
+        ShapeBox, ShapeFlags,
+    };
+    const ARM: u32 = 5;
+    let facing = PISTON_DIRECTIONS
+        .iter()
+        .position(|direction| *direction == [1, 0, 0])
+        .unwrap();
+    let piece = ShapeBox::new([0.25; 3], [0.75; 3]);
+    let shapes = CompiledBlockShapes {
+        state_identity: [3; 32],
+        actor_facing: Some(facing as u8),
+        actor_visual: None,
+        selection: Box::new([piece]),
+        selection_context: SelectionContext::PistonArm,
+        contextual_selection: Box::new([]),
+        outline: None,
+        connected_outline: None,
+        outline_context: OutlineContext::Static,
+        pick_rule: PickRule::Always,
+        flags: ShapeFlags::empty(),
+        door: None,
+        flow: None,
+        tags: Box::new([]),
+    };
+    let mut registry = registry();
+    registry.register(ARM, [cube()]).unwrap();
+    assert!(registry.set_compiled_selection(ARM, &shapes));
+    let mut store = ChunkStore::new();
+    store
+        .mark_sub_chunk_loaded(SubChunkKey::new(0, 1, 0, 0))
+        .unwrap();
+    set(&mut store, [16, 0, 0], 0, ARM);
+    let (min, size) = ([16, 0, 0], [1, 1, 1]);
+    let selection = |store: &ChunkStore| {
+        let world = PaletteWorld::new(store, &registry, 0, Default::default());
+        let sample = TerrainSampler::default()
+            .sample(&world, min, size, BOTH, 64)
+            .unwrap();
+        let owner = TerrainColumn {
+            x: 0,
+            z: 0,
+            revision: store
+                .collision_revision(ChunkKey::new(0, 0, 0))
+                .map(|revision| revision.revision),
+        };
+        assert!(sample.columns.contains(&owner));
+        sample.overrides[0].selection
+    };
+    assert_eq!(selection(&store), Some(TerrainShape::Unavailable));
+    store.mark_chunk_loaded(ChunkKey::new(0, 0, 0)).unwrap();
+    assert!(matches!(selection(&store), Some(TerrainShape::Known(_))));
+}

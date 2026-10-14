@@ -385,7 +385,13 @@ impl TerrainSampler {
             return world.block_collision_shapes(position, physics, unit(position));
         }
         if let Some(owner) = world.actor_selection_owner(position, physics)? {
-            self.columns.insert((owner[0] >> 4, owner[2] >> 4));
+            // An owner's actor geometry is only versioned while its column is loaded.
+            let chunk = ChunkKey::new(world.dimension, owner[0] >> 4, owner[2] >> 4);
+            self.columns.insert((chunk.x, chunk.z));
+            world
+                .store
+                .collision_revision(chunk)
+                .ok_or(WorldQueryError::UnloadedChunk(chunk))?;
         }
         let columns = &mut self.columns;
         world.selection_shapes_with_lookup(position, physics, |neighbour| {

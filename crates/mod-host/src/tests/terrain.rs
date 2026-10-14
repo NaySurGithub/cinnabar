@@ -1,6 +1,7 @@
 use super::*;
 use crate::{
-    TerrainGeometry, TerrainPosition, TerrainQuery, TerrainRefresh, TerrainRegion, TerrainStamp,
+    TerrainCheck, TerrainGeometry, TerrainPosition, TerrainQuery, TerrainRefresh, TerrainRegion,
+    TerrainScheduler, TerrainSource, TerrainStamp,
 };
 use std::path::Path;
 #[path = "terrain_guest.rs"]
@@ -77,16 +78,35 @@ fn region() -> TerrainRegion {
         overrides: vec![],
     }
 }
-/// Supplies the committed query's next outcome, then runs one frame.
-fn frame(host: &mut ModHost, refresh: TerrainRefresh) -> anyhow::Result<()> {
-    host.refresh_terrain(|candidate, _| {
-        assert_eq!(*candidate, query());
-        refresh.clone()
-    });
+/// A world whose every check reports `check`, recording what it samples.
+struct Script {
+    check: TerrainCheck,
+    sampled: Vec<TerrainQuery>,
+}
+impl TerrainSource for Script {
+    fn check(&mut self, _: &TerrainQuery, _: Option<&TerrainRegion>) -> TerrainCheck {
+        self.check
+    }
+    fn sample(&mut self, query: &TerrainQuery) -> TerrainRefresh {
+        self.sampled.push(*query);
+        TerrainRefresh::Replace(Box::new(region()))
+    }
+}
+fn script(check: TerrainCheck) -> Script {
+    Script {
+        check,
+        sampled: Vec::new(),
+    }
+}
+const STALE: TerrainCheck = TerrainCheck::Stale { cells: 8 };
+
+/// Samples before the callback as the client does, then runs one frame.
+fn frame(host: &mut ModHost, check: TerrainCheck, budget: usize) -> anyhow::Result<()> {
+    TerrainScheduler::default().refresh(&mut [&mut *host], budget, &mut script(check));
     run(host)
 }
 
-/// New queries are pending, then deliver a region once and an unchanged stamp while kept.
+/// New queries are pending, then deliver a region once and an unchanged stamp while current.
 #[test]
 fn polling_crosses_the_component_boundary() {
     let mut host = load(
@@ -94,39 +114,109 @@ fn polling_crosses_the_component_boundary() {
         true,
     );
     run(&mut host).unwrap();
-    for refresh in [
-        TerrainRefresh::Replace(Box::new(region())),
-        TerrainRefresh::Keep,
-        TerrainRefresh::Replace(Box::new(region())),
-        TerrainRefresh::Keep,
-        TerrainRefresh::Pending,
+    for (check, budget) in [
+        (STALE, 8),
+        (TerrainCheck::Current, 8),
+        (STALE, 8),
+        (TerrainCheck::Current, 8),
+        (STALE, 7),
     ] {
-        frame(&mut host, refresh).unwrap();
+        frame(&mut host, check, budget).unwrap();
     }
 }
 
-/// A read result the guest does not expect traps its frame.
+/// A deferred callback keeps its subscription, so it reads its last sample when it resumes.
 #[test]
-fn unexpected_results_trap() {
-    let mut host = load(&expect_reads(&[CHANGED]), true);
-    assert!(run(&mut host).is_err());
-    assert!(!host.is_active());
+fn deferred_callbacks_keep_their_subscriptions() {
+    let mut host = load(&expect_reads(&[PENDING, CHANGED, UNCHANGED]), true);
+    let budget = CallbackBudget::new;
+    host.set_frame_authority(
+        budget(mod_api::TOTAL_MOD_FRAME_FUEL),
+        false,
+        false,
+        0,
+        HudClaims::default(),
+    );
+    run(&mut host).unwrap();
+    frame(&mut host, STALE, 8).unwrap();
+    host.set_frame_authority(budget(0), false, false, 0, HudClaims::default());
+    frame(&mut host, TerrainCheck::Current, 8).unwrap();
+    assert_eq!(host.instance.terrain_subscriptions(), 1);
+    host.set_frame_authority(
+        budget(mod_api::TOTAL_MOD_FRAME_FUEL),
+        false,
+        false,
+        0,
+        HudClaims::default(),
+    );
+    frame(&mut host, TerrainCheck::Current, 8).unwrap();
+}
+
+/// With every region changing every frame, round-robin sampling reaches each of two to four
+/// mods' full-size subscriptions within ceil(total cells / budget) frames, without callbacks.
+#[test]
+fn round_robin_sampling_reaches_every_mod() {
+    let cells = mod_api::MAX_TERRAIN_CELLS;
+    let side = i32::from(mod_api::MAX_TERRAIN_EXTENT);
+    for count in 2..=4 {
+        let mut hosts: Vec<ModHost> = (0..count)
+            .map(|index| {
+                let min = [index * side, 56, 0];
+                let max = [min[0] + side, min[1] + side, side];
+                ModHost::load_snapshot_with_grants(
+                    Path::new("terrain.wasm"),
+                    &terrain_guest(min, max, COLLISION, true, ""),
+                    ModGrants {
+                        terrain: true,
+                        ..Default::default()
+                    },
+                )
+                .unwrap()
+            })
+            .collect();
+        for host in &mut hosts {
+            let world = crate::WorldObservation {
+                session: 1,
+                dimension: 0,
+                world: "fixture".into(),
+                position: (32., 64., 8.),
+                alive: true,
+            };
+            host.observe_presentation(Some(world), None, None, Vec::new())
+                .unwrap();
+            host.frame_with_gameplay(false, Some(snapshot())).unwrap();
+            assert_eq!(host.instance.terrain_subscriptions(), 1);
+        }
+        let budget = mod_api::MAX_TERRAIN_FRAME_CELLS;
+        let bound = (count as usize * cells).div_ceil(budget);
+        let mut scheduler = TerrainScheduler::default();
+        let mut last = vec![0; count as usize];
+        for frame in 1..=6 {
+            let mut source = script(TerrainCheck::Stale { cells });
+            let mut borrowed: Vec<&mut ModHost> = hosts.iter_mut().collect();
+            scheduler.refresh(&mut borrowed, budget, &mut source);
+            for query in source.sampled {
+                last[(query.min.x / side) as usize] = frame;
+            }
+            if frame >= bound {
+                assert!(
+                    last.iter().all(|&at| frame - at < bound),
+                    "{count}: {last:?}"
+                );
+            }
+        }
+    }
 }
 
 #[test]
-fn denied_or_trapped_reads_request_nothing() {
+fn denied_or_trapped_reads_subscribe_nothing() {
     let mut denied = load(&expect_error(0), false);
     run(&mut denied).unwrap();
-    let mut requested = false;
-    denied.refresh_terrain(|_, _| {
-        requested = true;
-        TerrainRefresh::Pending
-    });
-    assert!(!requested);
+    assert_eq!(denied.instance.terrain_subscriptions(), 0);
     let mut trapped = load("unreachable", true);
     assert!(run(&mut trapped).is_err());
     assert!(!trapped.is_active());
-    trapped.refresh_terrain(|_, _| unreachable!("trapped requests are discarded"));
+    assert_eq!(trapped.instance.terrain_subscriptions(), 0);
 }
 
 #[test]
@@ -136,42 +226,10 @@ fn terrain_compute_remains_bounded() {
     assert!(!host.is_active());
 }
 
+/// A read result the guest does not expect traps its frame.
 #[test]
-fn terrain_frames_run_after_the_shared_event_lane_is_used() {
-    let mut host = load(&expect_reads(&[PENDING]), true);
-    let budget = CallbackBudget::new(mod_api::TOTAL_MOD_FRAME_FUEL);
-    assert!(
-        budget
-            .reserve(server_experience::runtime::CALLBACK_FUEL)
-            .is_some()
-    );
-    host.set_frame_authority(budget.clone(), false, false, 0, HudClaims::default());
-    run(&mut host).unwrap();
-    assert_eq!(budget.remaining(), mod_api::TOTAL_MOD_FRAME_FUEL);
-}
-
-/// Two terrain mods that spend fuel every frame both run every frame on the shared lane.
-#[test]
-fn terrain_mods_after_the_first_are_not_starved() {
-    // Counts down a linear-memory counter, spending a large share of one callback's fuel.
-    let burn = "i32.const 600 i32.const 60000 i32.store \
-        (loop $spin i32.const 600 i32.const 600 i32.load i32.const 1 i32.sub i32.store \
-        i32.const 600 i32.load br_if $spin)";
-    let mut hosts = [load(burn, true), load(burn, true)];
-    let budget = CallbackBudget::new(mod_api::TOTAL_MOD_FRAME_FUEL);
-    for _ in 0..4 {
-        budget.reset(mod_api::TOTAL_MOD_FRAME_FUEL);
-        for (owner, host) in hosts.iter_mut().enumerate() {
-            host.set_frame_authority(budget.clone(), false, false, owner, HudClaims::default());
-            run(host).unwrap();
-        }
-        for host in &mut hosts {
-            let mut staged = false;
-            host.refresh_terrain(|_, _| {
-                staged = true;
-                TerrainRefresh::Pending
-            });
-            assert!(staged, "every terrain mod ran this frame");
-        }
-    }
+fn unexpected_results_trap() {
+    let mut host = load(&expect_reads(&[CHANGED]), true);
+    assert!(run(&mut host).is_err());
+    assert!(!host.is_active());
 }

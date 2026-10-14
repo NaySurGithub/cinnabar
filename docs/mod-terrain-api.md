@@ -14,16 +14,19 @@ A callback may stage `MAX_TERRAIN_QUERIES` distinct queries. Errors are typed: `
 `unavailable` (no gameplay frame), `invalid-query`, `out-of-range`, `budget-exhausted` and
 `limit-exceeded`.
 
-Reading a query stages it; the client samples staged queries before the next frame, so a
-new query first reads `pending`. Keep reading a query every frame to keep it alive. Pass the
-stamp of the last region received for that query as `after`: an unchanged sample returns
-`unchanged(stamp)` without copying any terrain, and a changed one returns the whole region.
-A stamp compares equal only within one query, session, dimension and registry generation.
+The queries a callback reads become its subscriptions; the next callback that runs replaces
+them, so a query it no longer reads is dropped. A callback that is deferred or skipped keeps
+them. Before each frame's callbacks the client refreshes every mod's subscriptions, so a new
+query first reads `pending`. Pass the stamp of the last region received for a query as
+`after`: an unchanged sample returns `unchanged(stamp)` without copying any terrain, and a
+changed one returns the whole region. A stamp compares equal only within one query, session,
+dimension and registry generation.
 
-The client re-samples a query only when a column it read changed revision. Re-sampling is
-bounded per frame across all mods; queries beyond the budget read `pending` that frame.
-Regions over the box, metadata or response-size limits fail with `limit-exceeded`; ask for
-a smaller region.
+A subscription is re-sampled only when its session, dimension, registry or a column it read
+changed. Re-sampling shares one per-frame cell budget (`MAX_TERRAIN_FRAME_CELLS`) across all
+mods, taken round-robin from where the previous frame stopped; a stale subscription past the
+budget reads `pending` until its turn, within a few frames. Regions over the box, metadata or
+response-size limits fail with `limit-exceeded`; ask for a smaller region.
 
 ## Region layout
 
@@ -50,7 +53,6 @@ geometry, with its revision; `none` is absent terrain.
 
 ## Computation
 
-Frames of terrain-authorized mods get a separate, larger fuel lane with the same memory
-limit and wall-clock backstop. Pathfinding, raycasts and caching belong to the mod and
-should stay incremental. Screens suspend reads. This is not an exemption from
-rendered-frame performance gates.
+Sampling runs in the client, outside guest fuel, and is bounded by the cell budget. Callbacks
+of terrain-authorized mods have the ordinary frame fuel; pathfinding, raycasts and caching
+belong to the mod and should stay incremental. Screens suspend reads.

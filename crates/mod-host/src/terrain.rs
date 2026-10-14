@@ -7,19 +7,93 @@ use crate::{
     TerrainBlockState, TerrainQuery, TerrainReadError, TerrainRegion, TerrainShapeBinding,
 };
 
-/// What the client supplies for one query committed last frame.
+/// How the client refreshes one subscription this frame.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TerrainRefresh {
     /// The retained region is still current.
     Keep,
     /// A new sample; the host assigns its stamp revision.
     Replace(Box<TerrainRegion>),
-    /// No sample this frame, for example because the frame's sampling budget is spent.
+    /// No current sample this frame, because the frame's sampling budget is spent.
     Pending,
     Failed(TerrainReadError),
 }
 
-/// The latest outcome for one query.
+/// Whether a subscription's retained region still matches the client's world.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TerrainCheck {
+    Current,
+    /// Needs a new sample covering `cells` blocks.
+    Stale {
+        cells: usize,
+    },
+    Failed(TerrainReadError),
+}
+
+/// The client's world, as terrain subscriptions see it.
+pub trait TerrainSource {
+    /// Compares a retained region with the world without sampling.
+    fn check(&mut self, query: &TerrainQuery, retained: Option<&TerrainRegion>) -> TerrainCheck;
+    /// Samples a stale subscription; returns `Replace` or `Failed`.
+    fn sample(&mut self, query: &TerrainQuery) -> TerrainRefresh;
+}
+
+/// Round-robin sampling of every mod's subscriptions under one per-frame cell budget.
+/// The cursor persists across frames, so the first subscription the budget turned away
+/// is sampled first next frame.
+#[derive(Default)]
+pub struct TerrainScheduler {
+    cursor: usize,
+}
+
+impl TerrainScheduler {
+    /// Refreshes each terrain-authorized host's subscriptions before this frame's callbacks.
+    pub fn refresh(
+        &mut self,
+        hosts: &mut [&mut crate::ModHost],
+        budget: usize,
+        source: &mut impl TerrainSource,
+    ) {
+        let entries: Vec<(usize, usize)> = hosts
+            .iter()
+            .enumerate()
+            .filter(|(_, host)| host.is_active() && host.grants().terrain)
+            .flat_map(|(host, value)| {
+                (0..value.instance.terrain_subscriptions()).map(move |index| (host, index))
+            })
+            .collect();
+        if entries.is_empty() {
+            return;
+        }
+        let start = self.cursor % entries.len();
+        let (mut remaining, mut turned_away) = (budget, None);
+        for offset in 0..entries.len() {
+            let entry = (start + offset) % entries.len();
+            let (host, index) = entries[entry];
+            hosts[host]
+                .instance
+                .refresh_terrain(index, |query, retained| {
+                    match source.check(query, retained) {
+                        TerrainCheck::Current => TerrainRefresh::Keep,
+                        TerrainCheck::Failed(error) => TerrainRefresh::Failed(error),
+                        TerrainCheck::Stale { cells }
+                            if turned_away.is_none() && cells <= remaining =>
+                        {
+                            remaining -= cells;
+                            source.sample(query)
+                        }
+                        TerrainCheck::Stale { .. } => {
+                            turned_away.get_or_insert(entry);
+                            TerrainRefresh::Pending
+                        }
+                    }
+                });
+        }
+        self.cursor = turned_away.unwrap_or(start);
+    }
+}
+
+/// The latest outcome for one subscription.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Sample {
     Pending,
@@ -29,8 +103,9 @@ pub(crate) enum Sample {
 
 #[derive(Default)]
 pub(crate) struct TerrainState {
-    pub samples: Vec<(TerrainQuery, Sample)>,
-    pub queries: Vec<TerrainQuery>,
+    /// Queries the last executed callback read, with their latest samples. Deferred or skipped
+    /// callbacks leave them untouched.
+    pub subscriptions: Vec<(TerrainQuery, Sample)>,
     pub pending_queries: Vec<TerrainQuery>,
     pub calls: usize,
     revision: u64,
@@ -40,55 +115,43 @@ impl TerrainState {
         self.pending_queries.clear();
         self.calls = 0;
     }
+    /// Replaces the subscriptions with this callback's reads, keeping their samples.
     pub fn commit(&mut self) {
-        self.queries = std::mem::take(&mut self.pending_queries);
-    }
-    /// Keeps samples only for queries read again, refreshing each through `refresh`.
-    /// Queries run least recently refreshed first, so a shared sampling budget reaches all.
-    pub fn refresh(
-        &mut self,
-        mut refresh: impl FnMut(&TerrainQuery, Option<&TerrainRegion>) -> TerrainRefresh,
-    ) {
-        let mut previous = std::mem::take(&mut self.samples);
-        let mut queries = std::mem::take(&mut self.queries);
-        queries.sort_by_key(|query| {
-            previous
-                .iter()
-                .position(|(candidate, _)| candidate == query)
-                .unwrap_or(usize::MAX)
-        });
-        let mut refreshed = Vec::new();
-        for query in queries {
-            let retained = previous
+        let mut previous = std::mem::take(&mut self.subscriptions);
+        for query in self.pending_queries.drain(..) {
+            let sample = previous
                 .iter()
                 .position(|(candidate, _)| *candidate == query)
-                .map(|index| previous.swap_remove(index).1);
-            let region = match &retained {
-                Some(Sample::Region(region)) => Some(&**region),
-                _ => None,
-            };
-            let sample = match refresh(&query, region) {
-                TerrainRefresh::Keep => retained.unwrap_or(Sample::Pending),
-                TerrainRefresh::Replace(region)
-                    if terrain_region_bytes(&region) > mod_api::MAX_TERRAIN_RESPONSE_BYTES =>
-                {
-                    Sample::Failed(TerrainReadError::LimitExceeded)
-                }
-                TerrainRefresh::Replace(mut region) => {
-                    self.revision += 1;
-                    region.stamp.revision = self.revision;
-                    Sample::Region(region)
-                }
-                TerrainRefresh::Pending => Sample::Pending,
-                TerrainRefresh::Failed(error) => Sample::Failed(error),
-            };
-            if sample == Sample::Pending {
-                self.samples.push((query, sample));
-            } else {
-                refreshed.push((query, sample));
-            }
+                .map_or(Sample::Pending, |index| previous.swap_remove(index).1);
+            self.subscriptions.push((query, sample));
         }
-        self.samples.append(&mut refreshed);
+    }
+    /// Refreshes subscription `index` through `refresh`.
+    pub fn refresh(
+        &mut self,
+        index: usize,
+        refresh: impl FnOnce(&TerrainQuery, Option<&TerrainRegion>) -> TerrainRefresh,
+    ) {
+        let (query, sample) = &mut self.subscriptions[index];
+        let region = match sample {
+            Sample::Region(region) => Some(&**region),
+            _ => None,
+        };
+        *sample = match refresh(query, region) {
+            TerrainRefresh::Keep => return,
+            TerrainRefresh::Replace(region)
+                if terrain_region_bytes(&region) > mod_api::MAX_TERRAIN_RESPONSE_BYTES =>
+            {
+                Sample::Failed(TerrainReadError::LimitExceeded)
+            }
+            TerrainRefresh::Replace(mut region) => {
+                self.revision += 1;
+                region.stamp.revision = self.revision;
+                Sample::Region(region)
+            }
+            TerrainRefresh::Pending => Sample::Pending,
+            TerrainRefresh::Failed(error) => Sample::Failed(error),
+        };
     }
 }
 
@@ -202,16 +265,6 @@ impl TerrainDescriptors {
     }
 }
 
-impl crate::ModHost {
-    /// Refreshes last frame's committed queries; samples of queries not read again are dropped.
-    pub fn refresh_terrain(
-        &mut self,
-        refresh: impl FnMut(&TerrainQuery, Option<&TerrainRegion>) -> TerrainRefresh,
-    ) {
-        self.instance.refresh_terrain(refresh);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -241,33 +294,6 @@ mod tests {
             overrides: vec![],
         }
     }
-    /// With room for one sample per frame, every changing query is still sampled in turn.
-    #[test]
-    fn deferred_queries_are_sampled_before_earlier_ones() {
-        let queries = [query(0, 1), query(1, 2), query(2, 3)];
-        let mut state = TerrainState::default();
-        let mut sampled = [0; 3];
-        for frame in 1..=6 {
-            state.queries = queries.to_vec();
-            let mut budget = 1;
-            state.refresh(|_, _| {
-                if budget == 0 {
-                    return TerrainRefresh::Pending;
-                }
-                budget -= 1;
-                TerrainRefresh::Replace(Box::new(region()))
-            });
-            for (query, sample) in &state.samples {
-                if matches!(sample, Sample::Region(_)) {
-                    let index = queries.iter().position(|candidate| candidate == query);
-                    sampled[index.unwrap()] = frame;
-                }
-            }
-            if frame >= 3 {
-                assert!(sampled.iter().all(|&last| frame - last < 3), "{sampled:?}");
-            }
-        }
-    }
     #[test]
     fn bounds_reject_overflow_empty_volume_distance_and_oversized_regions() {
         assert_eq!(terrain_query_size(&query(-1, 1), [0.; 3]), Ok([2, 1, 1]));
@@ -293,30 +319,31 @@ mod tests {
         );
     }
     #[test]
-    fn queries_publish_on_commit_and_samples_follow_reads() {
+    fn commits_replace_subscriptions_and_keep_their_samples() {
         let mut state = TerrainState::default();
-        state.begin_frame();
-        state.pending_queries.push(query(0, 1));
-        assert!(state.queries.is_empty());
+        state.pending_queries = vec![query(0, 1), query(1, 2)];
         state.commit();
-        assert_eq!(state.queries.len(), 1);
-        state.refresh(|_, retained| {
+        state.refresh(0, |_, retained| {
             assert!(retained.is_none());
             TerrainRefresh::Replace(Box::new(region()))
         });
-        let Sample::Region(first) = &state.samples[0].1 else {
-            panic!("replaced");
-        };
-        assert_eq!(first.stamp.revision, 1);
-        state.queries = vec![query(0, 1)];
-        state.refresh(|_, retained| {
+        state.refresh(1, |_, _| TerrainRefresh::Pending);
+        assert!(
+            matches!(&state.subscriptions[0].1, Sample::Region(region) if region.stamp.revision == 1)
+        );
+        state.refresh(0, |_, retained| {
             assert_eq!(retained.map(|region| region.stamp.revision), Some(1));
             TerrainRefresh::Keep
         });
-        assert!(
-            matches!(&state.samples[0].1, Sample::Region(region) if region.stamp.revision == 1)
-        );
-        state.refresh(|_, _| unreachable!("no query was read again"));
-        assert!(state.samples.is_empty());
+        // A deferred callback commits nothing, so subscriptions and samples survive.
+        state.begin_frame();
+        assert_eq!(state.subscriptions.len(), 2);
+        state.pending_queries = vec![query(0, 1)];
+        state.commit();
+        assert_eq!(state.subscriptions.len(), 1);
+        assert!(matches!(&state.subscriptions[0].1, Sample::Region(_)));
+        state.begin_frame();
+        state.commit();
+        assert!(state.subscriptions.is_empty());
     }
 }
