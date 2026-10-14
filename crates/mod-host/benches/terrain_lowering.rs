@@ -25,10 +25,35 @@ static ALLOCATOR: test_alloc::CountingAllocator = test_alloc::CountingAllocator;
 
 /// Collision and selection flag bits.
 const BOTH: u8 = 3;
-/// Name, minimum, size, layers, states, boxes and overrides, as the sim fixture samples them.
-const REGIONS: [(&str, [i32; 3], [i32; 3], usize, usize, usize, usize); 2] = [
-    ("256", [12, 62, 12], [8, 4, 8], 2, 10, 9, 13),
-    ("4096", [8, 56, 8], [16, 16, 16], 2, 12, 23, 58),
+/// One benchmarked region, sized as the sim fixture samples it.
+struct Shape {
+    name: &'static str,
+    min: [i32; 3],
+    size: [i32; 3],
+    layers: usize,
+    states: usize,
+    boxes: usize,
+    overrides: usize,
+}
+const REGIONS: [Shape; 2] = [
+    Shape {
+        name: "256",
+        min: [12, 62, 12],
+        size: [8, 4, 8],
+        layers: 2,
+        states: 10,
+        boxes: 9,
+        overrides: 13,
+    },
+    Shape {
+        name: "4096",
+        min: [8, 56, 8],
+        size: [16, 16, 16],
+        layers: 2,
+        states: 12,
+        boxes: 23,
+        overrides: 58,
+    },
 ];
 const BLOCKS: [(&str, &str, &[&str]); 4] = [
     (
@@ -125,10 +150,15 @@ fn palette(
 }
 
 /// A flat response with the sim fixture's sizes; the second layer is mostly absent.
-fn flat_region(
-    metadata: &Metadata,
-    (cells, layers, states, boxes, overrides): (usize, usize, usize, usize, usize),
-) -> TerrainRegion {
+fn flat_region(metadata: &Metadata, shape: &Shape) -> TerrainRegion {
+    let Shape {
+        layers,
+        states,
+        boxes,
+        overrides,
+        ..
+    } = *shape;
+    let cells = shape.size.iter().product::<i32>() as usize;
     let palette = palette(&mut TerrainDescriptors::default(), metadata, states);
     TerrainRegion {
         stamp: TerrainStamp {
@@ -152,7 +182,7 @@ fn flat_region(
             .map(|slot| {
                 if slot < cells {
                     (slot % states) as u16
-                } else if slot % 37 == 0 {
+                } else if slot.is_multiple_of(37) {
                     2
                 } else {
                     u16::MAX
@@ -194,7 +224,14 @@ fn lowering_benches(criterion: &mut Criterion) {
         ..Default::default()
     };
     let mut group = criterion.benchmark_group("terrain_lowering");
-    for (name, min, size, layers, states, boxes, overrides) in REGIONS {
+    for shape in &REGIONS {
+        let Shape {
+            name,
+            min,
+            size,
+            states,
+            ..
+        } = *shape;
         let max = [0, 1, 2].map(|axis| min[axis] + size[axis]);
         let cells = size.iter().product::<i32>() as usize;
         let load = |remember: bool| {
@@ -209,9 +246,8 @@ fn lowering_benches(criterion: &mut Criterion) {
             host
         };
         let metadata = Metadata::new(states);
-        let shape = (cells, layers, states, boxes, overrides);
         let region = flat_region(&metadata, shape);
-        let replace = TerrainRefresh::Replace(region);
+        let replace = TerrainRefresh::Replace(Box::new(region));
         let mut changed = load(false);
         changed.refresh_terrain(|_, _| replace.clone());
         let ((), allocations) = test_alloc::measure(|| {

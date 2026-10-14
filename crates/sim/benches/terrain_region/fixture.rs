@@ -165,10 +165,17 @@ fn mix(x: i32, y: i32, z: i32) -> u32 {
 fn block(x: i32, y: i32, z: i32) -> (u32, Option<u32>) {
     let surface = mix(x, 0, z);
     match y {
-        _ if y < SURFACE - 2 => (if mix(x, y, z) % 17 == 0 { ORE } else { STONE }, None),
+        _ if y < SURFACE - 2 => (
+            if mix(x, y, z).is_multiple_of(17) {
+                ORE
+            } else {
+                STONE
+            },
+            None,
+        ),
         _ if y < SURFACE => (DIRT, None),
         SURFACE => match surface % 10 {
-            0 => (FENCE, (surface % 20 == 0).then_some(WATER)),
+            0 => (FENCE, surface.is_multiple_of(20).then_some(WATER)),
             1 => (WALL, None),
             2 => (STAIRS, None),
             3 => (WATER, None),

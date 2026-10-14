@@ -1,8 +1,8 @@
 use super::*;
-use std::path::Path;
 use crate::{
     TerrainGeometry, TerrainPosition, TerrainQuery, TerrainRefresh, TerrainRegion, TerrainStamp,
 };
+use std::path::Path;
 #[path = "terrain_guest.rs"]
 mod terrain_guest;
 use terrain_guest::{CHANGED, PENDING, UNCHANGED, expect_error, expect_reads, terrain_guest};
@@ -83,9 +83,9 @@ fn polling_crosses_the_component_boundary() {
     );
     host.frame_with_gameplay(false, Some(snapshot())).unwrap();
     for refresh in [
-        TerrainRefresh::Replace(region()),
+        TerrainRefresh::Replace(Box::new(region())),
         TerrainRefresh::Keep,
-        TerrainRefresh::Replace(region()),
+        TerrainRefresh::Replace(Box::new(region())),
         TerrainRefresh::Keep,
         TerrainRefresh::Pending,
     ] {

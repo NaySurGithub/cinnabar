@@ -13,7 +13,7 @@ pub enum TerrainRefresh {
     /// The retained region is still current.
     Keep,
     /// A new sample; the host assigns its stamp revision.
-    Replace(TerrainRegion),
+    Replace(Box<TerrainRegion>),
     /// No sample this frame, for example because the frame's sampling budget is spent.
     Pending,
     Failed(TerrainReadError),
@@ -23,7 +23,7 @@ pub enum TerrainRefresh {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Sample {
     Pending,
-    Region(TerrainRegion),
+    Region(Box<TerrainRegion>),
     Failed(TerrainReadError),
 }
 
@@ -55,7 +55,7 @@ impl TerrainState {
                 .position(|(candidate, _)| *candidate == query)
                 .map(|index| previous.swap_remove(index).1);
             let region = match &retained {
-                Some(Sample::Region(region)) => Some(region),
+                Some(Sample::Region(region)) => Some(&**region),
                 _ => None,
             };
             let sample = match refresh(&query, region) {
@@ -261,7 +261,7 @@ mod tests {
         assert_eq!(state.queries.len(), 1);
         state.refresh(|_, retained| {
             assert!(retained.is_none());
-            TerrainRefresh::Replace(region())
+            TerrainRefresh::Replace(Box::new(region()))
         });
         let Sample::Region(first) = &state.samples[0].1 else {
             panic!("replaced");

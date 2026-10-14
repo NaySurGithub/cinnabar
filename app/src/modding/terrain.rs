@@ -200,7 +200,7 @@ impl TerrainSampling {
                 ..description.clone()
             });
         }
-        TerrainRefresh::Replace(TerrainRegion {
+        TerrainRefresh::Replace(Box::new(TerrainRegion {
             stamp,
             chunks: sample
                 .columns
@@ -226,7 +226,7 @@ impl TerrainSampling {
                     selection: entry.selection.map(shape),
                 })
                 .collect(),
-        })
+        }))
     }
 }
 

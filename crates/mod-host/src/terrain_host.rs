@@ -1,6 +1,6 @@
 use super::{State, cinnabar};
 use crate::terrain::Sample;
-use crate::{TerrainQuery, TerrainReadError, TerrainReadResult, TerrainStamp};
+use crate::{TerrainQuery, TerrainReadError, TerrainReadResult, TerrainRegion, TerrainStamp};
 use anyhow::{Result, bail};
 
 impl cinnabar::extension::terrain::Host for State {
@@ -51,7 +51,7 @@ impl cinnabar::extension::terrain::Host for State {
                 Ok(if after == Some(region.stamp) {
                     TerrainReadResult::Unchanged(region.stamp)
                 } else {
-                    TerrainReadResult::Changed(region.clone())
+                    TerrainReadResult::Changed(TerrainRegion::clone(region))
                 })
             }
             _ => Ok(TerrainReadResult::Pending),
@@ -142,7 +142,7 @@ mod tests {
             );
         }
         assert_eq!(value.terrain.pending_queries.len(), 1);
-        sample(&mut value, TerrainRefresh::Replace(region(1, 0)));
+        sample(&mut value, TerrainRefresh::Replace(Box::new(region(1, 0))));
         let Ok(TerrainReadResult::Changed(first)) = value.read_region(query(0), None).unwrap()
         else {
             panic!("a sample was supplied");
@@ -151,7 +151,7 @@ mod tests {
             value.read_region(query(0), Some(first.stamp)).unwrap(),
             Ok(TerrainReadResult::Unchanged(first.stamp))
         );
-        sample(&mut value, TerrainRefresh::Replace(region(1, 0)));
+        sample(&mut value, TerrainRefresh::Replace(Box::new(region(1, 0))));
         assert!(matches!(
             value.read_region(query(0), Some(first.stamp)).unwrap(),
             Ok(TerrainReadResult::Changed(next)) if next.stamp.revision > first.stamp.revision
@@ -211,7 +211,7 @@ mod tests {
         for (session, dimension, delivered) in [(7, 2, true), (1, 2, false), (7, 0, false)] {
             sample(
                 &mut value,
-                TerrainRefresh::Replace(region(session, dimension)),
+                TerrainRefresh::Replace(Box::new(region(session, dimension))),
             );
             let result = value.read_region(query(0), None).unwrap().unwrap();
             assert_eq!(
