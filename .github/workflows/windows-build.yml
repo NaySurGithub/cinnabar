@@ -1,0 +1,104 @@
+name: Windows build
+on:
+  workflow_dispatch:
+    inputs:
+      tools_only:
+        description: Build only the native developer tools
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: windows-build-${{ github.ref }}-${{ inputs.tools_only && 'tools' || 'runtime' }}
+  cancel-in-progress: false
+env:
+  CARGO_BUILD_BUILD_DIR: "{workspace-root}/target"
+  CARGO_INCREMENTAL: "0"
+  CARGO_TERM_COLOR: always
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install pinned Rust
+        run: rustup toolchain install
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+          cache: false
+      - name: Restore Rust and Go cache
+        id: build-cache
+        uses: actions/cache/restore@v5
+        with:
+          key: windows-${{ inputs.tools_only && 'tools' || 'runtime' }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'core/go.sum', 'go.work.sum') }}-${{ github.sha }}
+          restore-keys: |
+            windows-runtime-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'core/go.sum', 'go.work.sum') }}-
+          path: |
+            target
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/go/pkg/mod
+            ~/AppData/Local/go-build
+      - name: Restore unchanged source timestamps
+        env:
+          CACHE_WORKSPACE: .
+        run: python .github/actions/build-cache/cache.py restore-inputs
+      - name: Install packaging tools
+        if: ${{ !inputs.tools_only }}
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          & "$env:USERPROFILE\.dotnet\tools\wix.exe" extension add -g WixToolset.BootstrapperApplications.wixext/5.0.2
+          choco install imagemagick make --no-progress -y
+          $magick = Get-ChildItem "$env:ProgramFiles\ImageMagick*" -Directory | Select-Object -First 1
+          if (-not $magick) { throw "ImageMagick not found" }
+          Add-Content $env:GITHUB_PATH $magick.FullName
+          Add-Content $env:GITHUB_PATH "$env:USERPROFILE\.dotnet\tools"
+          Add-Content $env:GITHUB_PATH "$env:ProgramData\chocolatey\bin"
+      - name: Build developer tools
+        run: cargo build --release --locked -p mod-host --bin mod-host -p cinnabar-mcp --bin cinnabar-mcp
+      - name: Upload developer tools
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-developer-tools
+          path: |
+            target/release/mod-host.exe
+            target/release/cinnabar-mcp.exe
+          if-no-files-found: error
+          retention-days: 14
+      - name: Build Windows runtime
+        if: ${{ !inputs.tools_only }}
+        run: make package-binaries PACKAGE_CARGO_FLAGS="--features cinnabar/developer-control"
+      - name: Verify cached source inputs
+        if: ${{ always() && !cancelled() }}
+        env:
+          CACHE_WORKSPACE: .
+        run: python .github/actions/build-cache/cache.py verify-inputs
+      - name: Stage payload and installers
+        if: ${{ !inputs.tools_only }}
+        shell: pwsh
+        run: |
+          & ./packaging/windows/build-installer.ps1 -Root $env:GITHUB_WORKSPACE
+      - name: Upload runtime and installers
+        if: ${{ !inputs.tools_only }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-runtime
+          path: .local/dist/windows-release/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Retain compiler cache
+        if: ${{ always() && !cancelled() }}
+        uses: actions/cache/save@v5
+        with:
+          key: ${{ steps.build-cache.outputs.cache-primary-key }}
+          path: |
+            target
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/go/pkg/mod
+            ~/AppData/Local/go-build
