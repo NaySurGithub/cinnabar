@@ -398,7 +398,7 @@ interface item-use {
 interface terrain {
     record position { x: s32, y: s32, z: s32 }
     flags geometry { collision, selection }
-    /// Inclusive minimum and exclusive maximum; each extent is 1 to 16 blocks.
+    /// Inclusive minimum and exclusive maximum; each extent is 1 to `MAX_TERRAIN_EXTENT` blocks.
     record region-query { min: position, max: position, geometry: geometry }
     /// Identifies one sample of one query; an equal stamp means identical contents.
     record stamp { session: u64, dimension: s32, registry: u64, revision: u64 }
@@ -447,8 +447,9 @@ interface terrain {
     }
     variant read-result { pending, unchanged(stamp), changed(region) }
     enum read-error { denied, unavailable, invalid-query, out-of-range, budget-exhausted, limit-exceeded }
-    /// Requires terrain authority and a gameplay frame; the query lies within 128 blocks of the
-    /// player on each axis. Pass the stamp last received for this query to skip unchanged data.
+    /// Requires terrain authority and a gameplay frame; the query lies within
+    /// `MAX_TERRAIN_DISTANCE` blocks of the player on each axis. Pass the stamp last received
+    /// for this query to skip unchanged data. Limits are `mod-api`'s `MAX_TERRAIN_*` constants.
     read-region: func(query: region-query, after: option<stamp>) -> result<read-result, read-error>;
 }
 

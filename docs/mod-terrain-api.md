@@ -7,11 +7,12 @@ from `gameplay.read-frame`, without other players. Limits live in `mod_api`
 
 ## Queries and polling
 
-A query names an inclusive minimum, an exclusive maximum (each extent 1 to 16 blocks, so at
-most 4,096 cells) and the `geometry` it needs: `collision`, `selection`, both or neither. It
-must lie within 128 blocks of the player on each axis. A callback may stage four distinct
-queries. Errors are typed: `denied`, `unavailable` (no gameplay frame), `invalid-query`,
-`out-of-range`, `budget-exhausted` and `limit-exceeded`.
+A query names an inclusive minimum, an exclusive maximum (each extent 1 to
+`MAX_TERRAIN_EXTENT` blocks) and the `geometry` it needs: `collision`, `selection`, both or
+neither. It must lie within `MAX_TERRAIN_DISTANCE` blocks of the player on each axis. A
+callback may stage `MAX_TERRAIN_QUERIES` distinct queries. Errors are typed: `denied`,
+`unavailable` (no gameplay frame), `invalid-query`, `out-of-range`, `budget-exhausted` and
+`limit-exceeded`.
 
 Reading a query stages it; the client samples staged queries before the next frame, so a
 new query first reads `pending`. Keep reading a query every frame to keep it alive. Pass the
