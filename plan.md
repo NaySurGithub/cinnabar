@@ -63,7 +63,7 @@ saved on/off reads as On/Auto.
 
 With far terrain on, only columns within the full-detail radius are lit, meshed and uploaded;
 the rest of what the server sends keeps its block data and is drawn by far terrain from its
-summary. The radius is Auto by device tier (24, 32 or 48 chunks) or set under Video › Advanced
+summary. The radius is Auto by device tier (24, 32 or 48 chunks) or set under Video › Full-Detail Distance
 (16–64), capped at the render distance, so large render distances cost far tiles rather than
 meshes. A column is promoted (relit and remeshed) inside the radius and demoted two chunks past
 it. Both hand-overs are two-phase: a promoted column passes to near terrain only once its
@@ -8980,6 +8980,17 @@ identities come from the pinned registry rather than numeric ranges.
 Incomplete: the additional renderers for brushable blocks, trial spawners and
 vaults remain unsupported. New logical routes are provisional, and the existing
 renderer, visual and performance acceptance gates remain open.
+
+## Compiled pack render admission
+
+Pack compilation reads shared render identities, tint domains, routing and icon flags.
+Attachable categories use admitted armour slots and shield/glider facts; native held
+items use the item trait and tier owners. Atmosphere source specifications are shared.
+Existing state, collision and artwork checks still guard native model compilation.
+
+Incomplete: render rules remain provisional. Native artwork associations, texture
+aliases and broader custom content admission still need owning metadata and rendered
+verification; this migration does not close their parity or performance gates.
 
 ## Server form screen variables
 
