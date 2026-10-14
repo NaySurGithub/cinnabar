@@ -49,13 +49,13 @@ jobs:
       - name: Test domain and host behavior
         run: cargo test --locked -p semantic-input -p sim -p mod-host --lib
       - name: Test multiple loaded mods
-        run: cargo test --locked -p client-extensions --features local-mods --lib
+        run: cargo test --locked -p client-extensions --lib
       - name: Check client adapters and tests
-        run: cargo check --locked -p cinnabar --features local-mods --tests
+        run: cargo check --locked -p cinnabar --tests
       - name: Test client adapters
-        run: cargo test --locked -p cinnabar --features local-mods --lib -- modding
+        run: cargo test --locked -p cinnabar --lib -- modding
       - name: Lint changed packages
-        run: cargo clippy --locked -p semantic-input -p sim -p mod-host -p client-extensions -p cinnabar --features cinnabar/local-mods,client-extensions/local-mods --all-targets -- -D warnings
+        run: cargo clippy --locked -p semantic-input -p sim -p mod-host -p client-extensions -p cinnabar --all-targets -- -D warnings
       - name: Verify cached inputs
         if: ${{ always() && !cancelled() }}
         env:

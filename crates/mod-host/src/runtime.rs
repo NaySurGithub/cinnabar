@@ -575,6 +575,10 @@ impl Instance {
             && let Some(budget) = &self.callback_budget
         {
             budget.refund(allowance - self.last_fuel);
+        } else if fuel == crate::NAVIGATION_FRAME_FUEL
+            && let Some(budget) = &self.callback_budget
+        {
+            budget.refund_navigation(allowance - self.last_fuel);
         }
         if let Err(error) = called {
             self.quarantine();

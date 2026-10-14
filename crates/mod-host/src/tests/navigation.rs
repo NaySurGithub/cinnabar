@@ -84,3 +84,19 @@ fn navigation_compute_remains_bounded_and_revokes_input_on_exhaustion() {
     assert!(!host.is_active());
     assert!(host.take_automation().is_none());
 }
+
+#[test]
+fn navigation_frame_runs_after_the_shared_event_lane_is_used() {
+    let (_dir, mut host) = load(true, false);
+    let budget = CallbackBudget::new(mod_api::TOTAL_MOD_FRAME_FUEL);
+    assert!(
+        budget
+            .reserve(server_experience::runtime::CALLBACK_FUEL)
+            .is_some()
+    );
+    host.set_frame_authority(budget.clone(), false, false, 0, HudClaims::default());
+    run(&mut host).unwrap();
+    assert!(host.take_automation().unwrap().forward);
+    assert_eq!(host.take_hotbar(), Some(3));
+    assert_eq!(budget.remaining(), mod_api::TOTAL_MOD_FRAME_FUEL);
+}

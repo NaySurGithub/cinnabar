@@ -7,6 +7,7 @@ mod fullbright;
 mod gameplay;
 mod hud;
 mod item_use;
+mod navigation;
 mod player_state;
 mod prepared_settings;
 mod render;
@@ -534,4 +535,3 @@ fn authority_revocation_never_changes_a_prior_quarantine_into_recoverable_state(
     trapped.revoke();
     assert!(!trapped.is_active() && !trapped.is_revoked());
 }
-mod navigation;
