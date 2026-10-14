@@ -35,8 +35,8 @@ mod admission;
 mod environment_loader;
 mod hud_editor;
 mod library;
-mod navigation;
 mod registration;
+mod terrain;
 
 /// Every loaded mod's presentation cues committed this frame, in load order.
 #[derive(Resource, Default)]
@@ -344,7 +344,6 @@ fn configure_systems(app: &mut App, watching: bool) {
     fullbright::configure(app);
     app.init_resource::<crate::item_use::ModItemUsePolicy>()
         .init_resource::<ModCueFeed>()
-        .init_resource::<navigation::AutomationInput>()
         .add_plugins(::render::ModRenderPlugin)
         .add_systems(Update, render::grant_depth_sampling);
     if watching {
@@ -361,7 +360,6 @@ fn configure_systems(app: &mut App, watching: bool) {
         drive_mod
             .in_set(client_state::ModCameraInputSet)
             .after(ClientFrameSet::SemanticFinalize)
-            .before(client_interaction::hotbar::queue_hotbar_selection)
             .before(ClientFrameSet::UiPublication)
             .before(crate::environment::update_atmosphere_frame),
     );
@@ -399,7 +397,6 @@ type ModOutputs<'w> = (
 #[derive(SystemParam)]
 struct ModObservation<'w, 's> {
     environment_loader: Option<Res<'w, environment_loader::Loader>>,
-    automation_input: ResMut<'w, navigation::AutomationInput>,
     watcher: Option<Res<'w, registration::Watcher>>,
     render_scene: Option<ResMut<'w, render_scene::ModRenderScene>>,
     cameras: Query<
@@ -437,7 +434,6 @@ fn drive_mod(
 ) {
     let ModObservation {
         environment_loader,
-        mut automation_input,
         watcher,
         render_scene,
         cameras,
@@ -457,15 +453,6 @@ fn drive_mod(
             crate::camera::mouse_input_active(window, cursor, focus.as_deref(), driven.is_some())
         })
     });
-    let input_scope = (focused && captured && !absorbed)
-        .then(|| gameplay.world_observation(&ui))
-        .flatten()
-        .filter(|world| world.alive)
-        .map(|world| (world.session, world.dimension));
-    if automation_input.scope != input_scope {
-        automation_input.overlay.reset();
-        automation_input.scope = input_scope;
-    }
     let movement_allowed = extension.as_ref().is_some_and(|runtime| {
         !runtime.suspended
             && (0..runtime.hosts.host_count()).any(|index| {
@@ -478,11 +465,9 @@ fn drive_mod(
     let (Some(mut extension), Some(mut time_override), Some(mut interaction)) =
         (extension, time_override, interaction)
     else {
-        automation_input.overlay.reset();
         return;
     };
     if extension.suspended {
-        automation_input.overlay.reset();
         return;
     }
     let mut reloaded = false;
@@ -579,7 +564,7 @@ fn drive_mod(
         });
     for index in 0..extension.hosts.host_count() {
         let host = extension.hosts.host_mut(index);
-        navigation::supply_terrain(host, &gameplay, world_observation.as_ref());
+        terrain::supply_terrain(host, &gameplay, world_observation.as_ref());
     }
     let mut callback_failed = false;
     let merged = multi::run_frame(
@@ -631,18 +616,6 @@ fn drive_mod(
     });
     gameplay.synchronize_jump_scope(movement_allowed && captured && !absorbed, &ui);
     gameplay.pulse_jump(merged.jump_pulse && !merged.jump_cancel, &ui);
-    let automation = input_scope.and(merged.automation).map(navigation::controls);
-    if let Some(input) = gameplay.input.as_mut() {
-        automation_input.overlay.apply(&mut input.0, automation);
-    } else {
-        automation_input.overlay.reset();
-    }
-    if input_scope.is_some()
-        && let Some(slot) = merged.hotbar
-        && let Some(input) = gameplay.input.as_mut()
-    {
-        input.request_mod_hotbar_selection(slot);
-    }
     interaction.attack_reach = merged.attack_reach;
     interaction.attack_pulse = merged.attack_pulse && gameplay.pulse_attack();
     if let Some(delta) = merged.delta {

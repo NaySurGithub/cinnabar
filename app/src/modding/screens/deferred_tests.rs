@@ -36,7 +36,6 @@ fn install_driver(app: &mut App, hosts: Vec<ModHost>, owner: usize, layout: Scre
     app.insert_resource(runtime)
         .insert_resource(crate::environment::VisualTimeOverride(None))
         .init_resource::<ModInteraction>()
-        .init_resource::<crate::modding::navigation::AutomationInput>()
         .add_systems(Update, (begin_mod_frame, drive_mod).chain());
 }
 

@@ -185,8 +185,6 @@ impl GameplayContext<'_> {
     pub(super) fn snapshot(&self, allowed: bool, grants: &ModGrants) -> Option<GameplaySnapshot> {
         if !allowed
             || !(grants.terrain
-                || grants.automation
-                || grants.hotbar
                 || grants.players
                 || grants.camera
                 || grants.item_use

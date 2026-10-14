@@ -1,35 +1,11 @@
-//! Current-session terrain sampling and ordinary semantic-input adaptation.
+//! Current-session terrain sampling for terrain-authorized mods.
 use super::gameplay::GameplayContext;
-use bevy::prelude::Resource;
 use mod_host::{
     TerrainBounds, TerrainCell, TerrainChunkRevision, TerrainLayer, TerrainPosition,
     TerrainProperties, TerrainQuery, TerrainRegion,
 };
 use sim::{BlockPhysicsFlags as Flags, PaletteWorld};
 
-#[derive(Default, Resource)]
-pub(super) struct AutomationInput {
-    pub scope: Option<(u64, i32)>,
-    pub overlay: semantic_input::automation::Overlay,
-}
-/// Adapts typed guest controls to the ordinary input-domain carrier.
-pub(super) fn controls(
-    value: mod_host::AutomationControls,
-) -> semantic_input::automation::Controls {
-    semantic_input::automation::Controls {
-        movement: semantic_input::MovementButtons {
-            forward: value.forward,
-            backward: value.backward,
-            left: value.left,
-            right: value.right,
-        },
-        jump: value.jump,
-        sprint: value.sprint,
-        sneak: value.sneak,
-        attack: value.attack,
-        use_item: value.use_item,
-    }
-}
 /// Services only last frame's committed requests against this frame's current world.
 pub(super) fn supply_terrain(
     host: &mut mod_host::ModHost,

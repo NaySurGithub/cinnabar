@@ -207,8 +207,7 @@ interface gameplay {
         frame-seconds: f32,
         players: list<player>,
     }
-    /// Requires players or a local terrain/automation/hotbar grant. Player rows require players.
-    /// None means gameplay does not own input.
+    /// Requires players or terrain; player rows require players. None means gameplay does not own input.
     read-frame: func() -> result<option<snapshot>, string>;
     /// Input-owned local physics state; velocity is blocks per simulation tick.
     record movement-snapshot {
@@ -428,24 +427,9 @@ interface terrain {
     read-region: func(query: region-query) -> result<option<region>, string>;
 }
 
-/// Ordinary semantic input, renewed every successful gameplay frame.
-interface automation {
-    record controls {
-        /// Digital directions; opposing directions cancel through the ordinary input carrier.
-        forward: bool, backward: bool, left: bool, right: bool,
-        jump: bool, sprint: bool, sneak: bool, attack: bool, use-item: bool,
-    }
-    /// None releases this mod's contribution. Requires automation authority.
-    /// Physical controls remain effective; focus loss, menus and traps revoke the contribution.
-    set-controls: func(value: option<controls>) -> result<_, string>;
-    /// Queues ordinary equipment selection, 0..8; requires hotbar authority.
-    select-hotbar: func(slot: u8) -> result<_, string>;
-}
-
 /// Experimental developer contract; no WASI or ambient operating-system access.
 world extension {
     import terrain;
-    import automation;
     import player-state;
     import item-use;
     import camera;

@@ -75,16 +75,16 @@ radius.
 Incomplete: the far-terrain look (cell colours, height aggregation and water blending) is held
 for owner review. Enhanced rendering lights far terrain with the vanilla path,
 and block light, clouds and weather do not reach it. No parity gate closes here.
-## Local navigation capabilities
 
-Local mods can request bounded terrain regions with all palette layers, canonical
-states, resolved collision/selection geometry and physics facts. Separate grants
-allow renewed ordinary gameplay inputs and normal hotbar selection. Unknown cells
-and unavailable contextual geometry remain explicit. Existing mods receive none
-of these permissions by default.
+## Local terrain reads
 
-Incomplete: live navigation, mining, placement and focus-transition acceptance on
-Windows has not been completed. No movement or interaction parity gate closes here.
+Local mods with the `terrain` grant can request bounded terrain regions with all palette
+layers, canonical states, resolved collision/selection geometry and physics facts. Unknown
+cells and unavailable contextual geometry remain explicit. Existing mods receive no new
+permission by default.
+
+Incomplete: live acceptance on Windows has not been completed. No movement or interaction
+parity gate closes here.
 
 ## Experimental Android client
 

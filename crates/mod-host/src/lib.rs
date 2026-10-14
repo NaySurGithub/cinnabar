@@ -15,13 +15,13 @@ mod execution;
 mod load;
 pub mod local_files;
 pub mod module_observations;
-mod navigation;
 mod outputs;
 pub mod package;
 mod runtime;
 mod screens;
 pub mod server;
 mod settings;
+mod terrain;
 pub use settings::settings_companion;
 
 pub use screens::{DataSource, KeyModifiers, LoadedPackage, ModEvent, ModScreens};
@@ -42,13 +42,10 @@ pub use runtime::cinnabar::extension::{
     events::Cue as ModCue, input::Controls as ControlFrame, panel::Event as ControlEvent,
 };
 
-pub use runtime::cinnabar::extension::{
-    automation::Controls as AutomationControls,
-    terrain::{
-        Bounds as TerrainBounds, Cell as TerrainCell, ChunkRevision as TerrainChunkRevision,
-        Layer as TerrainLayer, Position as TerrainPosition, Properties as TerrainProperties,
-        Region as TerrainRegion, RegionQuery as TerrainQuery,
-    },
+pub use runtime::cinnabar::extension::terrain::{
+    Bounds as TerrainBounds, Cell as TerrainCell, ChunkRevision as TerrainChunkRevision,
+    Layer as TerrainLayer, Position as TerrainPosition, Properties as TerrainProperties,
+    Region as TerrainRegion, RegionQuery as TerrainQuery,
 };
 
 /// Successfully committed local interaction requests, consumed once per frame.
@@ -84,8 +81,8 @@ pub const MAX_COMPONENT_SOURCE_BYTES: usize = MAX_COMPONENT_BYTES
 /// Plain-text UI limit, checked before publishing any guest output.
 pub const MAX_LABEL_BYTES: usize = 256;
 pub(crate) const FRAME_FUEL: u64 = 100_000;
-/// Bounded geometry work for explicitly authorized local navigation callbacks.
-pub(crate) const NAVIGATION_FRAME_FUEL: u64 = 2_000_000;
+/// Bounded geometry work for frames of terrain-authorized mods.
+pub(crate) const TERRAIN_FRAME_FUEL: u64 = 2_000_000;
 pub(crate) const MEMORY_BYTES: usize = 16 * 1024 * 1024;
 
 /// Where a mod came from, which reload reads again.

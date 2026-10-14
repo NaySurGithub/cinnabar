@@ -287,11 +287,7 @@ impl cinnabar::extension::gameplay::Host for State {
         if self.gameplay_reads > MAX_IMPORT_WRITES {
             bail!("gameplay read budget exhausted");
         }
-        if !(self.grants.players
-            || self.grants.terrain
-            || self.grants.automation
-            || self.grants.hotbar)
-        {
+        if !(self.grants.players || self.grants.terrain) {
             return Ok(Err("local pose capability denied".into()));
         }
         let mut snapshot = self.snapshot.clone();

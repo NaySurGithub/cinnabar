@@ -1,7 +1,6 @@
 //! Vendor-independent, renderer-independent semantic input primitives.
 
 mod action;
-pub mod automation;
 mod axes;
 mod binding;
 mod button_events;

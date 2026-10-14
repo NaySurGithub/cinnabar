@@ -1,8 +1,7 @@
-# Local terrain and automation capabilities
+# Local terrain reads
 
-Three separate grants, denied by default: `terrain`, `automation`, `hotbar`.
-They are available to local components and packages through the extension world.
-Existing components remain compatible and receive no new authority by default.
+The `terrain` grant, denied by default, is available to local components and packages
+through the extension world. Existing components remain compatible and receive no new authority by default.
 
 ## Terrain and block properties
 
@@ -30,29 +29,9 @@ speed factors, fluid height, liquid and movement flags, and native surface respo
 The mod owns raycasting, pathfinding, hazard policy and caching. Compare revisions
 only within the same session and dimension; include all returned neighbor columns.
 
-## Ordinary gameplay input
-
-`automation.set-controls(some(controls))` contributes digital directions, jump,
-sprint, sneak, attack and item use for the current frame. It requires the separate
-`automation` grant, focused captured gameplay and no input-owning mod panel.
-Physical controls remain effective. Opposing directions cancel; diagonal movement
-is unit-clamped. The input domain generates press, held and release phases, and
-ordinary simulation, cooldowns and interaction admission remain authoritative.
-
-Renew every frame. Omission or `none` releases synthetic input. Menus, lost focus,
-a changed session/dimension/input authority, unload and traps stop renewal. Multiple
-mods resolve automation in load order: the earliest publishing instance wins.
-
-`automation.select-hotbar(slot)` requires `hotbar`, accepts slots 0 through 8, and
-queues an ordinary semantic number-key selection. Physical hotbar actions take
-priority. The normal equipment queue and transport publish the selection.
-
-No raw packets, direct velocity changes, world mutation, unrestricted file access,
-container transfers, crafting or automatic chunk loading are added.
-
 ## Computation limits
 
-Frames authorized for terrain or automation receive a bounded geometry-work fuel
-budget, with the same memory limit and wall-clock backstop. Navigation work must
+Frames authorized for terrain receive a bounded geometry-work fuel
+budget, with the same memory limit and wall-clock backstop. Mod work must
 still be incremental. Queries are read from captured gameplay frames; screens
 suspend requests. This is not an exemption from rendered-frame performance gates.

@@ -3,8 +3,6 @@
 
 /// Maximum cells returned by one terrain query.
 pub const MAX_TERRAIN_CELLS: usize = 256;
-/// Number of equipment slots addressable by the automation contract.
-pub const AUTOMATION_HOTBAR_SLOTS: u8 = 9;
 /// Maximum distinct terrain queries serviced for one mod per frame.
 pub const MAX_TERRAIN_QUERIES: usize = 4;
 /// Maximum terrain distance from the current player, along each axis.

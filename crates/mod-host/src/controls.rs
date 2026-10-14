@@ -139,7 +139,7 @@ impl ControlState {
         self.frame = empty_controls();
     }
 
-    pub(super) fn budget(&mut self, read: bool) -> Result<()> {
+    fn budget(&mut self, read: bool) -> Result<()> {
         let count = if read {
             &mut self.reads
         } else {

@@ -41,13 +41,13 @@ mod gameplay;
 mod hud;
 #[path = "item_use.rs"]
 mod item_use;
-#[path = "navigation_host.rs"]
-mod navigation_host;
 mod player_mod;
 #[path = "player_state.rs"]
 mod player_state;
 #[path = "render.rs"]
 mod render;
+#[path = "terrain_host.rs"]
+mod terrain_host;
 
 /// What a package declares that the host checks guest output and events against.
 #[derive(Clone, Debug, Default)]
@@ -59,7 +59,7 @@ pub(crate) struct Declared {
 
 struct State {
     exclusive: crate::exclusive::Exclusive,
-    navigation: crate::navigation::NavigationState,
+    terrain: crate::terrain::TerrainState,
     limits: StoreLimits,
     pressed: bool,
     label: Option<String>,
@@ -125,7 +125,7 @@ impl State {
                 .tables(2)
                 .trap_on_grow_failure(true)
                 .build(),
-            navigation: Default::default(),
+            terrain: Default::default(),
             pressed: false,
             label: None,
             exclusive: Default::default(),
@@ -435,7 +435,7 @@ impl Instance {
     /// Clears transient outputs even when no guest callback can execute this frame.
     pub(super) fn begin_frame(&mut self) {
         let state = self.store.data_mut();
-        state.navigation.begin_frame();
+        state.terrain.begin_frame();
         state.snapshot = None;
         state.movement = None;
         state.pending_jump = false;
@@ -508,8 +508,8 @@ impl Instance {
         state.world.mobs = mobs;
         state.player_state.set_snapshot(player_state)?;
         state.controls.frame = controls;
-        let budget = if self.store.data().grants.terrain || self.store.data().grants.automation {
-            crate::NAVIGATION_FRAME_FUEL
+        let budget = if self.store.data().grants.terrain {
+            crate::TERRAIN_FRAME_FUEL
         } else {
             FRAME_FUEL
         };
@@ -575,10 +575,10 @@ impl Instance {
             && let Some(budget) = &self.callback_budget
         {
             budget.refund(allowance - self.last_fuel);
-        } else if fuel == crate::NAVIGATION_FRAME_FUEL
+        } else if fuel == crate::TERRAIN_FRAME_FUEL
             && let Some(budget) = &self.callback_budget
         {
-            budget.refund_navigation(allowance - self.last_fuel);
+            budget.refund_terrain(allowance - self.last_fuel);
         }
         if let Err(error) = called {
             self.quarantine();
@@ -664,7 +664,7 @@ impl Instance {
         state.label = None;
         state.hud = hud::HudState::default();
         state.player_state.revoke();
-        state.navigation = Default::default();
+        state.terrain = Default::default();
         state.pending_time = None;
         state.time_override = None;
         state.fullbright = false;
@@ -717,16 +717,10 @@ impl Instance {
     }
 
     pub(super) fn take_terrain_queries(&mut self) -> Vec<crate::TerrainQuery> {
-        std::mem::take(&mut self.store.data_mut().navigation.queries)
+        std::mem::take(&mut self.store.data_mut().terrain.queries)
     }
     pub(super) fn supply_terrain(&mut self, regions: Vec<crate::TerrainRegion>) {
-        self.store.data_mut().navigation.regions = regions;
-    }
-    pub(super) fn take_automation(&mut self) -> Option<crate::AutomationControls> {
-        self.store.data_mut().navigation.controls.take()
-    }
-    pub(super) fn take_hotbar(&mut self) -> Option<u8> {
-        self.store.data_mut().navigation.hotbar.take()
+        self.store.data_mut().terrain.regions = regions;
     }
 
     pub(super) fn camera_rig(&self) -> Option<GameplayCameraRig> {
@@ -905,7 +899,7 @@ fn commit(store: &mut Store<State>) {
     let state = store.data_mut();
     state.jump_cancel = std::mem::take(&mut state.pending_jump_cancel);
     state.jump_pulse = std::mem::take(&mut state.pending_jump) && !state.jump_cancel;
-    state.navigation.commit();
+    state.terrain.commit();
     state.render.commit();
     state.block_highlights.commit();
     state.world.commit();

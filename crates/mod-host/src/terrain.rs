@@ -1,30 +1,20 @@
-//! Transactional, bounded terrain requests and ordinary input output.
-use crate::{AutomationControls, TerrainQuery, TerrainRegion};
+//! Transactional, bounded terrain requests.
+use crate::{TerrainQuery, TerrainRegion};
 
 #[derive(Default)]
-pub(crate) struct NavigationState {
+pub(crate) struct TerrainState {
     pub regions: Vec<TerrainRegion>,
     pub queries: Vec<TerrainQuery>,
-    pub controls: Option<AutomationControls>,
-    pub hotbar: Option<u8>,
     pub pending_queries: Vec<TerrainQuery>,
-    pub pending_controls: Option<AutomationControls>,
-    pub pending_hotbar: Option<u8>,
     pub calls: usize,
 }
-impl NavigationState {
+impl TerrainState {
     pub fn begin_frame(&mut self) {
         self.pending_queries.clear();
-        self.pending_controls = None;
-        self.pending_hotbar = None;
-        self.controls = None;
-        self.hotbar = None;
         self.calls = 0;
     }
     pub fn commit(&mut self) {
         self.queries = std::mem::take(&mut self.pending_queries);
-        self.controls = self.pending_controls.take();
-        self.hotbar = self.pending_hotbar.take();
     }
 }
 
@@ -61,14 +51,6 @@ impl crate::ModHost {
     pub fn supply_terrain(&mut self, regions: Vec<TerrainRegion>) {
         self.instance.supply_terrain(regions);
     }
-    /// Consumes one frame's ordinary input contribution.
-    pub fn take_automation(&mut self) -> Option<AutomationControls> {
-        self.instance.take_automation()
-    }
-    /// Consumes one frame's ordinary equipment selection.
-    pub fn take_hotbar(&mut self) -> Option<u8> {
-        self.instance.take_hotbar()
-    }
 }
 
 #[cfg(test)]
@@ -93,18 +75,14 @@ mod tests {
         assert!(!query_valid(&value, [0.; 3]));
     }
     #[test]
-    fn input_and_queries_only_publish_on_commit_and_do_not_retain_input() {
-        let mut state = NavigationState::default();
+    fn queries_only_publish_on_commit() {
+        let mut state = TerrainState::default();
         state.begin_frame();
-        state.pending_hotbar = Some(3);
         state.pending_queries.push(query(0, 1));
-        assert!(state.hotbar.is_none());
         assert!(state.queries.is_empty());
         state.commit();
-        assert_eq!(state.hotbar, Some(3));
         assert_eq!(state.queries.len(), 1);
         state.begin_frame();
-        assert!(state.hotbar.is_none());
         state.commit();
         assert!(state.queries.is_empty());
     }
