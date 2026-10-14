@@ -1,7 +1,5 @@
 //! Small SDK tools; none of these commands starts a client or network session.
 
-mod navigation_probe;
-
 use anyhow::{Result, bail, ensure};
 use mod_host::{ModGrants, ModHost};
 use std::{hint::black_box, path::Path, time::Instant};
@@ -42,13 +40,10 @@ fn main() -> Result<()> {
             println!("time_override={:?}", host.time_override());
             println!("initial={initial:?}\nafter_key={:?}", host.label());
         }
-        [command, path] if command == "probe-navigation" => {
-            navigation_probe::probe(Path::new(path))?
-        }
         [command, path] if command == "bench" => benchmark(Path::new(path))?,
         [command, path] if command == "probe-render" => probe_render(Path::new(path))?,
         _ => bail!(
-            "usage: mod-host pack CORE.wasm COMPONENT.wasm | probe[-environment] COMPONENT.wasm | probe-render COMPONENT.wasm | bench COMPONENT.wasm | probe-navigation PACKAGE"
+            "usage: mod-host pack CORE.wasm COMPONENT.wasm | probe[-environment] COMPONENT.wasm | probe-render COMPONENT.wasm | bench COMPONENT.wasm"
         ),
     }
     Ok(())
