@@ -44,8 +44,6 @@ jobs:
           sudo apt-get install --yes libwayland-dev libxkbcommon-dev libasound2-dev libudev-dev
       - name: Format
         run: cargo fmt --all -- --check
-      - name: Check boundaries
-        run: cargo run -p architecture --locked -- check --root . --policy tools/architecture/policy.toml
       - name: Test domain and host behavior
         run: cargo test --locked -p semantic-input -p sim -p mod-host --lib
       - name: Test multiple loaded mods
@@ -56,6 +54,8 @@ jobs:
         run: cargo test --locked -p cinnabar --lib -- modding
       - name: Lint changed packages
         run: cargo clippy --locked -p semantic-input -p sim -p mod-host -p client-extensions -p cinnabar --all-targets -- -D warnings
+      - name: Check boundaries
+        run: cargo run -p architecture --locked -- check --root . --policy tools/architecture/policy.toml
       - name: Verify cached inputs
         if: ${{ always() && !cancelled() }}
         env:
