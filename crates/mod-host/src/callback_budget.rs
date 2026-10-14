@@ -9,6 +9,7 @@ const LARGE_CALLBACKS_PER_FRAME: usize = 1;
 #[derive(Default)]
 struct Allowance {
     frame: u64,
+    navigation: u64,
     events: usize,
     loads: usize,
 }
@@ -34,6 +35,7 @@ impl CallbackBudget {
     pub fn reset(&self, fuel: u64) {
         *self.0.lock().expect("mod callback budget") = Allowance {
             frame: fuel,
+            navigation: crate::NAVIGATION_FRAME_FUEL,
             events: LARGE_CALLBACKS_PER_FRAME,
             loads: LARGE_CALLBACKS_PER_FRAME,
         };
@@ -46,6 +48,11 @@ impl CallbackBudget {
                 return None;
             }
             remaining.loads -= 1;
+        } else if fuel == crate::NAVIGATION_FRAME_FUEL {
+            if remaining.navigation < fuel {
+                return None;
+            }
+            remaining.navigation -= fuel;
         } else if fuel > crate::FRAME_FUEL {
             if remaining.events == 0 {
                 return None;
@@ -63,6 +70,10 @@ impl CallbackBudget {
     pub(crate) fn refund(&self, fuel: u64) {
         self.0.lock().expect("mod callback budget").frame += fuel;
     }
+    /// Returns unused navigation fuel without increasing the ordinary frame allowance.
+    pub(crate) fn refund_navigation(&self, fuel: u64) {
+        self.0.lock().expect("mod callback budget").navigation += fuel;
+    }
     /// Whether the loading lane can admit another hot replacement this frame.
     pub(crate) fn can_load(&self) -> bool {
         self.0.lock().expect("mod callback budget").loads != 0
@@ -76,6 +87,24 @@ impl CallbackBudget {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn navigation_preserves_event_and_regular_allowances() {
+        let budget = CallbackBudget::new(mod_api::TOTAL_MOD_FRAME_FUEL);
+        let navigation = crate::NAVIGATION_FRAME_FUEL;
+        assert_eq!(budget.reserve(navigation), Some(navigation));
+        assert_eq!(budget.reserve(navigation), None);
+        assert_eq!(budget.remaining(), mod_api::TOTAL_MOD_FRAME_FUEL);
+        let event = server_experience::runtime::CALLBACK_FUEL;
+        assert_eq!(budget.reserve(event), Some(event));
+        assert_eq!(budget.reserve(event), None);
+        assert_eq!(budget.reserve(crate::FRAME_FUEL), Some(crate::FRAME_FUEL));
+        budget.refund_navigation(navigation - 1);
+        assert_eq!(budget.reserve(navigation), None);
+        budget.refund_navigation(1);
+        assert_eq!(budget.reserve(navigation), Some(navigation));
+        budget.reset(mod_api::TOTAL_MOD_FRAME_FUEL);
+        assert_eq!(budget.reserve(navigation), Some(navigation));
+    }
     #[test]
     fn reservations_never_turn_a_partial_frame_allowance_into_a_guest_fuel_limit() {
         let budget = CallbackBudget::new(crate::FRAME_FUEL - 1);
