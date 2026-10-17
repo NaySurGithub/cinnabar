@@ -6,7 +6,7 @@ use json_ui::{Catalog, HudChanges, HudModel, HudSlot, HudTitle, Timed};
 use launcher::menu::settings_options::{SettingId, SettingsOptions};
 use ui::{BossBarView, IconRef, TimedText};
 
-use super::super::super::{HudFrame, bounded_visible_text, resolve_chat_line};
+use super::super::super::{HudFrame, bounded_title_text, bounded_visible_text, resolve_chat_line};
 use super::{ITEM_NAME_MILLIS, MAX_BOSS_BARS, MAX_CHAT_LINES};
 use crate::ui_runtime::{Translator, UiRuntime};
 
@@ -405,8 +405,8 @@ fn refresh_title(
     let Some(title) = title else {
         return model.take().is_some();
     };
-    let text = bounded_visible_text(&title.text);
-    let subtitle = subtitle.map_or("", |text| bounded_visible_text(&text.text));
+    let text = bounded_title_text(&title.text);
+    let subtitle = subtitle.map_or("", |text| bounded_title_text(&text.text));
     let fade_in = seconds(title.fade_in_millis);
     let fade_out = seconds(title.fade_out_millis);
     let total = title.expires_millis.saturating_sub(title.started_millis);

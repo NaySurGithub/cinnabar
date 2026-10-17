@@ -50,6 +50,16 @@ pub fn bounded_visible_text(value: &str) -> &str {
     bounded_text(value, MAX_PRESENTED_TEXT_BYTES)
 }
 
+/// The most bytes of a title or subtitle handed to the JSON UI globals
+/// (`#hud_title_text_string` / `#hud_subtitle_text_string`). Packs read data out of
+/// these strings, so they keep the protocol decode limit, not the presentation one.
+pub const MAX_TITLE_BINDING_BYTES: usize = 16_384;
+
+/// `value` cut at a character boundary to [`MAX_TITLE_BINDING_BYTES`].
+pub fn bounded_title_text(value: &str) -> &str {
+    bounded_text(value, MAX_TITLE_BINDING_BYTES)
+}
+
 /// `value` cut at a character boundary to at most `max_bytes`.
 pub fn bounded_text(value: &str, max_bytes: usize) -> &str {
     &value[..value.floor_char_boundary(max_bytes)]
@@ -73,6 +83,17 @@ mod tests {
             message: Arc::from(text),
             parameters: parameters.iter().map(|value| Arc::from(*value)).collect(),
         }
+    }
+
+    #[test]
+    fn title_text_keeps_data_beyond_the_presentation_limit() {
+        let long = "x".repeat(MAX_PRESENTED_TEXT_BYTES * 4);
+        assert_eq!(bounded_visible_text(&long).len(), MAX_PRESENTED_TEXT_BYTES);
+        assert_eq!(bounded_title_text(&long), long);
+        let oversized = "§".repeat(MAX_TITLE_BINDING_BYTES);
+        let cut = bounded_title_text(&oversized);
+        assert!(cut.len() <= MAX_TITLE_BINDING_BYTES);
+        assert!(oversized.starts_with(cut));
     }
 
     #[test]

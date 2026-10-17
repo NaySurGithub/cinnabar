@@ -1,6 +1,6 @@
 //! The uncached HUD projection used to check semantic retention.
 
-use super::super::super::{HudFrame, bounded_visible_text, resolve_chat_line};
+use super::super::super::{HudFrame, bounded_title_text, bounded_visible_text, resolve_chat_line};
 use super::*;
 use json_ui::{BossBar, HudModel, HudSlot, HudTitle, Sidebar, Timed};
 use ui::{IconRef, TimedText};
@@ -60,9 +60,9 @@ pub(super) fn hud_model(
         let total = title.expires_millis.saturating_sub(title.started_millis);
         HudTitle {
             creation_id: title.fifo_sequence,
-            title: bounded_visible_text(&title.text).to_owned(),
+            title: bounded_title_text(&title.text).to_owned(),
             subtitle: visible(runtime.hud().subtitle(), now)
-                .map(|subtitle| bounded_visible_text(&subtitle.text).to_owned())
+                .map(|subtitle| bounded_title_text(&subtitle.text).to_owned())
                 .unwrap_or_default(),
             fade_in: seconds(fade_in),
             stay: seconds(total.saturating_sub(fade_in + fade_out)),

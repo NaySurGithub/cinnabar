@@ -570,3 +570,30 @@ fn chat_color_keeps_encoded_hud_message_inputs_unmodified() {
         ui_screens::test_support::hover_chat::CAPTION
     );
 }
+
+#[test]
+fn title_bindings_keep_subtitles_longer_than_presented_text() {
+    // Packs read data out of the whole subtitle, such as a marker after a long HUD field.
+    let marker = "\u{a7}0\u{a7}5\u{a7}0\u{a7}r";
+    let subtitle_text = format!(
+        "{}{marker}",
+        "x".repeat(ui_screens::text::MAX_PRESENTED_TEXT_BYTES * 4)
+    );
+    let timed = |text: &str| TimedText {
+        text: Arc::from(text),
+        fifo_sequence: 1,
+        started_millis: 0,
+        expires_millis: 10_000,
+        fade_in_millis: 0,
+        fade_out_millis: 0,
+    };
+    let mut model = None;
+    assert!(refresh_title(
+        &mut model,
+        Some(&timed("\u{a7}0\u{a7}5\u{a7}1\u{a7}r")),
+        Some(&timed(&subtitle_text)),
+    ));
+    let title = model.expect("a shown title keeps its subtitle");
+    assert_eq!(title.subtitle, subtitle_text);
+    assert!(title.subtitle.ends_with(marker));
+}
