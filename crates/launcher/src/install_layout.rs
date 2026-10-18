@@ -296,7 +296,12 @@ impl InstallLayout {
     /// `.local`); runtime fallbacks read images from it when present.
     #[must_use]
     pub fn vanilla_pack_dir(&self) -> PathBuf {
-        self.resource_root.join(vanilla_pack_relative())
+        if self.is_installed() {
+            // An install ships no vanilla pack; first-run preparation keeps its textures per user.
+            self.user_data_root.join(vanilla_pack_relative())
+        } else {
+            self.resource_root.join(vanilla_pack_relative())
+        }
     }
 
     /// Imported optional packs and the applied global selection.

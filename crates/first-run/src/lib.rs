@@ -96,7 +96,8 @@ pub fn prepare_headless(
 /// An unreadable kit counts as needing preparation, which then reports it.
 fn needs_preparation(layout: &InstallLayout) -> bool {
     layout.is_installed()
-        && !prepare::selection(layout).is_ok_and(|selection| selection.is_current())
+        && (!prepare::selection(layout).is_ok_and(|selection| selection.is_current())
+            || !prepare::vanilla_textures_kept(layout))
 }
 
 /// An earlier set exists, so this run updates rather than sets up.
