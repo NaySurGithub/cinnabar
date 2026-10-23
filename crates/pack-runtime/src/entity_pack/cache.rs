@@ -1,7 +1,10 @@
-use crate::StackFingerprint;
 use assets::SessionEntityPack;
 use resource_pack::LayeredPackView;
+use resource_pack::StackFingerprint;
 use std::{path::PathBuf, sync::Arc};
+
+#[path = "pixel_reuse.rs"]
+mod pixel_reuse;
 
 /// Pack content, reference definitions, and the startup artwork paths a compile reads.
 #[derive(Clone)]
@@ -34,11 +37,23 @@ impl PartialEq for EntityInputs {
     }
 }
 
+/// A compile's result, held weakly so a pack outlives its session only while a kept stack owns it;
+/// `None` when the stack defined no entity.
+type Retained = Option<std::sync::Weak<SessionEntityPack>>;
+
 type CachedEntities = (
     EntityInputs,
-    Option<Arc<SessionEntityPack>>,
+    Retained,
     Option<std::collections::BTreeSet<resource_pack::PackDependency>>,
 );
+
+/// The retained result, or `None` once every owner has released the pack.
+fn upgrade(retained: &Retained) -> Option<Option<Arc<SessionEntityPack>>> {
+    match retained {
+        None => Some(None),
+        Some(pack) => pack.upgrade().map(Some),
+    }
+}
 
 /// A compiled pack and, when asked for, the entity blob it was built from.
 pub(super) type Compiled = (Option<Arc<SessionEntityPack>>, Option<Box<[u8]>>);
@@ -46,9 +61,9 @@ pub(super) type Compiled = (Option<Arc<SessionEntityPack>>, Option<Box<[u8]>>);
 /// Runs the encode and write of a fresh compile's disk entry.
 type StoreEntry = fn(Box<dyn FnOnce() + Send>);
 
-/// The previous compile, reused when the same inputs rejoin.
+/// The two latest join and composed reload compiles, reused across reconnects while owned.
 pub(super) struct EntityCache {
-    last: std::sync::Mutex<Option<CachedEntities>>,
+    last: std::sync::Mutex<std::collections::VecDeque<CachedEntities>>,
     store: StoreEntry,
 }
 
@@ -56,7 +71,7 @@ impl Default for EntityCache {
     /// Writes disk entries before a compile returns.
     fn default() -> Self {
         Self {
-            last: std::sync::Mutex::new(None),
+            last: std::sync::Mutex::new(std::collections::VecDeque::new()),
             store: |write| write(),
         }
     }
@@ -107,15 +122,19 @@ impl EntityCache {
         ) -> Option<Compiled>,
     ) -> Option<Option<Arc<SessionEntityPack>>> {
         {
-            let cache = self.lock();
-            if let Some((cached, pack, files)) = cache.as_ref()
-                && *cached == inputs
-                && (view.dependencies().is_none() || files.is_some())
-            {
-                if let (Some(dependencies), Some(files)) = (view.dependencies(), files) {
+            let mut cache = self.lock();
+            cache.retain(|(_, pack, _)| upgrade(pack).is_some());
+            if let Some(index) = cache.iter().position(|(cached, _, files)| {
+                *cached == inputs && (view.dependencies().is_none() || files.is_some())
+            }) {
+                let entry = cache.remove(index).expect("a matched entry is present");
+                if let (Some(dependencies), Some(files)) = (view.dependencies(), &entry.2) {
                     dependencies.extend(files.clone());
                 }
-                return Some(pack.clone());
+                if let Some(pack) = upgrade(&entry.1) {
+                    cache.push_front(entry);
+                    return Some(pack);
+                }
             }
         }
         // Only a tracked compile knows its reads, which a reload diff of a disk hit needs.
@@ -133,7 +152,7 @@ impl EntityCache {
             if let Some(dependencies) = view.dependencies() {
                 dependencies.extend(files);
             }
-            pack
+            self.reuse_pixels(pack)
         } else {
             let (pack, blob) = compile(
                 view,
@@ -143,6 +162,7 @@ impl EntityCache {
                 disk.is_some(),
                 cancelled,
             )?;
+            let pack = self.reuse_pixels(pack);
             if let (Some(disk), Some(key), Some(files)) = (disk, key, view.dependencies()) {
                 let (disk, files, stored) = (disk.clone(), files.snapshot(), pack.clone());
                 (self.store)(Box::new(move || {
@@ -153,15 +173,34 @@ impl EntityCache {
             }
             pack
         };
-        *self.lock() = Some((
+        let mut cache = self.lock();
+        cache.retain(|(cached, _, _)| *cached != inputs);
+        cache.push_front((
             inputs,
-            pack.clone(),
+            pack.as_ref().map(Arc::downgrade),
             view.dependencies().map(|files| files.snapshot()),
         ));
+        cache.truncate(2);
         Some(pack)
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, Option<CachedEntities>> {
+    /// Shares unchanged rasters before another owner or disk writer retains the new catalog.
+    fn reuse_pixels(&self, next: Option<Arc<SessionEntityPack>>) -> Option<Arc<SessionEntityPack>> {
+        let previous = self
+            .lock()
+            .front()
+            .and_then(|(_, pack, _)| pack.as_ref()?.upgrade());
+        next.map(|next| {
+            let next = match previous {
+                Some(previous) => pixel_reuse::reuse(&previous, next),
+                None => next,
+            };
+            next.with_shared_equipment_pixels()
+        })
+    }
+
+    /// Recovers the bounded cache after a panicking reader.
+    fn lock(&self) -> std::sync::MutexGuard<'_, std::collections::VecDeque<CachedEntities>> {
         self.last
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -260,7 +299,7 @@ fn decode_entry(
 }
 
 pub(super) static ENTITY_CACHE: EntityCache = EntityCache {
-    last: std::sync::Mutex::new(None),
+    last: std::sync::Mutex::new(std::collections::VecDeque::new()),
     store: store_in_background,
 };
 

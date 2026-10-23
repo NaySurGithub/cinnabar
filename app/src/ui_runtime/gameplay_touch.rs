@@ -39,10 +39,12 @@ fn apply_touch_events(
         match phase {
             TouchPhase::Started => {
                 let region = region(position);
-                if let Some(hit_id) = region
-                    .map(|region| region.hit_id)
-                    .filter(|hit_id| matches!(*hit_id, touch::INVENTORY | touch::MENU))
-                {
+                if let Some(hit_id) = region.map(|region| region.hit_id).filter(|hit_id| {
+                    matches!(
+                        *hit_id,
+                        touch::INVENTORY | touch::MENU | touch::CHAT | touch::EMOTE
+                    )
+                }) {
                     return Err(hit_id);
                 }
                 if state.begin(id, position, 0, region)
@@ -85,6 +87,7 @@ pub(crate) fn drive_gameplay_touch_targets(
     presentation: Option<ResMut<UiPresentationResource>>,
     windows: Query<&Window, With<PrimaryWindow>>,
     mut state: Local<TouchControlState>,
+    world: Option<Res<crate::runtime::world::ClientWorld>>,
 ) {
     targets.release_all();
     // Every event is consumed each frame, so none replays once gameplay regains input.
@@ -122,7 +125,15 @@ pub(crate) fn drive_gameplay_touch_targets(
         Ok(frame) => frame,
         Err(hit_id) => {
             if hit_id == touch::INVENTORY {
-                let _ = ui.toggle_inventory(&mut player);
+                let authority = world
+                    .as_deref()
+                    .and_then(|world| world.stream.as_ref())
+                    .map(|stream| stream.authority());
+                let _ = ui.toggle_inventory(&mut player, authority);
+            } else if hit_id == touch::CHAT {
+                ui.open_chat(&mut player);
+            } else if hit_id == touch::EMOTE {
+                ui.emotes_mut().open();
             } else if let Some(menu) = menu.as_mut() {
                 menu.open_pause();
             }
@@ -297,23 +308,32 @@ mod tests {
         assert!(!targets.pressed(touch::USE));
     }
 
-    /// Pause and inventory presses stop processing and open their screens.
+    /// Screen-opening touches stop processing before a later contact can drive gameplay.
     #[test]
     fn screen_controls_open_instead_of_capturing() {
-        let mut state = TouchControlState::default();
-        let pause = |_| {
-            Some(TouchControlRegion {
-                hit_id: touch::MENU,
-                bounds: TouchBounds {
-                    min: [0.0; 2],
-                    max: [1.0; 2],
-                },
-            })
-        };
-        assert_eq!(
-            apply_touch_events(&mut state, [(1, TouchPhase::Started, [0.5; 2])], pause),
-            Err(touch::MENU)
-        );
-        assert!(state.sample().is_empty());
+        for hit_id in [touch::MENU, touch::INVENTORY, touch::CHAT, touch::EMOTE] {
+            let mut state = TouchControlState::default();
+            let screen = |_| {
+                Some(TouchControlRegion {
+                    hit_id,
+                    bounds: TouchBounds {
+                        min: [0.0; 2],
+                        max: [1.0; 2],
+                    },
+                })
+            };
+            assert_eq!(
+                apply_touch_events(
+                    &mut state,
+                    [
+                        (1, TouchPhase::Started, [0.5; 2]),
+                        (2, TouchPhase::Started, [0.8; 2]),
+                    ],
+                    screen
+                ),
+                Err(hit_id)
+            );
+            assert!(state.sample().is_empty());
+        }
     }
 }

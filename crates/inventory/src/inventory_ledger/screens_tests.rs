@@ -113,6 +113,34 @@ fn furnace_cells_are_addressed_by_role() {
 }
 
 #[test]
+fn station_cells_return_into_the_hotbar_before_the_main_inventory() {
+    // A full first hotbar slot leaves the second as the first that can take the result.
+    let mut ledger = ledger_with(&[(0, stack(10, protocol::ITEM_DEFAULT_MAX_STACK_SIZE.into()))]);
+    open(&mut ledger, 3, WINDOW_TYPE_FURNACE);
+    ledger.apply(&content(
+        ContainerIdentity::window(3),
+        vec![
+            NetworkItemStack::default(),
+            NetworkItemStack::default(),
+            stack(22, 5),
+        ],
+    ));
+    ledger
+        .begin_quick_move(InventoryTarget::Storage(2))
+        .unwrap();
+    let Some(StackRequestAction::Place { destination, .. }) = ledger.newest_action() else {
+        panic!("a place from the result cell");
+    };
+    assert_eq!(destination.slot, 1);
+    assert_eq!(ledger.displayed_stack(1).unwrap().count, 5);
+    assert!(
+        ledger
+            .displayed_stack(protocol::HOTBAR_SLOT_COUNT)
+            .is_none()
+    );
+}
+
+#[test]
 fn named_window_refreshes_keep_taken_slots_empty_after_rejection() {
     for admission in 0..3 {
         let mut ledger = ledger_with(&[]);
@@ -125,14 +153,17 @@ fn named_window_refreshes_keep_taken_slots_empty_after_rejection() {
         refreshed[1] = NetworkItemStack::empty();
         match admission {
             0 => ledger.apply(&content(ContainerIdentity::window(3), refreshed)),
-            1 => ledger.apply_window_content(ContainerIdentity::window(3), 0, &refreshed),
+            1 => ledger.apply(&content(ContainerIdentity::window(3), refreshed)),
             _ => {
                 let (StackRequestContainer::OpenWindow { name, .. }, _) =
                     protocol::open_cell_request(WindowKind::Furnace, 1, None, None).unwrap()
                 else {
                     panic!("named furnace cell");
                 };
-                ledger.apply_window_content(named(3, name), name, &[NetworkItemStack::empty()]);
+                ledger.apply(&content(
+                    named(protocol::DYNAMIC_STORAGE_WINDOW_ID, name),
+                    vec![NetworkItemStack::empty()],
+                ));
             }
         }
         ledger.apply(&InventoryEvent::Response(
@@ -213,6 +244,7 @@ fn horse_chest_accepted_response_settles_after_full_content() {
                         protocol::StackResponseContainer {
                             container: ContainerIdentity {
                                 window_id: None,
+                                dynamic_id: None,
                                 ..identity
                             },
                             slots: Arc::from([correction(2, 0, 0)]),
@@ -234,7 +266,7 @@ fn horse_chest_accepted_response_settles_after_full_content() {
         assert!(ledger.storage_stack(2).is_none());
         assert_eq!(ledger.cursor_stack().unwrap().stack_network_id, 9001);
         assert!(matches!(action, StackRequestAction::Take { source, .. }
-            if source.container == StackRequestContainer::LevelEntity { dynamic_id }));
+            if source.container == StackRequestContainer::LevelEntity { dynamic_id: None }));
         assert!(ledger.begin_storage_click(3).is_ok());
     }
 }
@@ -319,19 +351,15 @@ fn enchant_selection_needs_an_offered_option() {
     let mut ledger = ledger_with(&[]);
     open(&mut ledger, 7, WINDOW_TYPE_ENCHANTMENT);
     ledger.apply(&slot_update(named(124, 22), 14, stack(50, 1)));
+    ledger.apply(&slot_update(named(124, 23), 15, stack(51, 5)));
     assert_eq!(
-        ledger.begin_enchant(3),
+        ledger.begin_enchant(3, false),
         Err(InventoryGestureError::InvalidRequest)
     );
     ledger.apply(&InventoryEvent::EnchantOptions(EnchantOptionsEvent {
-        options: Arc::from([EnchantOption {
-            cost: 2,
-            name: Arc::from("abc"),
-            network_id: 3,
-            enchants: Arc::from([(15, 2)]),
-        }]),
+        options: Arc::from([offer(4, (9, 1)), offer(3, (15, 2))]),
     }));
-    ledger.begin_enchant(3).unwrap();
+    ledger.begin_enchant(3, false).unwrap();
     assert!(matches!(
         ledger.newest_action(),
         Some(StackRequestAction::CraftRecipe {
@@ -339,6 +367,115 @@ fn enchant_selection_needs_an_offered_option() {
             crafts: 1
         })
     ));
+}
+
+/// One enchanting option offering `enchant` under recipe `network_id`.
+fn offer(network_id: u32, enchant: (u8, u8)) -> EnchantOption {
+    EnchantOption {
+        cost: 2,
+        name: Arc::from("offer"),
+        network_id,
+        enchants: Arc::from([enchant]),
+    }
+}
+
+/// Enchanting sends the option craft, the enchanted result, the input's consume and the
+/// result placed back, then pays the option's rank in lapis; a rejection restores both cells.
+#[test]
+fn enchanting_sends_the_native_request_and_rolls_back_on_rejection() {
+    for creative in [false, true] {
+        let mut ledger = ledger_with(&[]);
+        open(&mut ledger, 7, WINDOW_TYPE_ENCHANTMENT);
+        ledger.apply(&slot_update(named(124, 22), 14, stack(50, 1)));
+        ledger.apply(&slot_update(named(124, 23), 15, stack(51, 5)));
+        ledger.apply(&InventoryEvent::EnchantOptions(EnchantOptionsEvent {
+            options: Arc::from([offer(4, (9, 1)), offer(3, (15, 2))]),
+        }));
+        let request_id = ledger.begin_enchant(3, creative).unwrap();
+        let enchanted = protocol::edit_item_extra(
+            &[],
+            &protocol::ItemNbtEdit {
+                enchantments: Some(vec![(15, 2)]),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let slot = |name, slot, stack_network_id| protocol::StackRequestSlot {
+            container: StackRequestContainer::OpenWindow {
+                name,
+                dynamic_id: None,
+            },
+            slot,
+            stack_network_id,
+        };
+        let mut expected = vec![
+            StackRequestAction::CraftRecipe {
+                recipe_network_id: 3,
+                crafts: 1,
+            },
+            StackRequestAction::CraftResultsDeprecated {
+                results: Arc::from([protocol::CraftResult {
+                    identifier: Arc::from("minecraft:apple"),
+                    aux: 0,
+                    count: 1,
+                    block_runtime_id: 0,
+                    user_data: Arc::clone(&enchanted),
+                }]),
+                crafts: 1,
+            },
+            StackRequestAction::Consume {
+                amount: 1,
+                source: slot(22, 14, 50),
+            },
+            StackRequestAction::Place {
+                amount: 1,
+                source: protocol::StackRequestSlot {
+                    container: StackRequestContainer::CreatedOutput,
+                    slot: protocol::CREATED_OUTPUT_SLOT,
+                    stack_network_id: request_id,
+                },
+                destination: slot(22, 14, 0),
+            },
+        ];
+        if !creative {
+            expected.push(StackRequestAction::Consume {
+                amount: 2,
+                source: slot(23, 15, 51),
+            });
+        }
+        assert_eq!(ledger.newest_request().unwrap().actions, expected);
+        let input = ledger.target_stack(InventoryTarget::Craft(14)).unwrap();
+        assert_eq!(input.extra_data, enchanted);
+        assert_eq!(
+            ledger
+                .target_stack(InventoryTarget::Craft(15))
+                .unwrap()
+                .count,
+            if creative { 5 } else { 3 }
+        );
+        ledger.apply(&InventoryEvent::Response(
+            protocol::ItemStackResponseEvent {
+                responses: Arc::from([protocol::StackResponse {
+                    request_id,
+                    status: protocol::StackResponseStatus::Rejected,
+                    containers: Arc::from([]),
+                }]),
+            },
+        ));
+        assert_eq!(ledger.pending_request_count(), 0);
+        assert_eq!(
+            ledger.target_stack(InventoryTarget::Craft(14)),
+            Some(&stack(50, 1))
+        );
+        assert_eq!(
+            ledger.target_stack(InventoryTarget::Craft(15)),
+            Some(&stack(51, 5))
+        );
+        assert!(
+            ledger.begin_enchant(3, creative).is_ok(),
+            "the table works again"
+        );
+    }
 }
 
 fn personal_ledger(slots: &[(usize, NetworkItemStack)]) -> PlayerInventoryLedger {
@@ -349,14 +486,12 @@ fn personal_ledger(slots: &[(usize, NetworkItemStack)]) -> PlayerInventoryLedger
     ledger
 }
 
+/// Restates the cursor through its fixed UI inventory slot.
 fn set_cursor(ledger: &mut PlayerInventoryLedger, held: NetworkItemStack) {
-    ledger.apply(&content(
-        ContainerIdentity {
-            window_id: Some(-1),
-            slot_type: Some(CONTAINER_NAME_CURSOR),
-            dynamic_id: None,
-        },
-        vec![held],
+    ledger.apply(&slot_update(
+        ContainerIdentity::window(protocol::UI_INVENTORY_WINDOW_ID),
+        0,
+        held,
     ));
 }
 
@@ -448,6 +583,7 @@ fn bundle_stack(stack_network_id: i32, bundle_id: i32) -> NetworkItemStack {
     let mut extra = (-1_i16).to_le_bytes().to_vec();
     extra.push(1);
     extra.extend(nbt);
+    extra.extend_from_slice(&[0; 8]);
     NetworkItemStack {
         nbt_digest: sha2::Sha256::digest(&extra).into(),
         extra_data: Arc::from(extra),
@@ -457,17 +593,45 @@ fn bundle_stack(stack_network_id: i32, bundle_id: i32) -> NetworkItemStack {
 
 fn dynamic(dynamic_id: u32) -> ContainerIdentity {
     ContainerIdentity {
-        window_id: Some(-1),
+        window_id: Some(protocol::DYNAMIC_STORAGE_WINDOW_ID),
         slot_type: Some(protocol::CONTAINER_NAME_DYNAMIC),
         dynamic_id: Some(dynamic_id),
     }
 }
 
+/// Admits a component-backed bundle and its registered storage descriptor.
+fn bundle_ledger(id: u32, contents: Vec<NetworkItemStack>) -> PlayerInventoryLedger {
+    let mut ledger = personal_ledger(&[]);
+    let mut registry = protocol::test_support::items::component_item_registry(
+        "fixture:bundle",
+        6,
+        protocol::ITEM_DEFAULT_MAX_STACK_SIZE,
+        0,
+    );
+    let entry = &mut Arc::make_mut(&mut registry.entries)[0];
+    let components = entry.components.get_or_insert_with(Default::default);
+    Arc::make_mut(components).storage_container = true;
+    ledger.apply_registry(&registry);
+    let bundle = bundle_stack(70, id as i32);
+    let mut slots = vec![NetworkItemStack::empty(); PLAYER_INVENTORY_SLOT_COUNT];
+    slots[0] = bundle.clone();
+    ledger.apply(&InventoryEvent::Content(InventoryContentEvent {
+        container: ContainerIdentity::window(protocol::PLAYER_INVENTORY_WINDOW_ID),
+        slots: slots.into(),
+        storage_item: NetworkItemStack::empty(),
+    }));
+    ledger.apply(&InventoryEvent::Content(InventoryContentEvent {
+        container: dynamic(id),
+        slots: contents.into(),
+        storage_item: bundle,
+    }));
+    ledger
+}
+
 /// A bundle's contents ride its dynamic container; extract takes the newest item.
 #[test]
 fn bundle_extract_takes_the_newest_item_from_the_dynamic_container() {
-    let mut ledger = personal_ledger(&[(0, bundle_stack(70, 7))]);
-    ledger.apply(&content(dynamic(7), vec![stack(80, 3), stack(81, 2)]));
+    let mut ledger = bundle_ledger(7, vec![stack(80, 3), stack(81, 2)]);
     assert_eq!(ledger.bundle_contents(7).map(<[_]>::len), Some(2));
     ledger
         .begin_bundle_extract(InventoryTarget::Player(0))
@@ -495,8 +659,7 @@ fn bundle_extract_takes_the_newest_item_from_the_dynamic_container() {
 /// Insert appends after the last content slot and empties the cursor.
 #[test]
 fn bundle_insert_appends_to_the_dynamic_container() {
-    let mut ledger = personal_ledger(&[(0, bundle_stack(70, 7))]);
-    ledger.apply(&content(dynamic(7), vec![stack(80, 3)]));
+    let mut ledger = bundle_ledger(7, vec![stack(80, 3)]);
     set_cursor(&mut ledger, stack(60, 4));
     ledger
         .begin_bundle_insert(InventoryTarget::Player(0))
@@ -575,3 +738,166 @@ fn quick_move_storage_filter_falls_back_to_player_inventory() {
         );
     }
 }
+
+/// A response without item data cannot restore a superseded enchanting input snapshot.
+#[test]
+fn enchanting_restatement_survives_a_later_count_response() {
+    let mut ledger = ledger_with(&[]);
+    open(&mut ledger, 7, WINDOW_TYPE_ENCHANTMENT);
+    ledger.apply(&slot_update(named(124, 22), 14, stack(50, 1)));
+    ledger.apply(&InventoryEvent::EnchantOptions(EnchantOptionsEvent {
+        options: Arc::from([EnchantOption {
+            cost: 2,
+            name: Arc::from("offer"),
+            network_id: 3,
+            enchants: Arc::from([(15, 2)]),
+        }]),
+    }));
+    let request = ledger.begin_enchant(3, true).unwrap();
+    assert!(ledger.mark_transport_enqueued(1));
+    let extra = protocol::edit_item_extra(
+        &[0; 10],
+        &protocol::ItemNbtEdit {
+            enchantments: Some(vec![(15, 2)]),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let replacement = NetworkItemStack {
+        network_id: 7,
+        stack_network_id: 70,
+        count: 1,
+        nbt_digest: sha2::Sha256::digest(&extra).into(),
+        extra_data: Arc::clone(&extra),
+        ..NetworkItemStack::empty()
+    };
+    ledger.apply(&slot_update(named(124, 22), 14, replacement.clone()));
+    ledger.apply(&InventoryEvent::Response(
+        protocol::ItemStackResponseEvent {
+            responses: Arc::from([protocol::StackResponse {
+                request_id: request,
+                status: protocol::StackResponseStatus::Accepted,
+                containers: Arc::from([protocol::StackResponseContainer {
+                    container: ContainerIdentity {
+                        window_id: None,
+                        slot_type: Some(22),
+                        dynamic_id: None,
+                    },
+                    slots: Arc::from([protocol::StackResponseSlot {
+                        slot: 14,
+                        hotbar_slot: 14,
+                        count: 1,
+                        item_stack_id: 80,
+                        custom_name: Arc::from(""),
+                        filtered_custom_name: Arc::from(""),
+                        durability_correction: 0,
+                    }]),
+                }]),
+            }]),
+        },
+    ));
+    let held = ledger.target_stack(InventoryTarget::Craft(14)).unwrap();
+    assert_eq!(held.network_id, replacement.network_id);
+    assert_eq!(held.extra_data, replacement.extra_data);
+    assert_eq!(ledger.pending_request_count(), 0);
+}
+
+/// An admitted grindstone result remains visible and takeable through either UI receipt form.
+#[test]
+fn server_previewed_grindstone_result_can_be_taken() {
+    for whole_content in [false, true] {
+        let mut ledger = ledger_with(&[]);
+        open(&mut ledger, 7, protocol::WINDOW_TYPE_GRINDSTONE);
+        let input = stack(50, 1);
+        let result = stack(51, 1);
+        if whole_content {
+            let mut slots = vec![NetworkItemStack::empty(); protocol::UI_SLOT_COUNT];
+            slots[16] = input;
+            slots[usize::from(protocol::CREATED_OUTPUT_SLOT)] = result.clone();
+            ledger.apply(&content(
+                ContainerIdentity::window(protocol::UI_INVENTORY_WINDOW_ID),
+                slots,
+            ));
+        } else {
+            ledger.apply(&slot_update(named(124, 22), 16, input));
+            ledger.apply(&slot_update(
+                ContainerIdentity::window(protocol::UI_INVENTORY_WINDOW_ID),
+                u16::from(protocol::CREATED_OUTPUT_SLOT),
+                result.clone(),
+            ));
+        }
+        assert_eq!(ledger.created_output_stack(), Some(&result));
+        ledger
+            .begin_screen_output(&ScreenCraft::Grindstone {
+                recipe_network_id: 50,
+                repair_cost: 0,
+                output: None,
+            })
+            .unwrap();
+        assert_eq!(ledger.cursor_stack().unwrap().count, 1);
+        assert!(ledger.target_stack(InventoryTarget::Craft(16)).is_none());
+    }
+}
+
+/// An enchantment queued while its input's placement awaits acknowledgement places its result
+/// into the slot its consume empties, both when sent first and when rebound after that
+/// acknowledgement arrives.
+#[test]
+fn unsent_enchants_rebind_after_an_earlier_transfer_is_acknowledged() {
+    let mut ledger = ledger_with(&[(0, stack(60, 1))]);
+    open(&mut ledger, 7, WINDOW_TYPE_ENCHANTMENT);
+    ledger.apply(&InventoryEvent::EnchantOptions(EnchantOptionsEvent {
+        options: Arc::from([offer(3, (15, 2))]),
+    }));
+    let placement = ledger.begin_quick_move(InventoryTarget::Player(0)).unwrap();
+    assert!(ledger.mark_transport_enqueued(1));
+    assert!(ledger.target_stack(InventoryTarget::Craft(14)).is_some());
+    ledger.begin_enchant(3, true).unwrap();
+    assert_eq!(ledger.pending_request_count(), 2);
+    // Before the acknowledgement, the consume names the placement and the place an empty slot.
+    let actions = &ledger.newest_request().unwrap().actions;
+    let Some(StackRequestAction::Consume { source, .. }) = actions.get(2) else {
+        panic!("the input is consumed: {actions:?}");
+    };
+    assert_eq!(source.stack_network_id, placement);
+    let Some(StackRequestAction::Place { destination, .. }) = actions.get(3) else {
+        panic!("the result is placed: {actions:?}");
+    };
+    assert_eq!((destination.slot, destination.stack_network_id), (14, 0));
+    ledger.apply(&InventoryEvent::Response(
+        protocol::ItemStackResponseEvent {
+            responses: Arc::from([protocol::StackResponse {
+                request_id: placement,
+                status: protocol::StackResponseStatus::Accepted,
+                containers: Arc::from([protocol::StackResponseContainer {
+                    container: ContainerIdentity {
+                        window_id: None,
+                        slot_type: Some(22),
+                        dynamic_id: None,
+                    },
+                    slots: Arc::from([protocol::StackResponseSlot {
+                        slot: 14,
+                        hotbar_slot: 14,
+                        count: 1,
+                        item_stack_id: 61,
+                        custom_name: Arc::from(""),
+                        filtered_custom_name: Arc::from(""),
+                        durability_correction: 0,
+                    }]),
+                }]),
+            }]),
+        },
+    ));
+    assert_eq!(ledger.pending_request_count(), 1);
+    let actions = &ledger.newest_request().unwrap().actions;
+    let Some(StackRequestAction::Consume { source, .. }) = actions.get(2) else {
+        panic!("the input is consumed: {actions:?}");
+    };
+    assert_eq!(source.stack_network_id, 61);
+    let Some(StackRequestAction::Place { destination, .. }) = actions.get(3) else {
+        panic!("the result is placed: {actions:?}");
+    };
+    assert_eq!((destination.slot, destination.stack_network_id), (14, 0));
+}
+
+mod workstations;

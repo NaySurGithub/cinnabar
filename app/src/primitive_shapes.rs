@@ -158,6 +158,7 @@ mod tests {
                     head_yaw: None,
                     on_ground: Some(true),
                     teleported: false,
+                    force_local_move: false,
                     player_mode: None,
                     source_tick: None,
                     interpolation: Default::default(),
@@ -207,7 +208,7 @@ mod tests {
                 Update,
                 advance_actor.in_set(ClientFrameSet::ActorPreparation),
             );
-        crate::app::configure_client_frame_schedule(&mut app);
+        crate::game_frame::configure_client_frame_schedule(&mut app);
         schedule_publication(&mut app);
         let before = rendered(&app);
         app.update();

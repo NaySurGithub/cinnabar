@@ -12,6 +12,8 @@ mod appearance_preparation;
 mod colliders;
 mod effect_members;
 pub use colliders::ActorCollisionBounds;
+mod death_visibility;
+mod local_presentation;
 mod native_facts;
 #[cfg(test)]
 pub(crate) use appearance_preparation::MAX_APPEARANCES_PUBLISHED_PER_FRAME;
@@ -66,15 +68,19 @@ pub(crate) const ACTOR_INTERPOLATION_TICKS: u32 = 3;
 pub struct PoseYOrigin {
     spawn: f32,
     network: f32,
+    /// Exact network height before the conversion to collision feet.
+    native_y: Option<f32>,
 }
 impl PoseYOrigin {
     const SPAWN: Self = Self {
         spawn: 1.0,
         network: 0.0,
+        native_y: None,
     };
     const NETWORK: Self = Self {
         spawn: 0.0,
         network: 1.0,
+        native_y: None,
     };
 
     /// Blends origin contributions with the same fraction as the vertical position.
@@ -82,6 +88,7 @@ impl PoseYOrigin {
         Self {
             spawn: self.spawn + (target.spawn - self.spawn) * fraction,
             network: self.network + (target.network - self.network) * fraction,
+            native_y: None,
         }
     }
 }
@@ -98,9 +105,13 @@ pub struct ActorPose {
 
 impl ActorPose {
     /// Applies only the offset deltas that contributed to this pose's vertical coordinate.
-    fn shift_y(&mut self, network_delta: f32, spawn_delta: f32) {
+    fn shift_y(&mut self, network_delta: f32, spawn_delta: f32, network_offset: f32) {
         let delta = self.y_origin.network * network_delta + self.y_origin.spawn * spawn_delta;
-        if delta != 0.0 {
+        if let Some(native_y) = self.y_origin.native_y {
+            let native_y = native_y + (delta - network_delta);
+            self.y_origin.native_y = Some(native_y);
+            self.position[1] = native_y - network_offset;
+        } else if delta != 0.0 {
             self.position[1] += delta;
         }
     }
@@ -133,7 +144,10 @@ pub struct ActorSnapshot {
     pub player_mode: Option<MovePlayerMode>,
     pub player_game_mode: Option<protocol::GameModeUpdate>,
     pub source_tick: Option<u64>,
+    /// Accepted actor metadata, independent of local animation flags.
     pub metadata: HashMap<u32, ActorMetadataValue>,
+    /// Client-derived rendering flags, retired by the next received primary word.
+    local_presentation_flags: Option<u64>,
     pub attributes: HashMap<std::sync::Arc<str>, ActorAttribute>,
     pub int_properties: HashMap<u32, i32>,
     pub float_properties: HashMap<u32, f32>,
@@ -196,10 +210,23 @@ impl ActorSnapshot {
     /// or `None` when a component is not finite.
     #[must_use]
     pub fn interpolated_position(&self, alpha: f32) -> Option<[f32; 3]> {
-        let position = std::array::from_fn(|axis| {
+        let mut position = std::array::from_fn(|axis| {
             self.previous_pose.position[axis]
                 + (self.position[axis] - self.previous_pose.position[axis]) * alpha
         });
+        if self.previous_pose.y_origin.native_y.is_some()
+            || self
+                .status
+                .movement_interpolation
+                .current_y_origin
+                .native_y
+                .is_some()
+        {
+            let offset = self.network_position_offset();
+            let from = self.previous_pose.native_position(offset)[1];
+            let to = self.native_position()[1];
+            position[1] = from + (to - from) * alpha - offset;
+        }
         position
             .iter()
             .all(|value| value.is_finite())
@@ -215,7 +242,7 @@ impl ActorSnapshot {
     ) -> Self {
         let terrain_interlock = terrain_interlock::TerrainInterlock::attached(
             entity_fact.native_class,
-            std::time::Instant::now(),
+            web_time::Instant::now(),
         );
         let position = spawn.position;
         let pitch = movement_interpolation::signed_pitch(spawn.pitch);
@@ -250,6 +277,7 @@ impl ActorSnapshot {
             player_game_mode: None,
             source_tick: None,
             metadata: HashMap::with_capacity(spawn.metadata.len()),
+            local_presentation_flags: None,
             attributes: HashMap::with_capacity(spawn.attributes.len()),
             int_properties: HashMap::new(),
             float_properties: HashMap::new(),
@@ -262,13 +290,11 @@ impl ActorSnapshot {
             hitboxes: None,
         };
         snapshot.set_current_pose(pose);
-        // A falling block's spawn position carries its network offset, which its box sets; the
-        // vanilla offset comes off here and `apply_metadata` rebases onto the spawn's box.
-        if snapshot.is_falling_block() {
-            snapshot.shift_poses_y(
-                -snapshot.falling_block_network_offset(),
-                -snapshot.falling_block_network_offset(),
-            );
+        // Falling-block and boat spawn positions carry their network offset, as movement does;
+        // a falling block's box sets it and `apply_metadata` rebases onto the spawn's box.
+        let spawn_offset = snapshot.spawn_network_offset();
+        if spawn_offset != 0.0 {
+            snapshot.shift_poses_y(-spawn_offset, -spawn_offset);
         }
         snapshot.apply_metadata(&spawn.metadata, hitbox_budget);
         snapshot.apply_attributes(&spawn.attributes);
@@ -319,6 +345,7 @@ impl ActorSnapshot {
             player_game_mode: None,
             source_tick: None,
             metadata: HashMap::new(),
+            local_presentation_flags: None,
             attributes: HashMap::new(),
             int_properties: HashMap::new(),
             float_properties: HashMap::new(),
@@ -330,55 +357,13 @@ impl ActorSnapshot {
             dragon_animation: None,
             hitboxes: None,
         };
-        // Predicted flags must retain the visible-name default until the server replaces them.
-        snapshot.set_flag(ActorFlag::ShowName.wire_value(), true);
+        // Retain the visible-name default until the server replaces it.
+        snapshot.metadata.insert(
+            ActorDataKey::Flags.wire_value(),
+            ActorMetadataValue::Flags(1 << ActorFlag::ShowName.wire_value()),
+        );
         snapshot.apply_local_flags(feed);
         snapshot
-    }
-
-    /// Overwrites the primary-word flags the client predicts itself: sneak, sprint, swim, glide
-    /// and predicted item use. Shield blocking stays server-owned.
-    fn apply_local_flags(&mut self, feed: &LocalPlayerFeed) {
-        self.set_flag(ActorFlag::Sneaking.wire_value(), feed.sneaking);
-        self.set_flag(ActorFlag::Sprinting.wire_value(), feed.sprinting);
-        self.set_flag(ActorFlag::Gliding.wire_value(), feed.gliding);
-        self.set_flag(ActorFlag::DamageNearbyMobs.wire_value(), feed.spinning);
-        // Sprinting in water is swimming; the water sample lags one frame.
-        let in_water = self.status.fluid.is_some_and(|(water, _)| water);
-        self.set_flag(ActorFlag::Swimming.wire_value(), feed.sprinting && in_water);
-        match feed.item_use {
-            LocalItemUse::Unpredicted => {}
-            LocalItemUse::Idle => self.set_flag(ActorFlag::UsingItem.wire_value(), false),
-            LocalItemUse::Using => self.set_flag(ActorFlag::UsingItem.wire_value(), true),
-            LocalItemUse::Predicted { elapsed_ticks, .. } => {
-                self.set_flag(ActorFlag::UsingItem.wire_value(), elapsed_ticks.is_some());
-            }
-        }
-    }
-
-    /// Sets one actor flag bit in the primary or overflow word, creating the word when absent.
-    fn set_flag(&mut self, bit: u32, on: bool) {
-        let (key, bit, empty) = if bit < 64 {
-            (
-                ActorDataKey::Flags.wire_value(),
-                bit,
-                ActorMetadataValue::Flags(0),
-            )
-        } else {
-            (
-                ActorDataKey::FlagsTwo.wire_value(),
-                bit - 64,
-                ActorMetadataValue::FlagsExtended(0),
-            )
-        };
-        let entry = self.metadata.entry(key).or_insert(empty);
-        if let ActorMetadataValue::Flags(flags) | ActorMetadataValue::FlagsExtended(flags) = entry {
-            if on {
-                *flags |= 1_u64 << bit;
-            } else {
-                *flags &= !(1_u64 << bit);
-            }
-        }
     }
 
     fn current_pose(&self) -> ActorPose {
@@ -441,19 +426,27 @@ impl ActorSnapshot {
         player_flags || self.flag(ActorFlag::Sleeping.wire_value())
     }
 
-    /// Whether the using-item flag is set; for the local player's food and drink it is the
-    /// server's admission of the use.
+    /// Whether the rendered actor uses its held item, including a local visual pose.
     #[must_use]
     pub fn is_using_item(&self) -> bool {
         self.flag(ActorFlag::UsingItem.wire_value())
     }
 
-    /// Reads one actor flag bit from the primary or overflow flag word.
+    /// Reads a rendering flag, including the local rig's visual primary word.
     pub(crate) fn flag(&self, bit: u32) -> bool {
+        if bit < u64::BITS
+            && let Some(flags) = self.local_presentation_flags
+        {
+            return flags & (1_u64 << bit) != 0;
+        }
         let (key, bit) = if bit < 64 {
             (ActorDataKey::Flags.wire_value(), bit)
-        } else {
+        } else if bit < 128 {
             (ActorDataKey::FlagsTwo.wire_value(), bit - 64)
+        } else if bit < 192 {
+            (ActorDataKey::FlagsThird.wire_value(), bit - 128)
+        } else {
+            return false;
         };
         match self.metadata.get(&key) {
             Some(ActorMetadataValue::Flags(flags) | ActorMetadataValue::FlagsExtended(flags)) => {
@@ -498,23 +491,9 @@ impl ActorSnapshot {
         self.entity_fact.native_class == NativeEntityClass::FallingBlock
     }
 
-    /// Rebases retained poses and queued targets without moving collision-feet inputs.
-    fn shift_poses_y(&mut self, network_delta: f32, spawn_delta: f32) {
-        let mut current = self.current_pose();
-        for pose in [
-            &mut current,
-            &mut self.previous_pose,
-            &mut self.received_pose,
-        ] {
-            pose.shift_y(network_delta, spawn_delta);
-        }
-        self.set_current_pose(current);
-        self.shift_interpolation_targets_y(network_delta, spawn_delta);
-    }
-
-    /// Spawn packets need vertical normalization only for falling-block constructors.
+    /// Spawn packets need vertical normalization only for falling-block and boat constructors.
     fn spawn_network_offset(&self) -> f32 {
-        if self.is_falling_block() {
+        if self.is_falling_block() || self.entity_fact.native_class == NativeEntityClass::Boat {
             self.network_position_offset()
         } else {
             0.0
@@ -526,11 +505,15 @@ impl ActorSnapshot {
         metadata: &[protocol::ActorMetadata],
         hitbox_budget: &mut hitbox::Budget,
     ) -> bool {
-        let falling_block_offset = self
-            .is_falling_block()
-            .then(|| self.falling_block_network_offset());
+        let previous_offset = self.network_position_offset();
         let mut rejected = false;
         for metadata in metadata {
+            // The sentinel preserves the last effective always-show value.
+            if metadata.key == ActorDataKey::AlwaysShowNameTag.wire_value()
+                && matches!(metadata.value, ActorMetadataValue::Byte(-1))
+            {
+                continue;
+            }
             if self.metadata.len() >= MAX_ACTOR_METADATA_ENTRIES
                 && !self.metadata.contains_key(&metadata.key)
             {
@@ -543,14 +526,19 @@ impl ActorSnapshot {
             if metadata.key == ActorDataKey::HitBox.wire_value() {
                 rejected |= hitbox_budget.apply(&mut self.hitboxes, &metadata.value);
             }
+            if metadata.key == ActorDataKey::Flags.wire_value() {
+                self.local_presentation_flags = None;
+            }
             self.metadata.insert(metadata.key, metadata.value.clone());
         }
-        // Stored feet stay under the unchanged network position when Scale or box height moves
-        // the offset.
-        if let Some(previous) = falling_block_offset {
-            let offset = self.falling_block_network_offset();
-            if offset != previous {
-                self.shift_poses_y(previous - offset, previous - offset);
+        // Falling-block size changes keep the network origin fixed. Other actors retain
+        // their existing feet anchors.
+        let offset = self.network_position_offset();
+        if offset != previous_offset {
+            if self.is_falling_block() {
+                self.shift_poses_y(previous_offset - offset, previous_offset - offset);
+            } else {
+                self.clear_native_heights();
             }
         }
         let burning = self.is_on_fire();
@@ -699,6 +687,8 @@ pub struct LocalPlayerFeed {
     /// Identifiers of the client-owned main-hand and off-hand items.
     pub main_hand: Option<std::sync::Arc<str>>,
     pub off_hand: Option<std::sync::Arc<str>>,
+    /// Occupied local armor-container slots, independent of item admission and hands.
+    pub equipment_count: u8,
     /// Numerical registry identities for the main hand and off hand; zero means empty.
     pub held_network_ids: [i32; 2],
     /// The main-hand stack's data value.
@@ -807,6 +797,7 @@ pub(crate) struct ActorStore {
     local_flying: bool,
     /// Held items of the client-fed local player, which the item store never tracks.
     local_hands: [Option<std::sync::Arc<str>>; 2],
+    local_equipment_count: u8,
     local_held_network_ids: [i32; 2],
     local_main_metadata: u32,
     local_held_variants: [actor_animation::StackVariant; 2],
@@ -919,6 +910,8 @@ fn event_dimension(event: &ActorEvent) -> Option<i32> {
 
 #[cfg(test)]
 mod animation_tests;
+#[cfg(test)]
+mod local_presentation_tests;
 #[cfg(test)]
 mod local_tests;
 mod player_appearance;

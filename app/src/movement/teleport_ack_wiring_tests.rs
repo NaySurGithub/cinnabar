@@ -18,7 +18,6 @@ use protocol::{
 };
 
 use super::integration_tests::evidence_context;
-use crate::environment::{WeatherState, WorldClock};
 use crate::runtime::movement_evidence::MovementEvidenceEmitter;
 use crate::runtime::world::{
     ClientWorld, WorldStreamFramePoll, advance_dimension_transfer,
@@ -28,6 +27,7 @@ use acceptance::model_witness::ModelWitnessFileSource;
 use assets::read_registry_for_protocol;
 use chunk_pipeline::WorldStream;
 use client_presentation::camera::CameraSettingsAuthority;
+use client_presentation::environment::{WeatherState, WorldClock};
 use client_presentation::local_player::{
     InteractionOriginSnapshot, LocalPlayerFrameCarrier, LocalViewPose,
 };
@@ -117,8 +117,13 @@ fn fixture_registries() -> PhysicsCollisionRegistries {
 }
 
 fn fixture_stream() -> WorldStream {
+    fixture_stream_in_dimension(0)
+}
+
+/// Starts the fixture in the requested server dimension.
+fn fixture_stream_in_dimension(dimension: i32) -> WorldStream {
     WorldStream::new(WorldBootstrap {
-        dimension: 0,
+        dimension,
         local_player_runtime_id: 1,
         local_player_unique_id: 1,
         player_position: [0.0, 70.0, 0.0],

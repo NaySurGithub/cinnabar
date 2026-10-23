@@ -30,8 +30,12 @@ pub struct ItemComponents {
     pub fuel_duration_ticks: Option<u32>,
     /// Whether fuel was declared, including malformed component values.
     pub fuel_declared: bool,
+    /// Both storage components required to register a dynamic item container are present.
+    pub storage_container: bool,
     /// Attack and kinetic presentation facts, when this item declares them.
     pub attack: Option<super::ItemAttackTiming>,
+    /// `minecraft:shooter` draw facts, when declared.
+    pub shooter: Option<super::ItemShooter>,
     /// `item_texture.json` key from `minecraft:icon`.
     pub icon: Option<Arc<str>>,
     /// `minecraft:display_name` value: a localization key or literal text.
@@ -48,6 +52,10 @@ pub struct ItemComponents {
     pub allow_off_hand: Option<bool>,
     /// Distinguishes a malformed offhand declaration from an absent one.
     pub allow_off_hand_declared: bool,
+    /// Category declared by the legacy Int property, narrowed to its low byte.
+    /// Missing or ambiguous item-properties containers stay unresolved.
+    pub creative_category: Option<u8>,
+    /// Nonnegative maximum from a typed Int; missing or invalid values remain unresolved.
     pub max_durability: Option<u32>,
     /// Retains declaration presence when its maximum is absent or invalid.
     pub durability_declared: bool,
@@ -252,7 +260,11 @@ pub(super) fn parse_components(bytes: &[u8]) -> Option<ItemComponents> {
             .and_then(Nbt::number)
             .and_then(duration_ticks),
         fuel_declared: component("minecraft:fuel").is_some(),
+        storage_container: ["minecraft:storage_item", "minecraft:storage_weight_limit"]
+            .into_iter()
+            .all(|name| component(name).is_some_and(|value| matches!(value, Nbt::Compound(_)))),
         attack: super::attack::parse_attack(components),
+        shooter: super::shooter::parse_shooter(component("minecraft:shooter")),
         icon: super::icons::icon_key(bytes),
         display_name: text(
             component("minecraft:display_name").and_then(|name| name.field("value")),
@@ -269,14 +281,17 @@ pub(super) fn parse_components(bytes: &[u8]) -> Option<ItemComponents> {
             .or(property("allow_off_hand"))
             .and_then(|value| match value.field("value").unwrap_or(value) {
                 Nbt::Byte(value) => Some(*value != 0),
-                Nbt::Int(value) => Some(*value != 0),
+                Nbt::Short(value) | Nbt::Int(value) | Nbt::Long(value) => Some(*value != 0),
                 _ => None,
             }),
-        max_durability: count(match component("minecraft:durability") {
-            Some(durability) => durability.field("max_durability"),
-            None => component("minecraft:max_damage"),
-        })
-        .filter(|maximum| *maximum > 0),
+        creative_category: super::registry_properties::negotiated_creative_category(bytes),
+        max_durability: match component("minecraft:durability") {
+            Some(durability) => durability
+                .field("max_durability")
+                .and_then(Nbt::int32)
+                .and_then(|maximum| u32::try_from(maximum).ok()),
+            None => count(component("minecraft:max_damage")).filter(|maximum| *maximum > 0),
+        },
         max_stack_size: count(property("max_stack_size").or(component("minecraft:max_stack_size")))
             .filter(|size| (1..=255).contains(size))
             .map(|size| size as u8),
@@ -309,7 +324,11 @@ pub(super) fn parse_components(bytes: &[u8]) -> Option<ItemComponents> {
         wearable_protection: component("minecraft:wearable")
             .and_then(|wearable| wearable.field("protection"))
             .and_then(|value| match value {
-                Nbt::Int(value) if (0..=i64::from(i32::MAX)).contains(value) => Some(*value as u32),
+                Nbt::Short(value) | Nbt::Int(value) | Nbt::Long(value)
+                    if (0..=i64::from(i32::MAX)).contains(value) =>
+                {
+                    Some(*value as u32)
+                }
                 _ => None,
             }),
         block_placer: component("minecraft:block_placer").and_then(|placer| {
@@ -325,6 +344,7 @@ pub(super) fn parse_components(bytes: &[u8]) -> Option<ItemComponents> {
 
 #[cfg(test)]
 mod tests {
+    mod creative_category;
     use super::parse_components;
 
     #[test]
@@ -542,10 +562,21 @@ mod tests {
     }
 
     #[test]
-    fn durability_declaration_retains_absent_invalid_and_positive_maxima() {
+    fn durability_declaration_retains_absent_invalid_and_nonnegative_int_maxima() {
+        let scalar = |tag, payload: &[u8]| {
+            let mut field = name(tag, "max_durability");
+            field.extend(payload);
+            vec![field]
+        };
         for (fields, expected) in [
             (vec![], None),
-            (vec![int("max_durability", 0)], None),
+            (scalar(1, &[50]), None),
+            (scalar(2, &50_i16.to_le_bytes()), None),
+            (scalar(4, &[100]), None),
+            (scalar(5, &50_f32.to_le_bytes()), None),
+            (scalar(6, &50_f64.to_le_bytes()), None),
+            (vec![compound("max_durability", &[int("value", 50)])], None),
+            (vec![int("max_durability", 0)], Some(0)),
             (vec![int("max_durability", -1)], None),
             (vec![int("max_durability", 50)], Some(50)),
         ] {
@@ -562,6 +593,28 @@ mod tests {
         }
         let root = compound("", &[compound("components", &[])]);
         assert!(!parse_components(&root).unwrap().durability_declared);
+    }
+
+    #[test]
+    fn shooter_draw_facts_follow_the_declared_fields() {
+        let shooter = |fields: &[Vec<u8>]| {
+            let root = compound(
+                "",
+                &[compound(
+                    "components",
+                    &[compound("minecraft:shooter", fields)],
+                )],
+            );
+            parse_components(&root).unwrap().shooter.unwrap()
+        };
+        let drawn = shooter(&[byte("charge_on_draw", 0), float("max_draw_duration", 1.0)]);
+        assert!(drawn.starts_held_draw());
+        assert!(!shooter(&[]).starts_held_draw());
+        assert!(!shooter(&[float("max_draw_duration", f32::NAN)]).starts_held_draw());
+        let charged = shooter(&[byte("charge_on_draw", 1), float("max_draw_duration", 1.0)]);
+        assert!(charged.charge_on_draw && !charged.starts_held_draw());
+        let root = compound("", &[compound("components", &[])]);
+        assert_eq!(parse_components(&root).unwrap().shooter, None);
     }
 
     #[test]
@@ -881,5 +934,35 @@ mod tests {
         ]))
         .unwrap();
         assert_eq!(overridden.allow_off_hand, Some(false));
+    }
+    #[test]
+    fn dynamic_storage_requires_both_component_objects() {
+        for storage in [false, true] {
+            for weight in [false, true] {
+                let mut fields = Vec::new();
+                if storage {
+                    fields.push(compound("minecraft:storage_item", &[]));
+                }
+                if weight {
+                    fields.push(compound("minecraft:storage_weight_limit", &[]));
+                }
+                let payload = compound("", &[compound("components", &fields)]);
+                assert_eq!(
+                    parse_components(&payload).unwrap().storage_container,
+                    storage && weight
+                );
+            }
+        }
+        let payload = compound(
+            "",
+            &[compound(
+                "components",
+                &[
+                    string("minecraft:storage_item", "wrong"),
+                    compound("minecraft:storage_weight_limit", &[]),
+                ],
+            )],
+        );
+        assert!(!parse_components(&payload).unwrap().storage_container);
     }
 }

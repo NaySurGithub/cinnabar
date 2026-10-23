@@ -64,6 +64,7 @@ pub fn icons(pages: &mut Vec<Page>) -> Result<[IconRef; session::ITEMS.len()], E
         }
     });
     pages.push(Page {
+        repeat_content: None,
         width: width.into(),
         height: ICON_SIZE.into(),
         rgba: rgba.into(),
@@ -78,9 +79,10 @@ pub fn paint(
     lang: &RuntimeLangCatalog,
     icons: &[IconRef; session::ITEMS.len()],
     selected: bool,
+    block_identity: i32,
     frame: &mut PaintFrame<'_>,
 ) -> Result<(), Error> {
-    let mut player = session::player()?;
+    let mut player = session::player(block_identity)?;
     let mut screen = ContainerScreen::default();
     let first = draw(
         engine,
@@ -134,10 +136,10 @@ pub fn paint(
         };
         let recipe = player
             .inventory
-            .book_recipes(false, usize::from(index), 1)
+            .book_recipes(false, false, usize::from(index), 1)
             .pop()
             .ok_or_else(|| Error::Invalid("craft fixture selected recipe is absent".into()))?;
-        match player.inventory.ledger_mut().begin_auto_craft(&recipe) {
+        match player.inventory.begin_book_craft(&recipe.recipe, false) {
             Ok(_) | Err(InventoryGestureError::InvalidRequest) => {}
             Err(error) => {
                 return Err(Error::Invalid(format!(
@@ -169,7 +171,7 @@ pub fn paint_cursor(
     icons: &[IconRef; session::ITEMS.len()],
     frame: &mut PaintFrame<'_>,
 ) -> Result<(), Error> {
-    let mut player = session::player()?;
+    let mut player = session::player(0)?;
     player
         .inventory
         .ledger_mut()
@@ -245,8 +247,7 @@ fn draw(
         storage_durability: &durability.storage,
         ui_icons: &ui_icons,
         ui_durability: &durability.ui,
-        crafting_icons: &contents.crafting.icons,
-        crafting_output: contents.crafting.output.as_ref(),
+        crafting: &contents.crafting,
         armor_icons: &[None; 4],
         armor_durability: &[None; 4],
         offhand_icon: None,

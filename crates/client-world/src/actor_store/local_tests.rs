@@ -37,7 +37,8 @@ fn profile_skin(store: &ActorStore, runtime_id: u64) -> Option<PlayerSkin> {
     store.player_profile(runtime_id).map(|p| p.skin.clone())
 }
 
-fn local_feed(x: f32, yaw: f32) -> LocalPlayerFeed {
+/// Supplies a local rig pose without predicted item use or movement flags.
+pub(super) fn local_feed(x: f32, yaw: f32) -> LocalPlayerFeed {
     LocalPlayerFeed {
         game_mode: None,
         prefer_client_skin: false,
@@ -56,6 +57,7 @@ fn local_feed(x: f32, yaw: f32) -> LocalPlayerFeed {
         pitch: 0.0,
         main_hand: None,
         off_hand: None,
+        equipment_count: 0,
         held_network_ids: [0; 2],
         held_variants: Default::default(),
         main_hand_metadata: 0,

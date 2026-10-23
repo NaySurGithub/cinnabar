@@ -3,6 +3,7 @@
 use serde_json::{Value, json};
 
 pub fn definitions() -> Value {
+    let text = json!({ "type": "string" });
     let strings = json!({ "type": "array", "items": { "type": "string" } });
     let controls = json!({
         "type": "array", "items": { "type": "string" },
@@ -65,7 +66,8 @@ pub fn definitions() -> Value {
                     "world_dir": { "type": "string" },
                     "args": strings
                 } },
-                "allow_remote": { "type": "boolean" }
+                "allow_remote": { "type": "boolean" },
+                "auth_cache": { "type": "string", "description": "Authorized private OAuth cache for this test join; omitted uses the launcher account." }
             } }
         },
         {
@@ -93,12 +95,17 @@ pub fn definitions() -> Value {
         {
             "name": "import_skin",
             "description": "Import a PNG, paired geometry JSON, or skin pack through the Dressing Room worker. The path is resolved against the checkout; poll state for completion.",
-            "inputSchema": { "type": "object", "properties": { "path": { "type": "string" } }, "required": ["path"], "additionalProperties": false }
+            "inputSchema": { "type": "object", "properties": { "path": text }, "required": ["path"], "additionalProperties": false }
+        },
+        {
+            "name": "import_cape",
+            "description": "Import and equip a PNG cape through the Dressing Room worker; in a world it is sent to the server as a skin update. The path is resolved against the checkout.",
+            "inputSchema": { "type": "object", "properties": { "path": text }, "required": ["path"], "additionalProperties": false }
         },
         {
             "name": "chat",
             "description": "Send a chat line as the player; a leading / sends a command (e.g. /showcase souls).",
-            "inputSchema": { "type": "object", "properties": { "text": { "type": "string" } }, "required": ["text"] }
+            "inputSchema": { "type": "object", "properties": { "text": text }, "required": ["text"] }
         },
         {
             "name": "camera_path",
@@ -177,7 +184,7 @@ pub fn definitions() -> Value {
         },
         {
             "name": "record_stop",
-            "description": "Stop recording and wait for the encode (and audio mux) to finish; returns the path and frame count.",
+            "description": "Stop recording and wait for the encode (and audio mux) to finish; returns the path, frame count, and dropped_frames/filled_frames: real-time slots the lagging encoder had no room for, which repeat the previous frame.",
             "inputSchema": { "type": "object", "properties": {} }
         },
         {

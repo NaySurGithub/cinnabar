@@ -8,12 +8,13 @@ use assets::{
 use serde_json::{Map, Value};
 
 use super::{
-    super::{SourcePayloads, invalid, molang::MolangCompiler},
+    super::{SourceDocuments, invalid, molang::MolangCompiler},
     ClipIndices, CompileReferenceOutcome, FallbackReason, RejectReason,
     clip::read_json,
     controller::{ControllerKey, PendingController},
     environment::{
-        GeometrySelection, GeometrySelections, default_geometry, unique_geometry_indices,
+        GeometrySelection, GeometrySelections, default_geometry, unique_by_definition,
+        unique_geometry_indices,
     },
     roots,
 };
@@ -40,6 +41,7 @@ struct PendingRig {
     item_condition: Option<u32>,
     scale: EntityGeometryScalar,
     scale_expressions: Option<[u32; 4]>,
+    held_item_scale: Option<u32>,
 }
 
 /// `(alias, target, weight, authored order)` of one root binding.
@@ -114,6 +116,7 @@ impl PendingRigPayload {
                 item_condition: rig.item_condition,
                 scale: rig.scale,
                 scale_expressions: rig.scale_expressions,
+                held_item_scale: rig.held_item_scale,
             });
         }
         Ok(FinalRigPayload {
@@ -128,7 +131,7 @@ impl PendingRigPayload {
 
 pub(super) struct RigSources<'a> {
     pub root: &'a Path,
-    pub payloads: &'a SourcePayloads,
+    pub payloads: &'a SourceDocuments<'a>,
     pub sources: &'a [EntityAssetSource],
     pub symbols: &'a [EntityAssetSymbol],
     pub geometries: &'a [EntityGeometry],
@@ -139,6 +142,9 @@ pub(super) fn compile_rigs(
     inputs: RigInputs<'_>,
     molang: &mut MolangCompiler,
 ) -> Result<(PendingRigPayload, Vec<Box<str>>), AssetError> {
+    let render_indices = unique_symbol_indices(&input, EntityAssetKind::RenderController)?;
+    let animation_symbols = unique_symbol_indices(&input, EntityAssetKind::Animation)?;
+    let controller_symbols = unique_symbol_indices(&input, EntityAssetKind::AnimationController)?;
     let RigSources {
         root,
         payloads,
@@ -151,10 +157,7 @@ pub(super) fn compile_rigs(
         controllers,
         geometry_selections,
     } = inputs;
-    let geometry_indices = unique_geometry_indices(geometries);
-    let render_indices = unique_symbol_indices(symbols, EntityAssetKind::RenderController);
-    let animation_symbols = unique_symbol_indices(symbols, EntityAssetKind::Animation);
-    let controller_symbols = unique_symbol_indices(symbols, EntityAssetKind::AnimationController);
+    let geometry_indices = unique_geometry_indices(geometries)?;
     let controller_names = controllers
         .iter()
         .map(|controller| {
@@ -176,7 +179,7 @@ pub(super) fn compile_rigs(
     }) {
         let source = &sources[entity.source_index as usize];
         let value = read_json(root, payloads, source)?;
-        let description = roots::description(&value)
+        let description = roots::description(value)
             .ok_or_else(|| invalid("client entity description is absent"))?;
         let reject = |reason| CompileReferenceOutcome::RequiredRigRejected {
             source: entity.source_index,
@@ -217,6 +220,7 @@ pub(super) fn compile_rigs(
                 item_condition,
                 scale: EntityGeometryScalar::new(1.0).expect("unit scale is valid"),
                 scale_expressions: None,
+                held_item_scale: None,
             });
             index
         });
@@ -264,9 +268,9 @@ pub(super) fn compile_rigs(
             Some(GeometrySelection::Unsupported) => static_fallback = true,
             None => {}
         }
-        let animation_aliases = roots::animation_aliases(&value)?;
-        let controller_aliases = roots::legacy_controller_aliases(&value)?;
-        let roots = roots::activation_roots(&value);
+        let animation_aliases = roots::animation_aliases(value)?;
+        let controller_aliases = roots::legacy_controller_aliases(value)?;
+        let roots = roots::activation_roots(value);
         let root_condition = |name: &str| {
             roots.as_ref().and_then(|roots| {
                 roots
@@ -358,22 +362,7 @@ pub(super) fn compile_rigs(
             });
         }
         if rejected {
-            outcomes.push(reject(
-                if description
-                    .get("animations")
-                    .and_then(Value::as_object)
-                    .is_some_and(|animations| {
-                        animations.values().filter_map(Value::as_str).any(|target| {
-                            animation_symbols.get(target).is_some_and(Option::is_none)
-                                || controller_symbols.get(target).is_some_and(Option::is_none)
-                        })
-                    })
-                {
-                    RejectReason::AmbiguousAnimationReference
-                } else {
-                    RejectReason::MissingAnimationReference
-                },
-            ));
+            outcomes.push(reject(RejectReason::AmbiguousAnimationReference));
             continue;
         }
         static_fallback |= optional_condition
@@ -406,6 +395,7 @@ pub(super) fn compile_rigs(
             item_condition,
             scale: scripts.scale,
             scale_expressions: scripts.scale_expressions,
+            held_item_scale: scripts.held_item_scale,
         };
         let rig_index = match selection_rig {
             Some(index) => {
@@ -427,6 +417,7 @@ struct RigScripts {
     pre_animation: Option<u32>,
     scale: EntityGeometryScalar,
     scale_expressions: Option<[u32; 4]>,
+    held_item_scale: Option<u32>,
     dropped: usize,
 }
 
@@ -497,11 +488,25 @@ impl RigScripts {
             .and_then(EntityGeometryScalar::new)
             .or_else(|| EntityGeometryScalar::new(1.0))
             .ok_or_else(|| invalid("unit scale is representable"))?;
+        let held_item_scale = match description.get("held_item_scale") {
+            None => None,
+            Some(value) => {
+                let expression = match value {
+                    Value::Number(number) => Some(number.to_string()),
+                    Value::String(text) => Some(text.clone()),
+                    _ => None,
+                };
+                let compiled = expression.and_then(|text| molang.compile(&text).ok());
+                dropped += usize::from(compiled.is_none());
+                compiled
+            }
+        };
         Ok(Self {
             initialize,
             pre_animation,
             scale,
             scale_expressions,
+            held_item_scale,
             dropped,
         })
     }
@@ -530,20 +535,30 @@ fn select_render_controller(value: Option<&Value>) -> Option<(&str, Option<&str>
     first
 }
 
+/// Indexes one named-map kind by identifier; only definitions that differ make it ambiguous.
 fn unique_symbol_indices(
-    symbols: &[EntityAssetSymbol],
+    input: &RigSources<'_>,
     kind: EntityAssetKind,
-) -> BTreeMap<Box<str>, Option<u32>> {
-    let mut indices = BTreeMap::new();
-    for (index, symbol) in symbols
+) -> Result<BTreeMap<Box<str>, Option<u32>>, AssetError> {
+    let mut entries = Vec::new();
+    for (index, symbol) in input
+        .symbols
         .iter()
         .enumerate()
         .filter(|(_, symbol)| symbol.kind == kind)
     {
-        indices
-            .entry(symbol.identifier.clone())
-            .and_modify(|value| *value = None)
-            .or_insert(Some(index as u32));
+        let source = &input.sources[symbol.source_index as usize];
+        // Named-map families keep their map under the field their directory is named after.
+        let family = source.path.split('/').next().unwrap_or_default();
+        let definition = read_json(input.root, input.payloads, source)?
+            .get(family)
+            .and_then(|map| map.get(symbol.identifier.as_ref()));
+        entries.push((symbol.identifier.clone(), (index as u32, definition)));
     }
-    indices
+    Ok(
+        unique_by_definition(entries, |first, other| first.1 == other.1)
+            .into_iter()
+            .map(|(identifier, entry)| (identifier, entry.map(|(index, _)| index)))
+            .collect(),
+    )
 }

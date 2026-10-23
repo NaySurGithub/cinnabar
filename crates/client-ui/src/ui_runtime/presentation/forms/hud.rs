@@ -18,6 +18,7 @@ use super::super::{UiPresentationError, UiPresentationRuntime, hud_layout};
 use super::preview_renderer::PreviewRenderer;
 use crate::ui_runtime::UiRuntime;
 
+mod geometry;
 mod semantic;
 pub(in crate::ui_runtime::presentation) use semantic::SemanticHud;
 #[cfg(test)]
@@ -52,7 +53,7 @@ const MAX_BOSS_BARS: usize = 8;
 
 /// Resolves the HUD screens of `catalog` under both chat placements on the calling thread, and
 /// returns the textures their controls name.
-pub(super) fn prepare(catalog: &Arc<Catalog>) -> BTreeSet<String> {
+pub(in crate::ui_runtime::presentation) fn prepare(catalog: &Arc<Catalog>) -> BTreeSet<String> {
     let base = hud_context(&ui_screens::menu_screens::retail_context());
     ui_screens::hud::prepared::prepare(
         catalog,
@@ -86,6 +87,8 @@ impl UiPresentationRuntime {
             .value(SettingId::HideHud)
             != 0
             || self.hud_frame.death_screen
+            || self.screens.mod_ui.mod_panel_open()
+                && (crosshair || !self.screens.mod_ui.mod_panel_shows_gameplay_hud())
         {
             return Ok(true);
         }
@@ -107,7 +110,7 @@ impl UiPresentationRuntime {
         // Project at the caller clock, then restore the published frame before fallible painting.
         let captured_clock = std::mem::replace(&mut self.hud_frame.now_millis, now_millis);
         let frame = &self.hud_frame;
-        let catalog = Arc::clone(renderer.catalog());
+        let catalog = self.mod_hud_bindings.catalog(renderer.catalog());
         let options = self.screens.chat.settings.options();
         let model = if crosshair {
             None
@@ -121,7 +124,7 @@ impl UiPresentationRuntime {
                 .scoreboard
                 .refresh(runtime.scoreboards(), &self.scoreboard_owner_names)
                 .filter(|_| !sidebar_key.2);
-            let changes = self.hud_cache.refresh(
+            let mut changes = self.hud_cache.refresh(
                 player_runtime,
                 runtime,
                 frame,
@@ -129,8 +132,13 @@ impl UiPresentationRuntime {
                 sidebar_key,
                 options,
                 self.screens.mod_ui.mod_effect_icons_hidden(),
-                &catalog,
+                renderer.catalog(),
             );
+            let touch_inventory = self.screens.touch.enabled();
+            if self.hud_cache.model.touch_inventory != touch_inventory {
+                self.hud_cache.model.touch_inventory = touch_inventory;
+                changes.status = true;
+            }
             Some((
                 &self.hud_cache.model,
                 changes,
@@ -141,6 +149,7 @@ impl UiPresentationRuntime {
             .screens
             .hud
             .begin(model, &self.scene_clock, runtime.session_id(), &catalog);
+        let data = self.mod_hud_bindings.merge(data, crosshair);
         let mut paint = hud_layout::capture_hud_paint(
             player_runtime,
             runtime,
@@ -205,6 +214,7 @@ impl UiPresentationRuntime {
         let drawn = self.screens.hud.paint(
             renderer,
             HudInput {
+                capture_keep_out: self.screens.mod_ui.mod_hud_editor_open(),
                 crosshair,
                 catalog: &catalog,
                 context: &context,
@@ -220,6 +230,8 @@ impl UiPresentationRuntime {
         )?;
         if !crosshair {
             // Touch selects hotbar slots through the HUD's own laid-out cells.
+            self.screens.touch.hud_session = drawn.as_ref().map(|_| runtime.session_id());
+            self.screens.touch.hud_keep_out = self.screens.hud.editor_keep_out;
             self.screens.touch.hud = drawn;
         }
         if let Some(view) = preview_view.get() {

@@ -134,6 +134,10 @@ pub struct ScrollMetrics {
     pub track: Option<[f64; 4]>,
     /// The drawn scrollbar box rect `[x, y, w, h]`, when it is shown.
     pub thumb: Option<[f64; 4]>,
+    /// The named thumb control's layout identity for pointer hit routing.
+    pub thumb_key: Option<String>,
+    /// The named track control's layout identity for pointer hit routing.
+    pub track_key: Option<String>,
     /// Pixels scrolled per wheel notch (`scroll_speed`).
     pub speed: f64,
     /// A horizontally draggable box scrolls along x.
@@ -226,7 +230,19 @@ impl ScrollMetrics {
         if self.horizontal {
             return self.offset;
         }
-        let sensitivity = *WHEEL_SENSITIVITY.get_or_init(|| self.speed);
+        self.wheel_offset(notches, *WHEEL_SENSITIVITY.get_or_init(|| self.speed))
+    }
+
+    /// Uses this view's declared speed for client-owned surfaces outside vanilla's global latch.
+    pub fn offset_for_wheel_local(&self, notches: f64) -> f64 {
+        self.wheel_offset(notches, self.speed)
+    }
+
+    /// Shares wheel direction, byte normalization and extent clamping across both speed policies.
+    fn wheel_offset(&self, notches: f64, sensitivity: f64) -> f64 {
+        if self.horizontal {
+            return self.offset;
+        }
         let byte = if notches > 0.0 {
             120.0 / 127.0
         } else {

@@ -16,17 +16,24 @@ impl UiRuntime {
         self.dropped_unsent_chat_messages
     }
 
+    /// Sets the connection's login identity and its initial presentation name.
     pub fn set_chat_identity(&mut self, source_name: Arc<str>, xuid: Arc<str>) {
+        self.local_player_display_name = Arc::clone(&source_name);
         self.chat_source_name = source_name;
         self.chat_xuid = xuid;
     }
 
-    pub fn set_chat_source_name(&mut self, source_name: Arc<str>) {
-        self.chat_source_name = source_name;
+    /// Updates the local actor's presentation name without changing outbound chat identity.
+    pub fn set_local_player_display_name(&mut self, name: Arc<str>) {
+        self.local_player_display_name = name;
     }
 
+    /// Queues an editor submission after removing leading ASCII whitespace.
     pub fn queue_chat_send(&mut self, now_millis: u64) -> Result<ChatSendRequest, ChatSendError> {
-        let message = self.chat_editor.as_str();
+        let message = self
+            .chat_editor
+            .as_str()
+            .trim_start_matches(|c| matches!(c, '\t'..='\r' | ' '));
         let request = self.chat_sends.push(self.session_id, message, now_millis)?;
         self.chat_history.push(Arc::clone(&request.message));
         self.chat_editor.clear();

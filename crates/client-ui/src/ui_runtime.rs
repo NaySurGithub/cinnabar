@@ -18,6 +18,7 @@ pub use error::UiRuntimeError;
 pub mod forms;
 pub mod gameplay_authority;
 pub mod gameplay_hud;
+pub mod grindstone;
 pub mod hud_adapter;
 pub mod interaction;
 pub mod inventory_actions;
@@ -26,6 +27,7 @@ pub mod inventory_ingress;
 
 mod food;
 mod furnace_options;
+mod inventory_options;
 mod item_activation;
 pub mod item_facts;
 pub mod json_ui_assets;
@@ -44,8 +46,8 @@ pub mod sign_editor;
 pub mod use_on_identity_evidence;
 
 pub use forms::{
-    FormRespondError, FormTransportError, LocalFormAction, MAX_RETAINED_SERVER_FORMS,
-    ServerFormEntry, ServerFormIdentity, ServerFormStore, flush_form_response,
+    FormRespondError, FormTransportError, LocalFormAction, ServerFormEntry, ServerFormIdentity,
+    ServerFormStore, flush_form_response,
 };
 
 pub use gameplay_authority::Translator;
@@ -134,10 +136,13 @@ impl UiAuthorityTransition {
 
 #[derive(Clone, Debug)]
 pub struct UiRuntime {
+    #[cfg(not(target_arch = "wasm32"))]
     pub experiences: crate::experience_session::ExperienceSession,
     pub player_roster: player_roster::PlayerRoster,
     session_id: u64,
     item_fuel_catalog: Option<Arc<assets::RuntimeEntityAssets>>,
+    /// The open window's position and the block entity id found there.
+    storage_block: Option<([i32; 3], Arc<str>)>,
     last_fifo_sequence: Option<u64>,
     last_block_crack_sequence: Option<u64>,
     last_local_millis: Option<u64>,
@@ -150,6 +155,8 @@ pub struct UiRuntime {
     death_reason: Arc<str>,
     death_rules: protocol::DeathRules,
     toast_display_millis: u64,
+    /// Developer captures never draw toasts.
+    hide_toasts: bool,
     chat: ChatStore,
     scoreboards: ScoreboardStore,
     boss_bars: BossBarStore,
@@ -170,6 +177,7 @@ pub struct UiRuntime {
     in_flight_chat_sends: usize,
     chat_source_name: Arc<str>,
     chat_xuid: Arc<str>,
+    local_player_display_name: Arc<str>,
     dropped_unsent_chat_messages: u64,
     block_cracks: crate::block_cracks::BlockCracks,
     gameplay_hud: GameplayHudState,
@@ -184,6 +192,7 @@ pub struct UiRuntime {
     inventory_keys: interaction::InventoryKeys,
     screen: screen_state::ScreenState,
     furnace_projection: Arc<std::sync::Mutex<presentation::forms::furnace_book::ProjectionCache>>,
+    recipe_book_icons: Arc<std::sync::Mutex<presentation::forms::BookIconCache>>,
     emotes: emotes::EmoteState,
     /// Client packets the screens queue for the network flush.
     client_packets: VecDeque<protocol::Packet>,
@@ -193,6 +202,8 @@ pub struct UiRuntime {
     /// Last known life state also retains the dead-to-alive reason retirement history.
     last_known_local_player_alive: Option<bool>,
     local_player_health_available: bool,
+    local_player_respawn_ready: bool,
+    local_player_death_generation: u64,
     last_selected_identity_change_millis: Option<u64>,
     last_selected_identity: Option<(u8, i32, u32)>,
     /// Local millis at which the held jump began charging the mounted jump
@@ -209,6 +220,7 @@ pub struct UiRuntime {
     food_catalog: Option<Arc<assets::RuntimeEquipmentCatalog>>,
     stack_facts: protocol::ItemStackFactsCache,
     anvil_cache: anvil::cache::PreviewCache,
+    grindstone_cache: grindstone::PreviewCache,
     /// Invalidates names when components or any translation table changes.
     item_name_generation: u64,
     server_ui: Option<Arc<presentation::ServerUiPack>>,
@@ -230,7 +242,9 @@ impl UiRuntime {
     pub fn new(session_id: u64) -> Self {
         Self {
             item_fuel_catalog: None,
+            storage_block: None,
             session_id,
+            #[cfg(not(target_arch = "wasm32"))]
             experiences: Default::default(),
             player_roster: Default::default(),
             last_fifo_sequence: None,
@@ -250,6 +264,7 @@ impl UiRuntime {
             death_reason: Arc::from(""),
             death_rules: protocol::DeathRules::default(),
             toast_display_millis: ui::TOAST_DISPLAY_MILLIS,
+            hide_toasts: false,
             chat: ChatStore::default(),
             scoreboards: ScoreboardStore::default(),
             boss_bars: BossBarStore::default(),
@@ -276,6 +291,7 @@ impl UiRuntime {
             in_flight_chat_sends: 0,
             chat_source_name: Arc::from(""),
             chat_xuid: Arc::from(""),
+            local_player_display_name: Arc::from(""),
             dropped_unsent_chat_messages: 0,
             block_cracks: crate::block_cracks::BlockCracks::default(),
             gameplay_hud: GameplayHudState::default(),
@@ -296,10 +312,13 @@ impl UiRuntime {
             local_actor_damage: None,
             last_known_local_player_alive: None,
             local_player_health_available: false,
+            local_player_respawn_ready: false,
+            local_player_death_generation: 0,
             last_selected_identity_change_millis: None,
             last_selected_identity: None,
             mount_jump_hold_started_millis: None,
             furnace_projection: Arc::default(),
+            recipe_book_icons: Arc::default(),
             lang_catalog: None,
             active_lang: None,
             server_lang: None,
@@ -308,6 +327,7 @@ impl UiRuntime {
             food_catalog: None,
             stack_facts: Default::default(),
             anvil_cache: Default::default(),
+            grindstone_cache: Default::default(),
             item_name_generation: 0,
             server_ui: None,
             session_glyphs: None,
@@ -374,15 +394,14 @@ impl UiRuntime {
             .route_equipment(session_id, fifo_sequence, event)
     }
 
+    /// Retains the local player's own MobEquipment echo. Like vanilla, an offhand echo changes
+    /// nothing: the local offhand is only ever read from the inventory ledger.
     pub fn retain_local_selected_equipment(
         &mut self,
         player_runtime: &mut player_state::PlayerState,
         fifo_sequence: u64,
         event: EquipmentEvent,
     ) {
-        if self.gameplay_hud.apply_offhand_equipment(&event) {
-            return;
-        }
         player_runtime
             .inventory
             .retain_local_selected_equipment(fifo_sequence, event);
@@ -459,9 +478,12 @@ impl UiRuntime {
         &mut self,
         player_runtime: &'a mut player_state::PlayerState,
     ) -> &'a mut PlayerInventoryLedger {
-        let ledger = player_runtime.inventory.ledger_mut();
+        let ledger = player_runtime.inventory_commands();
         if let Some(catalog) = &self.item_fuel_catalog {
             ledger.set_item_fuel_catalog(Arc::clone(catalog));
+        }
+        if let Some((position, block_entity)) = &self.storage_block {
+            ledger.name_storage_block(*position, Some(&**block_entity));
         }
         ledger
     }
@@ -637,6 +659,8 @@ impl UiRuntime {
         self.book_packets.clear();
         self.screen.reset_session();
         self.anvil_cache = Default::default();
+        self.grindstone_cache = Default::default();
+        #[cfg(not(target_arch = "wasm32"))]
         self.experiences.reset();
         self.server_lang = None;
         self.session_icons = None;
@@ -651,6 +675,7 @@ impl UiRuntime {
         self.presentation_tick_anchor = None;
         self.chat_source_name = Arc::from("");
         self.chat_xuid = Arc::from("");
+        self.local_player_display_name = Arc::from("");
         self.chat_focused = false;
         self.inventory_open = false;
         self.score_owner_names.clear();
@@ -694,6 +719,8 @@ impl UiRuntime {
         self.local_actor_damage = None;
         self.last_known_local_player_alive = None;
         self.local_player_health_available = false;
+        self.local_player_respawn_ready = false;
+        self.local_player_death_generation = 0;
         self.hurt_pending = false;
         self.last_selected_identity_change_millis = None;
         self.last_selected_identity = None;
@@ -733,9 +760,11 @@ impl UiRuntime {
         }
     }
 
+    /// Toggles the active inventory against the actor authority available at this input edge.
     pub fn toggle_inventory(
         &mut self,
         player_runtime: &mut player_state::PlayerState,
+        authority: Option<&client_world::WorldAuthority>,
     ) -> UiAuthorityTransition {
         self.screen.container_close_armed = false;
         self.chat_focused = false;
@@ -760,11 +789,23 @@ impl UiRuntime {
             self.inventory_open = self
                 .local_runtime_id(player_runtime)
                 .is_some_and(|runtime_id| {
-                    player_runtime
-                        .inventory
-                        .ledger_mut()
-                        .request_personal_open(runtime_id)
+                    let mount = authority
+                        .filter(|world| world.local_player_runtime_id() == runtime_id)
+                        .and_then(|world| {
+                            player_runtime
+                                .facts
+                                .mount_unique_id()
+                                .and_then(|mount| world.actor_by_unique_id(mount))
+                        });
+                    let ledger = player_runtime.inventory.ledger_mut();
+                    ledger.request_personal_open(mount.map_or(runtime_id, |mount| mount.runtime_id))
                 });
+        }
+        self.screen.inventory = None;
+        if self.inventory_open {
+            self.observe_inventory_window(player_runtime);
+        } else {
+            self.screen.search_focused = false;
         }
         UiAuthorityTransition {
             consumes_text: false,
@@ -781,6 +822,8 @@ impl UiRuntime {
         player_runtime: &mut player_state::PlayerState,
     ) -> UiAuthorityTransition {
         self.screen.container_close_armed = false;
+        self.screen.inventory = None;
+        self.screen.search_focused = false;
         player_runtime
             .inventory
             .ledger_mut()
@@ -906,6 +949,16 @@ impl UiRuntime {
     /// Applies the toast preference even when this frame cannot publish a viewport.
     pub fn set_toast_lifetime(&mut self, lifetime: u64) {
         self.toast_display_millis = lifetime;
+    }
+
+    /// Stops drawing toasts for the session (developer `--hide-toasts`); they still queue
+    /// and expire as usual, so nothing else changes.
+    pub fn set_hide_toasts(&mut self, hide: bool) {
+        self.hide_toasts = hide;
+    }
+
+    pub fn hides_toasts(&self) -> bool {
+        self.hide_toasts
     }
 
     /// Expires retained HUD output when the app has admitted a valid viewport.

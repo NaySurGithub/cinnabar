@@ -13,12 +13,29 @@ use time::OffsetDateTime;
 use update_installer::stage::{self, Download, Selection};
 use update_manifest::{TrustedKeys, channel::Channel, select::Check};
 
+const UNVERIFIED_INSTALLATION: &str = "Could not read the installed version. Automatic installation is unavailable; use the downloaded package to repair the installation.";
+
+/// A manual check bypasses scheduling and cached manifests without enabling automatic checks.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum FetchMode {
+    Scheduled,
+    Fresh,
+    Cached,
+    Manual,
+}
+
 #[derive(Deserialize, Serialize)]
 struct Stamp {
     checked_at: u64,
     current: String,
     #[serde(default)]
     build: u64,
+}
+
+/// The destination stays known even when automatic installation cannot verify its build.
+pub(super) struct Installation {
+    pub(super) target: PathBuf,
+    pub(super) build: Option<update_manifest::build::Build>,
 }
 
 /// A signed manifest can outlive the retained download it names; fetch the channel again.
@@ -78,7 +95,7 @@ pub(super) fn start(force: bool) {
     let Some(layout) = LAYOUT.get().cloned() else {
         return;
     };
-    let (preferences, switch_now, check_now, generation, announcement) = {
+    let (preferences, switch_now, mode, generation, announcement) = {
         let Ok(mut state) = STATE.lock() else {
             return;
         };
@@ -90,11 +107,22 @@ pub(super) fn start(force: bool) {
             return;
         }
         state.running = true;
+        state.status = Status::Checking;
         let check_now = std::mem::take(&mut state.check_now);
+        let manual = std::mem::take(&mut state.manual_check);
+        let mode = if manual {
+            FetchMode::Manual
+        } else if force {
+            FetchMode::Cached
+        } else if check_now || state.announcement.is_some() {
+            FetchMode::Fresh
+        } else {
+            FetchMode::Scheduled
+        };
         (
             state.preferences,
             state.switch_now,
-            check_now,
+            mode,
             state.generation,
             (!force && !check_now)
                 .then(|| state.announcement.clone())
@@ -110,8 +138,7 @@ pub(super) fn start(force: bool) {
                     preferences,
                     switch_now,
                     generation,
-                    force || check_now || announcement.is_some(),
-                    force,
+                    mode,
                     announcement.as_ref(),
                 )
             },
@@ -151,21 +178,25 @@ fn active(generation: u64) -> bool {
 }
 
 /// Reopens a verified ready stage, or checks the selected channel and resumes its artifact.
-/// `immediate` ignores the completion stamp; `cached` also reuses a verified cached manifest.
+/// Manual checks bypass the completion stamp, cached manifests and the automatic-check preference.
 fn run(
     layout: &InstallLayout,
     preferences: Preferences,
     switch_now: bool,
     generation: u64,
-    immediate: bool,
-    cached: bool,
+    mode: FetchMode,
     announcement: Option<&Announcement>,
 ) -> Result<()> {
     let Some(_) = preferences.channel.manifest_url() else {
+        ensure!(mode != FetchMode::Manual, "unpublished update channel");
         return Ok(());
     };
     let keys = update_manifest::parse_keys(update_installer::TRUSTED_KEYS)?;
     if keys.is_empty() {
+        ensure!(
+            mode != FetchMode::Manual,
+            "no trusted update keys configured"
+        );
         return Ok(());
     }
     let platform = update_manifest::platform_key(std::env::consts::OS, std::env::consts::ARCH)
@@ -176,12 +207,58 @@ fn run(
     // The updater's worker and offline helper share this transaction lease.
     let lease =
         update_installer::lease::Lease::acquire(&root).context("lock the update directory")?;
+    let installation = installation(layout);
+    let running_build = update_manifest::build::Build::current();
+    let current = installation
+        .as_ref()
+        .and_then(|installation| installation.build.as_ref())
+        .unwrap_or(&running_build);
+    let verified = installation
+        .as_ref()
+        .is_none_or(|installation| installation.build.is_some());
+    if !verified
+        && let Ok(mut state) = STATE.lock()
+        && state.accepts_worker(generation)
+    {
+        if let Some(ready) = state.ready.as_mut() {
+            ready.notice.writable = false;
+        }
+        state.message = Some(UNVERIFIED_INSTALLATION.into());
+    }
+    #[cfg(target_os = "linux")]
+    if let Some(running) = MANUAL.get()
+        && STATE.lock().is_ok_and(|state| state.ready.is_none())
+    {
+        let ready = running.recover(
+            &layout.user_data_root,
+            &keys,
+            preferences.channel,
+            &platform,
+            &lease,
+            OffsetDateTime::now_utc(),
+        );
+        if let Some(ready) = ready
+            && let Ok(mut state) = STATE.lock()
+        {
+            state.offer(ready, generation);
+            if state.accepts_worker(generation) {
+                state.status = Status::Idle;
+                state.message = Some("This downloaded update is running temporarily. Choose Restart and update to replace the installed copy.".into());
+            }
+        }
+    }
     let check = Check {
         channel: preferences.channel.name(),
         platform: &platform,
-        current: env!("CARGO_PKG_VERSION"),
-        current_build: update_manifest::build_number(),
+        current: &current.version,
+        current_build: current.number,
         switch_now,
+    };
+    // Polling stamps belong to this process's build, even while it repairs an older installation.
+    let stamp_check = Check {
+        current: &running_build.version,
+        current_build: running_build.number,
+        ..check
     };
     let stable = Check {
         channel: Channel::Stable.name(),
@@ -218,13 +295,26 @@ fn run(
     {
         staged = Some(selected.manifest.clone());
         let (directory, reader) = stage::retain(&destination, &lease, &selected)?;
-        publish(directory, reader, selected, switch_now, generation);
+        publish(
+            directory,
+            reader,
+            selected,
+            check,
+            installation
+                .as_ref()
+                .map(|installation| installation.target.clone()),
+            verified,
+            generation,
+        );
     }
-    if (!preferences.checks && !switch_now) || !active(generation) {
+    if (!preferences.checks && !switch_now && mode != FetchMode::Manual) || !active(generation) {
         return Ok(());
     }
     let stamp_path = stamp_path(&root, preferences.channel);
-    if !immediate && !switch_now && !due(last_check(&root, preferences.channel), now_secs()) {
+    if mode == FetchMode::Scheduled
+        && !switch_now
+        && !due(last_check(&root, preferences.channel), now_secs())
+    {
         // The skipped check would have found the same release, so restore what it offered.
         let switch_available =
             staged.is_none() && cached_switch_offer(&root, &keys, check, OffsetDateTime::now_utc());
@@ -257,7 +347,7 @@ fn run(
             &root,
             &keys,
             check,
-            cached,
+            mode == FetchMode::Cached,
             OffsetDateTime::now_utc(),
             async |channel| {
                 fetch(
@@ -289,10 +379,14 @@ fn run(
                 check.current_build,
             )?
         {
-            return record(&stamp_path, check, now_secs());
+            record(&stamp_path, stamp_check, now_secs())?;
+            set_status(generation, Status::UpToDate);
+            return Ok(());
         }
         if !supersedes(&selected.manifest, staged.as_ref(), switch_now)? {
-            return record(&stamp_path, check, now_secs());
+            record(&stamp_path, stamp_check, now_secs())?;
+            set_status(generation, Status::UpToDate);
+            return Ok(());
         }
         ensure!(active(generation), "update check cancelled");
         let artifact = selected.artifact.clone();
@@ -309,6 +403,7 @@ fn run(
         let directory = if let Some(directory) = reused {
             directory
         } else {
+            set_status(generation, Status::Downloading);
             let mut download = Download::begin(&root, selected)?;
             let offset = download.offset();
             // Retain only the current partial transfer. A channel change can restart another digest safely.
@@ -377,9 +472,28 @@ fn run(
         );
         let selected = stage::verify(&directory, &keys, check, OffsetDateTime::now_utc())?;
         let (directory, reader) = stage::retain(&directory, &lease, &selected)?;
-        publish(directory, reader, selected, switch_now, generation);
-        record(&stamp_path, check, now_secs())
+        publish(
+            directory,
+            reader,
+            selected,
+            check,
+            installation
+                .as_ref()
+                .map(|installation| installation.target.clone()),
+            verified,
+            generation,
+        );
+        record(&stamp_path, stamp_check, now_secs())
     })
+}
+
+/// Publishes worker progress only while its channel and consent are still current.
+fn set_status(generation: u64, status: Status) {
+    if let Ok(mut state) = STATE.lock()
+        && state.accepts_worker(generation)
+    {
+        state.status = status;
+    }
 }
 
 /// Revalidates the offered files themselves, independently of the replaceable shared cache.
@@ -495,24 +609,60 @@ pub(super) fn offer_switch(state: &mut State) {
 }
 
 /// Publishes a verified artifact with the platform's supported installation path.
-fn publish(stage: PathBuf, reader: File, selected: Selection, switch_now: bool, generation: u64) {
+fn publish(
+    stage: PathBuf,
+    reader: File,
+    selected: Selection,
+    check: Check<'_>,
+    target: Option<PathBuf>,
+    verified: bool,
+    generation: u64,
+) {
     let newer = update_manifest::select::newer_build(
         &selected.manifest.version,
         selected.manifest.build_number,
-        env!("CARGO_PKG_VERSION"),
-        update_manifest::build_number(),
+        check.current,
+        check.current_build,
     )
     .unwrap_or(false);
     let writable = newer
-        && handoff::installed_target()
+        && verified
+        && target
+            .clone()
+            .map_or_else(handoff::installed_target, Ok)
             .and_then(|target| update_installer::target::access(&target))
             .is_ok_and(update_installer::target::Access::permits_update);
     if let Ok(mut state) = STATE.lock() {
-        state.offer(
-            Ready::new(stage, reader, selected, switch_now, writable),
-            generation,
-        );
+        let mut ready = Ready::new(stage, reader, selected, check.switch_now, writable);
+        ready.target = target;
+        state.offer(ready, generation);
+        if !verified && state.accepts_worker(generation) {
+            state.message = Some(UNVERIFIED_INSTALLATION.into());
+        }
     }
+}
+
+/// Compares manual-copy checks with the actual installation while preserving portable behavior.
+fn installation(layout: &InstallLayout) -> Option<Installation> {
+    #[cfg(target_os = "linux")]
+    {
+        let running = MANUAL.get()?;
+        Some(inspect_installation(
+            running.destination(&layout.user_data_root),
+        ))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = layout;
+        None
+    }
+}
+
+/// Queries build identity without discarding the installation's destination on failure.
+#[cfg(target_os = "linux")]
+pub(super) fn inspect_installation(target: PathBuf) -> Installation {
+    let build = update_installer::target::installed_build(&target).ok();
+    Installation { target, build }
 }
 
 /// Bounds the signed document separately from the much larger release artifact.

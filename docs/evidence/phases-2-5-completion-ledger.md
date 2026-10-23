@@ -1,5 +1,60 @@
 # Phases 2-5 Completion Ledger
 
+This ledger records acceptance evidence, separately from feature implementation. An
+open gate does not mean its feature is absent. Older rows without evidence are not
+a current implementation audit; check the owning code and later entries before
+calling work unstarted. Test files listed below establish existing coverage, not
+a fresh passing run or full gate acceptance.
+
+## Browser host composition
+
+The browser host uses verified memory carriers, the shared game frame and HUD, injected
+session I/O and canvas input. Native owner checks and a wasm artifact pass. Headless Chrome with
+Metal WebGPU boots, renders an offline world's terrain and HUD, and moves its player. WebSocket
+transfer, disconnect and rejoin pass. Audio ranges feed the existing decoder and Web Audio mixer;
+real nonzero playback, gesture activation, cached suspension/resume and single-close disposal
+pass. Initial terrain latency, interactive UI controls, audio parity and hardware budgets remain
+incomplete. This adds no completed parity or browser-release gate.
+transfer, disconnect and rejoin pass. Initial terrain latency, interactive UI controls, audio
+delivery/playback and hardware budgets remain incomplete. This adds no completed parity or
+browser-release gate.
+## Local actor presentation flags
+
+The local rig retains animation flags separately from gameplay metadata. Visual
+item use and locomotion poses no longer author correction-sync flag words.
+Rendering consumers read the separate animation state. Accepted local held-use and
+glide/swim/crawl projection, replay authority and send-phase parity remain open.
+Player death also changes presentation flags once after its visible sequence,
+retaining the actor and accepting later server visibility updates. Deterministic
+death, revival and removal coverage does not establish original Zeqa acceptance.
+
+## Correction-sync posture retries
+
+Correction syncs retain accepted server sneak/sprint updates newer than the last
+completed movement sample, including walking height and retries without a new
+tick. Sparse updates preserve the other posture flag; a completed local tick
+replaces the retained update. Regression coverage includes transport refusal and
+input-latch consumption. Other prediction-sync metadata, pose sizes, exact send
+phase and live server acceptance remain incomplete.
+## Browser release verification
+
+Browser target checks and JavaScript edge suites are CI gates. Go and Rust consume
+shared control fixtures, and devtool builds a staged static bundle with the locked
+binding CLI and canonical carrier delivery index. Certificate renewal retains
+relay sessions and rejects invalid replacements while keeping the last good pair.
+The receive-buffer regression runs on the native test target.
+
+Incomplete: valid shared-client join/pack/transfer/reconnect integration and the
+real-browser acceptance matrix follow gameplay composition. No supported-browser,
+release, parity, memory or hardware performance gate closes from these checks.
+## Flowerbed stem tint
+
+Wildflower and pink-petal stems retain biome grass tint independently of petal
+colours and pack-selected sprite names. Every registered flowerbed state passes
+the original-art compiler and carrier-roundtrip regression. The focused crate
+check and rebuilt-carrier local BDS rendering pass against the official client.
+Broader terrain parity and hardware performance gates remain open.
+
 ## Redstone dust item sprite
 
 A reviewed default binding selects the item-atlas dust sprite, leaving placed
@@ -17,6 +72,17 @@ registered command variant, boundary culling and carrier roundtrips. Render-fact
 exact regeneration and focused compile checks pass. Local BDS frames and animation
 phases pass against the official Android reference. Broader pack/platform parity
 and hardware performance gates remain open; the command-block editor is unfinished.
+
+## Source-water retention during block changes
+
+Primary updates and predictions share source-water retention using generated
+per-state liquid-containment facts. Owning regressions cover both ID formats,
+ordered layer overrides, solid-block and bucket-removal controls, and malformed
+cells. The registry and bound carriers regenerate together. Flowing/falling
+water, custom block capabilities, broader parity and hardware performance remain
+open gates. Local BDS checks pass for own/observed placements, fence breaking and
+bucket removal against the official Android client. Focused checks pass; two
+installed-creeper tests in the broader suite remain unattributed.
 
 ## Liquid surfaces beneath opaque roofs
 
@@ -116,22 +182,22 @@ performance qualification remain incomplete. No phase or performance gate closes
 
 | Field | Evidence |
 |---|---|
-| Owning plan/task | Not started |
-| Deterministic tests | Not started |
-| Review commit | Not started |
-| Live/native witness | Not started |
-| Performance/resource witness | Not started |
+| Owning plan/task | Packed biome storage and tint preparation exist in `crates/world/src/biome.rs` and `crates/meshing/src/biome.rs`; full native qualification remains open. |
+| Deterministic tests | Existing shader coverage includes `crates/render/tests/it/biome_shader.rs`; full-gate run results are not recorded in this row. |
+| Review commit | Not recorded in this row |
+| Live/native witness | Not recorded in this row |
+| Performance/resource witness | Not recorded in this row |
 | Final status | Open |
 
 ## P2-CHUNK-PUBLICATION
 
 | Field | Evidence |
 |---|---|
-| Owning plan/task | Not started |
-| Deterministic tests | Not started |
-| Review commit | Not started |
-| Live/native witness | Not started |
-| Performance/resource witness | Not started |
+| Owning plan/task | Bounded sub-chunk request origin, FIFO grouping, transport membership and deferred-mesh promotion are implemented; broader publication acceptance remains open. See the sub-chunk request batching continuation in `plan.md`. |
+| Deterministic tests | Protocol, stream, transport and app regressions are authored. Deferred-mesh regressions cover settled dependencies, stale light, priority and bounded work. Full publication qualification is pending. |
+| Review commit | Independent review is pending. |
+| Live/native witness | Full camera writer phase, global request discovery, native retry policy and later client versions remain open. |
+| Performance/resource witness | Live join, streaming and hardware budgets remain open. |
 | Final status | Open |
 
 ## P2.7-ATMOSPHERE
@@ -258,6 +324,13 @@ and exact native and platform comparison remain open.
 
 ## P4.3-RIGS
 
+Body-slot equipment retention, authored model selection and removal have original
+fixture coverage, alongside startup binding completion and raw worn-slot counting.
+Resource-only session overrides reuse completed bindings without replacing authored
+item conditions; expression-root placement retains the worn slot.
+Local counts use the armor container; replicated counts retain unresolved equipment.
+Multi-pass body equipment and matched native visual qualification remain open.
+
 | Field | Evidence |
 |---|---|
 | Owning plan/task | `plan.md`: local custom models; static imports reuse actor preparation. |
@@ -288,11 +361,11 @@ material/shader linkage remain open.
 
 | Field | Evidence |
 |---|---|
-| Owning plan/task | Not started |
-| Deterministic tests | Not started |
-| Review commit | Not started |
-| Live/native witness | Not started |
-| Performance/resource witness | Not started |
+| Owning plan/task | Not recorded in this row |
+| Deterministic tests | Not recorded in this row |
+| Review commit | Not recorded in this row |
+| Live/native witness | Not recorded in this row |
+| Performance/resource witness | Not recorded in this row |
 | Final status | Open |
 
 Actor rigs, Molang evaluation, controllers and poses live in Bevy-free
@@ -312,7 +385,7 @@ external armor models. Broader item-action and custom-content parity stays open.
 | Deterministic tests | Local/remote event admission, equipped-item snapshot across delayed publication, equipment-only hands, consumption ordering, retrigger, expiry, session retirement, partial ticks, bounded stall time, activation before the frame clock update, full-viewport scissor and retained clipping, viewport/layer placement, admitted texture replacement/removal and authored particle routing/attachment. |
 | Review commit | Totem implementation: `590c2039e`; broader item actions remain open. |
 | Live/native witness | Totem camera event/icon behavior and local authored-emitter routing verified; full-client default/custom activation, main-hand fallback, retrigger and remote/empty exclusion pass. Broader item actions remain open. |
-| Performance/resource witness | Not started |
+| Performance/resource witness | Not recorded in this row |
 | Final status | Open |
 
 ## P5.1-UI
@@ -321,7 +394,7 @@ external armor models. Broader item-action and custom-content parity stays open.
 |---|---|
 | Owning plan/task | `plan.md`: Compact font carriers and glyph residency; broader UI parity remains open. |
 | Deterministic tests | Font schema, bounded decode, frame residency, atlas churn, and retained allocation regressions cover compact carriers. Original large-sheet UV, loop, reload and independent residency-budget regressions cover tiled UI images. |
-| Review commit | Not started |
+| Review commit | Not recorded in this row |
 | Live/native witness | Exact coverage/SDF GPU pixels and mixed-script offline frames; native Bedrock UI parity remains open. |
 | Performance/resource witness | Font storage is bounded and development-profile first-menu startup is measured; release hitch and hardware-tier qualification remain open. |
 | Final status | Open |
@@ -344,11 +417,11 @@ retained alpha/depth/UV behavior. Broader custom-model sidedness remains open.
 
 | Field | Evidence |
 |---|---|
-| Owning plan/task | Not started |
-| Deterministic tests | Not started |
-| Review commit | Not started |
-| Live/native witness | Not started |
-| Performance/resource witness | Not started |
+| Owning plan/task | HUD state and publication exist in `crates/ui/src/hud.rs` and `crates/client-ui/src/ui_runtime/gameplay_hud.rs`; full acceptance remains open. |
+| Deterministic tests | Existing HUD matrix coverage includes `crates/client-ui/src/ui_runtime/presentation/tests/hud_matrix_tests.rs`; full-gate run results are not recorded in this row. |
+| Review commit | Not recorded in this row |
+| Live/native witness | Not recorded in this row |
+| Performance/resource witness | Not recorded in this row |
 | Final status | Open |
 
 Attack-category cooldown shading has owning timer and hotbar-publication regressions
@@ -361,9 +434,9 @@ the missing overlay against the official client; broader HUD parity remains open
 |---|---|
 | Owning plan/task | `plan.md`: chat completion and quoted player names. |
 | Deterministic tests | Mention filtering, name quoting, command permissions, insertion, Tab cycling, bounds and row-text regressions are written; compilation and execution await CI. |
-| Review commit | Not started |
-| Live/native witness | Not started |
-| Performance/resource witness | Not started |
+| Review commit | Not recorded in this row |
+| Live/native witness | Not recorded in this row |
+| Performance/resource witness | Not recorded in this row |
 | Final status | Open |
 
 Plain chat offers `@here` and player-list names; command targets include `@n`.
@@ -379,14 +452,39 @@ tooltip controls. Native command-edit acceptance and broader JSON-UI parity rema
 
 | Field | Evidence |
 |---|---|
-| Owning plan/task | Not started |
-| Deterministic tests | Not started |
-| Review commit | Not started |
-| Live/native witness | Not started |
-| Performance/resource witness | Not started |
+| Owning plan/task | Scoreboard state and UI adaptation exist in `crates/ui/src/scoreboard.rs` and `crates/client-ui/src/ui_runtime/scoreboard_adapter.rs`; full acceptance remains open. |
+| Deterministic tests | Existing pack rendering coverage includes `crates/client-ui/src/ui_runtime/presentation/forms/engine_tests/scoreboard_pack.rs`; full-gate run results are not recorded in this row. |
+| Review commit | Not recorded in this row |
+| Live/native witness | Not recorded in this row |
+| Performance/resource witness | Not recorded in this row |
 | Final status | Open |
 
 ## P5.5-INTERACTION-COMBAT-INVENTORY
+
+Custom block mining retains component defaults, disabled values, ordered item
+overrides and resolved state permutations in both runtime identity spaces.
+Every admitted state resolves a mining value: malformed item entries never match,
+and conditions the client reads as zero keep the base value. Item-tag filters
+compile during session preparation and reuse those programs without allocating.
+Mining state storage is independent of the physical state budget.
+Regression tests cover component decoding, progress rates and completion packets.
+Complex Molang conditions and item-tag scripts read as zero, and live acceptance
+against a vanilla server remains incomplete; this does not advance the
+interaction completion gate.
+
+Ordered desktop interactions now attempt each edge only in its input frame.
+Refused presses retain no proposal or movement reservation. Gameplay owners retain
+accepted mining and release work, while overload recovery suppresses current held
+input until neutrality. Scrolling preserves per-control suppression, and accepted
+item uses can end before neutrality without starting another use. Regression coverage
+exercises per-frame admission, use resolution and pending controls. Live input
+acceptance, overload timing and camera sampling remain incomplete;
+no completion gate advances.
+
+Selected transaction descriptor regressions cover optional stack-ID omission while
+preserving item contents, inventory action IDs and legacy requests. The shared
+embedded movement payload uses the same conversion. Admission, dynamic actions,
+NBT rewriting and combined runtime acceptance remain incomplete.
 
 Block and actor rays share float normalization. Block traversal and clipping use
 rounded float segments; placement bounds and click coordinates stay in float
@@ -399,7 +497,7 @@ occlusion share rounded intercept distances. CI verification remains pending.
 | Field | Evidence |
 |---|---|
 | Owning plan/task | Partial local placement coverage and compiled movement/selection ownership; see Local placement prediction and Block selection outlines and visual bounds in plan.md. |
-| Deterministic tests | Gameplay direction, support, stacking and immediate-placement tables in both palette encodings; pipeline atomic pair, rollback and ordered publication tests. Item-use tests cover frame/tick slot changes, the native rearm boundary, category cooldowns, rejected-send rollback and hotbar cooldown publication. |
+| Deterministic tests | Gameplay direction, support, stacking and immediate-placement tables in both palette encodings; pipeline atomic pair, rollback and ordered publication tests. Item-use tests cover frame/tick slot changes, the native rearm boundary, category cooldowns, rejected-send rollback and hotbar cooldown publication. Inventory regressions cover packet routing, whole transaction rejection, owned response data, active close inputs and selected-item use after close; complete inventory parity remains open. |
 | Review commit | Recorded by the placement follow-up PR. |
 | Live/native witness | Headless stair comparison and door pair before server confirmation; broader family visual parity remains open. |
 | Performance/resource witness | Paused-server stair recording: first visible/staged +3 frames, observed upload +5; bounded late worker service. Click-frame and full hardware budgets remain open. |
@@ -409,11 +507,11 @@ occlusion share rounded intercept distances. CI verification remains pending.
 
 | Field | Evidence |
 |---|---|
-| Owning plan/task | Not started |
-| Deterministic tests | Not started |
-| Review commit | Not started |
-| Live/native witness | Not started |
-| Performance/resource witness | Not started |
+| Owning plan/task | Server form admission and presentation exist in `crates/client-ui/src/ui_runtime/forms.rs` and `crates/client-ui/src/ui_runtime/presentation/forms.rs`; full acceptance remains open. |
+| Deterministic tests | Existing form coverage includes `crates/client-ui/src/ui_runtime/presentation/tests/forms_tests.rs`; full-gate run results are not recorded in this row. |
+| Review commit | Not recorded in this row |
+| Live/native witness | Not recorded in this row |
+| Performance/resource witness | Not recorded in this row |
 | Final status | Open |
 
 ## P5.7-PARITY-PERF
@@ -432,7 +530,7 @@ hardware frame-time and capture acceptance remain open.
 |---|---|
 | Owning plan/task | Bamboo geometry, column transforms, sampling and overlay consumers covered; wider parity and performance work remains open |
 | Deterministic tests | All twelve bamboo states, offset admission in both ID spaces, source-pixel mip selection, opaque/cutout consumers and populated Metal rendering graph |
-| Review commit | Not started |
+| Review commit | Not recorded in this row |
 | Live/native witness | Fresh Vanilla and bounded Enhanced bamboo gallery, selection and timed breaking captures; screenshots accompany the change |
 | Performance/resource witness | No displayed-frame performance acceptance from hidden debug captures; ordinary Enhanced remains disabled |
 | Final status | Open |
@@ -442,6 +540,8 @@ resource-pack rebuilds. Renderer work is reduced through uploaded native lightma
 bounded sky lookup, retained actor pipeline IDs and UI composite bindings, and direct
 SMAA blending into the shared scene samples. Early depth rejection and shared passes across
 deferred nametag gaps reduce filtering and attachment work without changing draw order.
+Player label anchors use Java's standing height before crouching offsets; collision-height
+transitions and Scale have regression coverage. Wider name-tag qualification stays open.
 Native colour comparisons cover LDR/HDR filtering and partial-sample overlays. World UI
 also shares passes across depth modes, preserving pixels and pipeline-readiness fallbacks.
 Opt-in Metal visibility admission uses fresh current-frame masks.
@@ -562,12 +662,15 @@ executed locally. No existing completion entry is advanced.
 
 The shared backend policy, driver blocklist, crash sentinel and restart-only Video override
 are implemented. GL/GLES is absent from choices and candidates; older saved GL choices read
-as Auto. Android requires Vulkan. Failed saved Video choices retry Auto for the current launch,
-while WGPU_BACKEND stays strict. Each API is enumerated under its own sentinel before eligible adapters are
+as Auto. Android requires Vulkan. A saved Video choice that fails, or that crashed an earlier
+startup under the same setting, retries Auto without that API for the current launch and opens a
+menu notice naming both APIs and the reason, while WGPU_BACKEND stays strict. The startup log
+states the requested API, the API in use and why. Each API is enumerated under its own sentinel before eligible adapters are
 ranked by power preference, device type and vendor backend order, with unclassified hardware
 ahead of software. Device failures advance through all candidates;
 named GPU selection restricts every API. Exclusions are keyed only by backend and reset on a
-client version change or Graphics API selection, including choosing Auto again. Exhausted candidates permit one retry
+client version change or selecting Auto, including choosing it again; an explicit selection keeps
+them for its Auto fallback. Exhausted candidates permit one retry
 pass with exclusions cleared. Startup log boundaries synchronize only the file sink.
 Candidate filtering requires base-vertex terrain draws, vertex and fragment storage, alternate
 texture views, non-power-of-two mipmaps, sample-rate shading, unaligned buffer bindings and
@@ -584,3 +687,27 @@ Registry generation now supplies the shared backing and renderer table used by
 block-entity admission, spawner displays, portal scans and visual diagnostics.
 Unsupported and provisional routes remain explicit. This changes no completion
 status; the remaining renderer and live acceptance gates stay open in `plan.md`.
+Chalkboards retain supplied model geometry and world artwork; text and native visual
+acceptance remain incomplete, and no completion status advances.
+
+Retained mod drawing has authority and lifetime contracts. Geometry admission validates
+vertices once and caches extent and quota facts for every shared instance and callback
+group. Extent checks use conservative box and sphere bounds without revisiting vertices.
+Unchanged callbacks preserve snapshot identity without allocations. The generic unlit
+renderer is connected; actor root attachment uses the renderer publication and exact spawn
+references. Bone attachment, native output captures and hardware budgets remain incomplete
+and do not close any completion requirement.
+
+Bounded procedural materials and SDK presets use a session animation phase.
+Lifecycle, shader layout and GPU timing tests pass; native Metal fixtures cover
+animated presets, line joins and scaled geometry. These fixtures do not close
+in-world rendering or hardware budget requirements.
+
+The Rust/WIT drawing SDK supplies deterministic shape builders and depth-tested
+instance defaults. Legacy compatibility paths remain in place until retained
+presets preserve their coverage and placement. TypeScript packaging, renderer
+acceptance and hardware performance gates remain incomplete.
+
+Host-composed outlines and halos use admitted actor masks. Custom effects declare their
+own mask bindings. In-world ordering, resolution transitions and hardware budgets remain
+incomplete in `plan.md`; these additions close no rendering or performance gate.

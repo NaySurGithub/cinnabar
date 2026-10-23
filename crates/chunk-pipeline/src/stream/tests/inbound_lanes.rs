@@ -15,6 +15,7 @@ fn remote_move(runtime_id: u64) -> WorldEvent {
         head_yaw: None,
         on_ground: None,
         teleported: false,
+        force_local_move: false,
         player_mode: None,
         source_tick: None,
         interpolation: Default::default(),
@@ -610,4 +611,138 @@ fn retained_ingress_keeps_block_and_block_entity_updates_behind_their_chunk() {
     stream.submit(1, chunk).unwrap();
     complete_pending_decode_jobs(&mut stream);
     assert_eq!(stream.committed_sequence(), 4);
+}
+
+/// Remote player packets update their actor while unrelated chunk or block decode is pending.
+#[test]
+fn remote_player_moves_apply_while_unrelated_terrain_decode_is_pending() {
+    for mutation in [false, true] {
+        let mut stream = block_entity_visual_stream();
+        stream
+            .submit(
+                1,
+                WorldEvent::Actor(ActorEvent::Spawn(ActorSpawnEvent {
+                    dimension: 0,
+                    unique_id: 9,
+                    runtime_id: 9,
+                    kind: ActorKind::Player {
+                        uuid: [9; 16],
+                        username: "Remote".into(),
+                    },
+                    position: [0.0, PLAYER_NETWORK_OFFSET, 0.0],
+                    velocity: [0.0; 3],
+                    pitch: 0.0,
+                    yaw: 0.0,
+                    head_yaw: 0.0,
+                    body_yaw: 0.0,
+                    held_item: Default::default(),
+                    metadata: Arc::from([]),
+                    attributes: Arc::from([]),
+                    properties: Arc::from([]),
+                    links: Arc::from([]),
+                })),
+            )
+            .unwrap();
+        stream.submit(2, inline_air_event(0)).unwrap();
+        complete_pending_decode_jobs(&mut stream);
+        let held = if mutation {
+            worker_block_batch(0, 1)
+        } else {
+            inline_air_event(1)
+        };
+        stream.submit(3, held).unwrap();
+        assert!(!stream.order.is_finished(3));
+        let publisher_center = stream.publisher.center;
+        for (sequence, mode, x) in [
+            (4, MovePlayerMode::Teleport, 7.0),
+            (5, MovePlayerMode::Normal, 8.0),
+        ] {
+            stream
+                .submit(
+                    sequence,
+                    WorldEvent::MovePlayer(MovePlayerEvent {
+                        runtime_id: 9,
+                        position: [x, PLAYER_NETWORK_OFFSET, 0.0],
+                        mode,
+                        ..Default::default()
+                    }),
+                )
+                .unwrap();
+            assert!(stream.order.is_finished(sequence));
+            assert_eq!(
+                stream.authority().actor(9).unwrap().received_pose.position[0],
+                x
+            );
+        }
+        assert_eq!(stream.committed_sequence(), 2);
+        assert!(stream.take_committed_controls().is_empty());
+        assert_eq!(stream.publisher.center, publisher_center);
+        complete_pending_decode_jobs(&mut stream);
+        assert_eq!(stream.committed_sequence(), 5);
+    }
+}
+
+#[test]
+fn admitted_lethal_attribute_burst_retains_both_controls_without_overflow() {
+    let mut stream = block_entity_visual_stream();
+    // Delay a barrier so the entire light admission allowance commits in one pass.
+    stream
+        .order
+        .admit(1, client_world::ingestion::Footprint::barrier(), 0)
+        .unwrap();
+    let count = MAX_ADMITTED_WORLD_EVENTS - 1;
+    for index in 0..count {
+        let attributes = [
+            (protocol_ids::Attribute::Health, 20.0),
+            (protocol_ids::Attribute::Health, 0.0),
+            (protocol_ids::Attribute::Health, 20.0),
+            (protocol_ids::Attribute::Health, 0.0),
+            (protocol_ids::Attribute::Movement, 0.1),
+        ]
+        .map(|(attribute, current)| ActorAttribute {
+            name: attribute.wire_name().into(),
+            min: 0.0,
+            max: 20.0,
+            current,
+            default: Some(current),
+            modifiers: Default::default(),
+        });
+        stream
+            .submit(
+                index as u64 + 2,
+                WorldEvent::Actor(ActorEvent::Attributes(ActorAttributesUpdateEvent {
+                    dimension: 0,
+                    runtime_id: 1,
+                    tick: 0,
+                    attributes: Arc::from(attributes),
+                })),
+            )
+            .unwrap();
+    }
+    assert_eq!(stream.light_admission_capacity(), 0);
+    stream
+        .order
+        .insert_ready(1, client_world::ingestion::PreparedWorldEvent::CommitOnly)
+        .unwrap();
+    stream.apply_ready();
+    let controls = stream.take_committed_controls();
+    assert_eq!(
+        controls
+            .iter()
+            .filter(|event| matches!(event, CommittedControlEvent::LocalMovementSpeed { .. }))
+            .count(),
+        count
+    );
+    assert_eq!(
+        controls
+            .iter()
+            .filter(|event| matches!(event, CommittedControlEvent::LocalDeath { .. }))
+            .count(),
+        count
+    );
+    assert_eq!(stream.committed_sequence(), count as u64 + 1);
+    stream
+        .authority
+        .restore_committed_controls(controls.into_iter());
+    assert_eq!(stream.take_committed_controls().len(), count * 2);
 }

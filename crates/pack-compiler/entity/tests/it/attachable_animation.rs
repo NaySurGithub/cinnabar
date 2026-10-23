@@ -385,3 +385,24 @@ fn attachable_controller_blend_settings_survive_the_compiled_controller_pipeline
         assert_eq!(geometry.animation_count, 0);
     }
 }
+
+#[test]
+fn existing_attachable_fixture_keeps_compiled_bytes() {
+    use sha2::{Digest, Sha256};
+    let compiled = compile_actor_pack(framed_pack()).unwrap().unwrap();
+    let entity = assets::encode_entity_blob(&compiled.entities).unwrap();
+    let equipment = assets::encode_equipment_catalog_with_textures(
+        compiled.identity,
+        Sha256::digest(&entity).into(),
+        &compiled.equipment_bindings,
+        &compiled.equipment_textures,
+    )
+    .unwrap();
+    let mut digest = Sha256::new();
+    digest.update(entity);
+    digest.update(equipment);
+    assert_eq!(
+        format!("{:x}", digest.finalize()),
+        "5d28441bd427abc4ea79b33ad78f1f5476b67b5b069fc44de326a761de7ff971"
+    );
+}

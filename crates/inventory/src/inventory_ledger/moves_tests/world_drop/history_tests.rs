@@ -1,5 +1,3 @@
-use protocol::{ContainerCloseEvent, NO_CONTAINER_WINDOW_TYPE};
-
 use super::*;
 
 /// Rolling back a normal drop can restore an earlier screen request's empty backing owner.
@@ -27,7 +25,7 @@ fn rejecting_take_place_and_empty_world_drop_restores_the_entire_stack() {
     }
 }
 
-/// Admits a screen drop and closes its window while retaining the pending reply.
+/// Sends a screen drop and local close while the acknowledgement remains outstanding.
 fn screen_drop_and_close(ledger: &mut PlayerInventoryLedger) -> i32 {
     open_personal(ledger);
     let screen = ledger
@@ -36,11 +34,6 @@ fn screen_drop_and_close(ledger: &mut PlayerInventoryLedger) -> i32 {
     assert!(ledger.mark_transport_enqueued(20));
     ledger.request_personal_close();
     assert!(ledger.mark_transport_enqueued(21));
-    ledger.apply(&InventoryEvent::Close(ContainerCloseEvent {
-        container: ContainerIdentity::window(2),
-        window_type: NO_CONTAINER_WINDOW_TYPE,
-        server_initiated: false,
-    }));
     assert!(!ledger.personal_inventory_desired_open());
     screen
 }
@@ -130,7 +123,7 @@ fn rejecting_a_screen_predecessor_rebuilds_an_unsent_world_drop() {
     assert_eq!(count, 1);
     let transaction = observe_transaction(&packet).unwrap();
     assert_eq!(transaction.actions[0].from_item.count, 5);
-    assert_eq!(transaction.actions[0].from_item.stack_network_id, Some(100));
+    assert_eq!(transaction.actions[0].from_item.stack_network_id, None);
     assert_eq!(transaction.actions[0].to_item.count, 4);
     assert!(ledger.mark_transport_enqueued(22));
     ledger.apply(&response(legacy, StackResponseStatus::Rejected, None));

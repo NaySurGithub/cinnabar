@@ -39,6 +39,11 @@ impl WorldAuthority {
     pub fn actor_name_tag(&self, unique_id: i64) -> Option<std::sync::Arc<str>> {
         self.actors.actor_name_tag(unique_id)
     }
+    /// The title an actor-backed container screen shows: its filtered name when set,
+    /// otherwise its name tag.
+    pub fn actor_container_name(&self, unique_id: i64) -> Option<std::sync::Arc<str>> {
+        self.actors.actor_container_name(unique_id)
+    }
     /// Every username on the retained authoritative player list, sorted.
     pub fn player_list_usernames(&self) -> Vec<std::sync::Arc<str>> {
         self.actors.player_list_usernames()
@@ -272,6 +277,11 @@ impl WorldAuthority {
         self.actors.get(runtime_id)
     }
 
+    /// Whether the actor currently owns a live fishing hook entity.
+    pub fn has_fishing_hook(&self, owner_unique_id: i64) -> bool {
+        self.actors.has_fishing_hook(owner_unique_id)
+    }
+
     /// Returns the session, dimension and spawn identity that owns the current actor.
     pub fn actor_lifetime(&self, runtime_id: u64) -> Option<actor_animation::ActorLifetimeId> {
         self.actors.lifetime(runtime_id)
@@ -353,6 +363,13 @@ impl WorldAuthority {
     /// Full-body pose for HUD rendering, independent of the local first-person hand pose.
     pub fn actor_ui_pose(&self, runtime_id: u64) -> Option<&[actor_animation::BoneTransform]> {
         self.actors.actor_ui_pose(runtime_id)
+    }
+    /// Full-body controller layers paired with the actor's UI pose.
+    pub fn actor_ui_layers(
+        &self,
+        runtime_id: u64,
+    ) -> Option<actor_animation::ActorRenderLayers<'_>> {
+        self.actors.actor_ui_layers(runtime_id)
     }
     /// The rig's pose at the frame fraction with `targets` replacing their joints in model space;
     /// other bones keep their animated offsets from their parents.
@@ -520,7 +537,7 @@ impl WorldAuthority {
     /// The actor's interaction boxes where this frame's due ticks put it, for picks.
     pub fn pick_hit_boxes<'a>(&self, actor: &'a ActorSnapshot) -> crate::ActorHitBoxes<'a> {
         match self.actors.pick_pose(actor.runtime_id) {
-            Some((position, _)) => actor.hit_boxes_at(position),
+            Some(pose) => actor.hit_boxes_at_pose(pose),
             None => actor.hit_boxes(),
         }
     }

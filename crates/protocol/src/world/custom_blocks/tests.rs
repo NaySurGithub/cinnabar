@@ -7,11 +7,17 @@ fn parse_definition(bytes: &[u8]) -> Option<Definition> {
     super::parse_definition(&crate::nbt_tree::read_root(bytes)?)
 }
 
+mod mining;
+
 // Every state appears once, in palette order, with a distinct hash.
 #[test]
 fn hashed_states_enumerate_axes_and_hash_distinctly() {
     let block = CustomBlock {
+        mining: Default::default(),
+        sound: None,
+        state_physics_complete: false,
         state_physics: Default::default(),
+        state_mining: Default::default(),
         player_interact: false,
         name: "ns:b".into(),
         tags: Default::default(),
@@ -48,7 +54,11 @@ fn hashed_states_enumerate_axes_and_hash_distinctly() {
     let hashes: std::collections::HashSet<_> = states.iter().map(|state| state.hash).collect();
     assert_eq!(hashes.len(), 6);
     let plain = CustomBlock {
+        mining: Default::default(),
+        sound: None,
+        state_physics_complete: false,
         state_physics: Default::default(),
+        state_mining: Default::default(),
         player_interact: false,
         visual: std::sync::Arc::new(CustomBlockVisuals::default()),
         ..block
@@ -115,7 +125,9 @@ fn placement_trait_and_enum_properties_multiply_states() {
     let mut nbt = named(10, "");
     nbt.extend(named(9, "properties"));
     nbt.extend([10, 4]);
-    for values in [2_u8, 3] {
+    for (name, values) in [("test:two", 2_u8), ("test:three", 3)] {
+        nbt.extend(named(8, "name"));
+        nbt.extend(string(name));
         nbt.extend(named(9, "enum"));
         nbt.extend([8, values * 2]);
         for index in 0..values {
@@ -137,8 +149,12 @@ fn placement_trait_and_enum_properties_multiply_states() {
         (2 * 3 * 4, false)
     );
     let axes = &definition.visual.state_axes;
-    assert_eq!(axes.len(), 1, "unnamed properties carry no axis");
-    assert_eq!(axes[0].name.as_ref(), "minecraft:cardinal_direction");
+    let names: Vec<_> = axes.iter().map(|axis| axis.name.as_ref()).collect();
+    assert_eq!(
+        names,
+        ["minecraft:cardinal_direction", "test:two", "test:three"],
+        "trait states lead the properties"
+    );
     assert_eq!(
         axes[0].values[0],
         super::CustomStateValue::String("south".into())
@@ -197,7 +213,11 @@ fn placement_traits(direction_first: bool) -> Vec<Nbt> {
 fn custom_block(name: &str, root: &Nbt) -> CustomBlock {
     let definition = super::parse_definition(root).expect("definition");
     CustomBlock {
+        mining: definition.mining,
+        sound: definition.sound,
+        state_physics_complete: false,
         state_physics: Default::default(),
+        state_mining: Default::default(),
         player_interact: definition.player_interact,
         name: name.into(),
         tags: definition.tags,
@@ -334,9 +354,29 @@ fn hashed_states_follow_palette_order() {
     }
 }
 
-// Unnamed properties still count toward the palette but cannot be decoded.
 #[test]
-fn states_the_axes_cannot_account_for_are_not_decoded() {
+fn sound_component_material_is_retained_from_the_base_definition() {
+    let root = compound(vec![(
+        "components",
+        compound(vec![(
+            "minecraft:sound",
+            compound(vec![("sound", text("wood"))]),
+        )]),
+    )]);
+    let definition = super::parse_definition(&root).expect("definition");
+    assert_eq!(definition.sound.as_deref(), Some("wood"));
+
+    let scalar = compound(vec![(
+        "components",
+        compound(vec![("minecraft:sound", text("metal"))]),
+    )]);
+    let definition = super::parse_definition(&scalar).expect("scalar definition");
+    assert_eq!(definition.sound.as_deref(), Some("metal"));
+}
+
+// A nameless property is the client's empty-named state.
+#[test]
+fn nameless_properties_decode_under_the_empty_name() {
     let block = custom_block(
         "ns:b",
         &compound(vec![(
@@ -347,7 +387,11 @@ fn states_the_axes_cannot_account_for_are_not_decoded() {
             )])]),
         )]),
     );
-    assert_eq!((block.state_count, block.state_values(0)), (2, None));
+    assert_eq!(block.state_count, 2);
+    assert_eq!(
+        block.state_values(1).as_deref(),
+        Some([CustomStateValue::Int(1)].as_slice())
+    );
 }
 
 #[test]
@@ -640,7 +684,10 @@ fn experience_blocks_fit_the_client_bounds() {
     let limits: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
     let limit = |name: &str| limits[name].as_u64().unwrap();
-    assert!(limit("max_state_combinations") <= super::MAX_STATES_PER_BLOCK);
+    assert_eq!(
+        limit("max_state_bits"),
+        u64::from(super::states::STATE_BITS)
+    );
     assert!(limit("max_permutations") <= super::MAX_PERMUTATIONS as u64);
 }
 
@@ -649,7 +696,9 @@ fn aggregate_admission_retains_rejected_palette_runs_without_expanding_states() 
     let mut large = named(10, "");
     large.extend(named(9, "properties"));
     large.extend([10, 32]);
-    for _ in 0..16 {
+    for index in 0..16 {
+        large.extend(named(8, "name"));
+        large.extend(string(&format!("test:bit{index}")));
         large.extend(named(9, "enum"));
         large.extend([1, 4, 0, 1, 0]);
     }
@@ -732,7 +781,203 @@ fn large_server_stacks_admit_every_state() {
     assert_eq!(admitted.total_states(), 70_000);
 }
 
-/// Only a `minecraft:custom_components` that sets `hasPlayerInteract` declares the handler.
+// The connection trait enables four neighbor-derived booleans that read as
+// ordinary block states, so fence permutations and bone visibility resolve
+// per palette state instead of staying unevaluated.
+#[test]
+fn connection_trait_group_expands_to_sixteen_states() {
+    let root = compound(vec![(
+        "traits",
+        Nbt::List(vec![trait_nbt(
+            "minecraft:connection",
+            &[("minecraft:cardinal_connections", 1)],
+        )]),
+    )]);
+    let definition = super::parse_definition(&root).expect("definition");
+    assert_eq!(definition.state_count, 16);
+    assert!(!definition.visual.state_identity_incomplete);
+    let block = custom_block("test:fence", &root);
+    let names: Vec<_> = block
+        .visual
+        .state_axes
+        .iter()
+        .map(|axis| axis.name.as_ref())
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "minecraft:connection_north",
+            "minecraft:connection_east",
+            "minecraft:connection_south",
+            "minecraft:connection_west",
+        ]
+    );
+    let (n, e, s, w) = (
+        "minecraft:connection_north",
+        "minecraft:connection_east",
+        "minecraft:connection_south",
+        "minecraft:connection_west",
+    );
+    // North varies fastest, then east, south, west.
+    expect_state(
+        &block,
+        0,
+        &[(n, "false"), (e, "false"), (s, "false"), (w, "false")],
+    );
+    expect_state(
+        &block,
+        1,
+        &[(n, "true"), (e, "false"), (s, "false"), (w, "false")],
+    );
+    expect_state(
+        &block,
+        2,
+        &[(n, "false"), (e, "true"), (s, "false"), (w, "false")],
+    );
+    expect_state(
+        &block,
+        15,
+        &[(n, "true"), (e, "true"), (s, "true"), (w, "true")],
+    );
+}
+
+/// Integer connection flags admit cardinal states through the retained definition.
+#[test]
+fn integer_connection_flags_materialize_cardinal_states() {
+    for (flags, expected) in [(0, 1), (1, 16), (2, 1), (256, 1), (257, 16), (-1, 16)] {
+        for kind in [0, 1] {
+            let root = compound(vec![(
+                "traits",
+                Nbt::List(vec![compound(vec![
+                    ("name", text("minecraft:connection")),
+                    ("type", Nbt::Int(kind)),
+                    ("enabled_states", Nbt::Int(flags)),
+                    ("update_flags", Nbt::Int(0)),
+                ])]),
+            )]);
+            let definition = super::parse_definition(&root).unwrap();
+            assert_eq!(
+                definition.state_count, expected,
+                "mask {flags}, type {kind}"
+            );
+            assert!(!definition.visual.state_identity_incomplete);
+        }
+    }
+}
+
+/// Independently authored network bytes preserve the integer connection flags.
+#[test]
+fn integer_connection_flags_survive_network_admission() {
+    for (flags, expected) in [(0_u8, 1), (1, 16)] {
+        let mut wire = named(10, "");
+        wire.extend(named(9, "traits"));
+        wire.extend([10, 2]);
+        wire.extend(named(8, "name"));
+        wire.extend(string("minecraft:connection"));
+        for (name, value) in [
+            ("type", 0),
+            ("enabled_states", flags * 2),
+            ("update_flags", 0),
+        ] {
+            wire.extend(named(3, name));
+            wire.push(value);
+        }
+        wire.extend([0, 0]);
+        let blocks = super::CustomBlocks::from_definitions([("test:fence", wire.as_slice())]);
+        assert_eq!(blocks.skipped, 0);
+        assert_eq!(blocks.total_states(), expected);
+        assert_eq!(
+            blocks.blocks[0].visual.state_axes.len(),
+            if flags == 0 { 0 } else { 4 }
+        );
+    }
+}
+
+/// Numeric masks from another trait do not create connection axes.
+#[test]
+fn integer_connection_flags_require_the_connection_trait_identity() {
+    let root = compound(vec![(
+        "traits",
+        Nbt::List(vec![compound(vec![
+            ("name", text("minecraft:placement_direction")),
+            ("enabled_states", Nbt::Int(1)),
+        ])]),
+    )]);
+    let definition = super::parse_definition(&root).unwrap();
+    assert!(
+        definition
+            .visual
+            .state_axes
+            .iter()
+            .all(|axis| !axis.name.starts_with("minecraft:connection_"))
+    );
+}
+
+// Individually enabled directions expand the same way as the group state.
+#[test]
+fn individually_enabled_connection_directions_expand_to_axes() {
+    let root = compound(vec![(
+        "traits",
+        Nbt::List(vec![trait_nbt(
+            "minecraft:connection",
+            &[
+                ("connection_north", 1),
+                ("connection_east", 1),
+                ("connection_south", 1),
+                ("connection_west", 1),
+            ],
+        )]),
+    )]);
+    let definition = super::parse_definition(&root).expect("definition");
+    assert_eq!(definition.state_count, 16);
+    assert!(!definition.visual.state_identity_incomplete);
+}
+
+// Connection axes join placement trait states before custom properties.
+#[test]
+fn connection_axes_follow_placement_traits_and_precede_properties() {
+    let root = compound(vec![
+        (
+            "traits",
+            Nbt::List(vec![
+                trait_nbt(
+                    "minecraft:placement_direction",
+                    &[("cardinal_direction", 1)],
+                ),
+                trait_nbt("minecraft:connection", &[("cardinal_connections", 1)]),
+            ]),
+        ),
+        (
+            "properties",
+            Nbt::List(vec![compound(vec![
+                ("enum", Nbt::List(vec![Nbt::Byte(0), Nbt::Byte(1)])),
+                ("name", text("test:lit")),
+            ])]),
+        ),
+    ]);
+    let definition = super::parse_definition(&root).expect("definition");
+    assert_eq!(definition.state_count, 4 * 16 * 2);
+    assert!(!definition.visual.state_identity_incomplete);
+    let names: Vec<_> = definition
+        .visual
+        .state_axes
+        .iter()
+        .map(|axis| axis.name.as_ref())
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "minecraft:cardinal_direction",
+            "minecraft:connection_north",
+            "minecraft:connection_east",
+            "minecraft:connection_south",
+            "minecraft:connection_west",
+            "test:lit",
+        ]
+    );
+}
+
+/// Crafting tables and explicit interact components declare the handler alongside legacy flags.
 #[test]
 fn custom_components_declare_a_player_interact_handler() {
     let root = |components: Vec<(&str, Nbt)>| compound(vec![("components", compound(components))]);
@@ -750,4 +995,56 @@ fn custom_components_declare_a_player_interact_handler() {
         "minecraft:custom_components",
         compound(vec![("hasPlayerPlacing", Nbt::Byte(1))]),
     )])));
+    assert!(parsed(root(vec![(
+        "minecraft:on_interact",
+        compound(vec![
+            ("condition", text("")),
+            ("event", text("")),
+            ("target", text("self")),
+        ]),
+    )])));
+    assert!(!parsed(root(vec![("minecraft:on_interact", Nbt::Byte(1))])));
+}
+
+// Packs alias faces to shared instances; dropping the alias would draw the `*` texture there.
+#[test]
+fn material_mappings_alias_faces_to_named_instances() {
+    let material = |texture: &str| compound(vec![("texture", text(texture))]);
+    let alias = |target: &str| compound(vec![("value", text(target))]);
+    let root = compound(vec![(
+        "components",
+        compound(vec![(
+            "minecraft:material_instances",
+            compound(vec![
+                (
+                    "materials",
+                    compound(vec![
+                        ("*", material("test_side")),
+                        ("top", material("test_top")),
+                        ("up", material("test_replaced")),
+                    ]),
+                ),
+                (
+                    "mappings",
+                    compound(vec![
+                        ("up", alias("top")),
+                        ("down", alias("top")),
+                        ("north", alias("test:missing")),
+                    ]),
+                ),
+            ]),
+        )]),
+    )]);
+    let block = custom_block("test:aliased", &root);
+    let materials = block.visual.base.materials.as_deref().unwrap();
+    let texture = |name: &str| {
+        materials
+            .iter()
+            .find(|material| material.name.as_ref() == name)
+            .map(|material| material.texture.as_ref())
+    };
+    assert_eq!(texture("up"), Some("test_top"));
+    assert_eq!(texture("down"), Some("test_top"));
+    assert_eq!(texture("north"), None);
+    assert_eq!(materials.len(), 4);
 }

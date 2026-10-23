@@ -8,8 +8,8 @@ use assets::{
     AssetError, CompiledEntityAssets, EntityAssetKind, EntityAssetSource, EntityAssetSymbol,
     EntityDependency, EntityDependencyKind, EntityDependencyResolution, EntityGeometry,
     EntityGeometryBone, EntityGeometryInheritance, EquipmentBinding, MAX_ENTITY_ASSET_SOURCES,
-    MAX_ENTITY_ASSET_SYMBOLS, MAX_ENTITY_DEPENDENCIES, MAX_ENTITY_GEOMETRIES,
-    MAX_ENTITY_TOTAL_SOURCE_BYTES, validate_entity_geometry_inheritance,
+    MAX_ENTITY_ASSET_SYMBOLS, MAX_ENTITY_DEPENDENCIES, MAX_ENTITY_TOTAL_SOURCE_BYTES,
+    validate_entity_geometry_inheritance,
 };
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -29,17 +29,21 @@ mod materials;
 mod molang;
 mod mount;
 mod native_bind_pose;
+mod native_boat;
 mod native_dragon_geometry;
 mod native_held_items;
 mod pack;
 mod painting;
 mod policy_sources;
+mod sample_omissions;
 mod sanitize;
 mod vanilla_refs;
 mod versions;
-pub use molang::{BlockMolang, BlockStateValue, compile_molang_expression};
+pub use molang::{BlockMolang, BlockStateValue, ItemTagMolang, compile_molang_expression};
+pub use sample_omissions::missing_harness_bindings;
 pub use vanilla_refs::compile_vanilla_entity_refs;
 
+pub(crate) use pack::compile_entity_pack_unless;
 pub use pack::{
     EntityPackCompilation, EntityPackSkips, MAX_PACK_ENTITY_BYTES, MAX_PACK_ENTITY_SOURCES,
     compile_entity_pack,
@@ -60,6 +64,7 @@ pub use attachable::{
     compile_textures as compile_equipment_textures,
     compile_textures_for_assets as compile_equipment_textures_for_assets,
     compile_textures_for_assets_with as compile_equipment_textures_for_assets_with,
+    compile_textures_for_assets_with_priorities as compile_equipment_textures_for_assets_with_priorities,
     compile_textures_with as compile_equipment_textures_with, decode_equipment_raster,
 };
 
@@ -96,7 +101,15 @@ struct PendingGeometry {
     bones: Box<[EntityGeometryBone]>,
 }
 
+mod documents;
+use documents::SourceDocuments;
+
 type SourcePayloads = BTreeMap<Box<str>, Box<[u8]>>;
+
+#[cfg(test)]
+thread_local! {
+    static DOCUMENT_PARSES: std::cell::RefCell<BTreeMap<String, usize>> = const { std::cell::RefCell::new(BTreeMap::new()) };
+}
 
 /// Validates a complete geometry document with the compiler's version and schema checks.
 pub(crate) fn validate_geometry_document(value: &Value) -> Result<(), AssetError> {
@@ -184,6 +197,7 @@ fn compile_with_behavior(
         }
     }
     collect_optional_file(root, "textures/item_texture.json", &mut selected)?;
+    collect::collect_atlas_block_rasters(root, &mut selected)?;
     collect_optional_file(root, "manifest.json", &mut selected)?;
     if let Some(behavior) = behavior {
         let mut definitions = Vec::new();
@@ -260,6 +274,21 @@ fn compile_with_behavior(
         &mut geometries,
         None,
     )?;
+    total_source_bytes += native_boat::complete_bindings(
+        root,
+        &mut sources,
+        &mut source_payloads,
+        &mut symbols,
+        &mut geometries,
+        None,
+    )?;
+    total_source_bytes += sample_omissions::complete_bindings(
+        root,
+        &mut sources,
+        &mut source_payloads,
+        &mut symbols,
+        &mut geometries,
+    )?;
     total_source_bytes = total_source_bytes
         .checked_add(native_binding_bytes)
         .ok_or_else(|| invalid("entity source-byte total overflow"))?;
@@ -315,6 +344,10 @@ fn compile_with_behavior(
             use_hash,
         ),
         raw(legacy_icons::SOURCE_PATH, legacy_icons::SOURCE_BYTES),
+        raw(
+            assets::item::names::SOURCE_PATH,
+            assets::item::names::SOURCE_BYTES,
+        ),
     ] {
         total_source_bytes = total_source_bytes
             .checked_add(source_bytes)
@@ -397,9 +430,6 @@ fn assemble(
             };
         }
     }
-    if geometries.len() > MAX_ENTITY_GEOMETRIES {
-        return Err(invalid("entity geometry count exceeds bound"));
-    }
     let pending_geometries = geometries.into_values().collect::<Vec<_>>();
     let local_bob_flags = pending_geometries
         .iter()
@@ -460,10 +490,11 @@ fn assemble(
             false,
         )?;
     }
+    let documents = SourceDocuments::new(source_payloads);
     let mut molang_compiler = molang::MolangCompiler::default();
     let animation = animation::compile(
         root,
-        source_payloads,
+        &documents,
         &sources,
         &symbols,
         &geometries,
@@ -476,7 +507,7 @@ fn assemble(
     let controller_resources =
         attachable::controller_resources(&animation, &symbols, &sources, &geometries);
     let equipment_bindings = attachable::compile_bindings(
-        source_payloads,
+        &documents,
         &symbols,
         &sources,
         &controller_resources,
@@ -603,7 +634,9 @@ fn parse_source(
         parse_unique_json(absolute_path, bytes)?;
         return Ok(());
     }
-    if relative_path.starts_with("textures/items/") {
+    // Item sprites, including block art the item atlas names, are rasters, not entity textures.
+    if relative_path.starts_with("textures/items/") || relative_path.starts_with("textures/blocks/")
+    {
         if relative_path.ends_with(".png") || relative_path.ends_with(".tga") {
             return Ok(());
         }

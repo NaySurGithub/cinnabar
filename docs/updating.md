@@ -10,10 +10,17 @@ Only one running client per install handles updates; other windows stay passive 
 When the download is ready, a compact card in the home screen's top-right corner shows the
 release version and **Restart and update** button. The card stays outside the Play panel, and
 installation only starts when you choose the button. An update required to connect uses stronger
-wording. Periodic checks continue, and a newer release replaces the waiting one. In
-**Settings → General**, you can turn off update checks, select a channel, or enable **Install
-updates when I quit**. Installation on quit is off by default. The in-game pause menu only shows
-a small ready badge; update actions remain in the launcher.
+wording. Periodic checks continue, and a newer release replaces the waiting one. In **Settings**,
+select **Updates** under **Application** at the bottom of the sidebar. You can select a channel,
+turn off automatic checks, or enable **Install updates when I quit**. The section shows the installed version and build, the current check
+or download status, and a **Check now** button. Check now always fetches fresh release metadata, even
+when automatic checks are off. It is available from the home menu while no check is running.
+Installation on quit is off by default. The in-game pause menu only shows a small ready badge;
+update actions remain in the launcher.
+
+Mods may independently opt into [GitHub release notifications](modding-spike.md#optional-github-update-checks).
+These launch-time checks have a separate **Check for mod updates** setting. A mod
+update uses the same corner card and links to its GitHub release for manual installation.
 
 Beta follows the latest tagged `vX.Y.Z` release. Nightly follows the rolling `nightly`
 prerelease. Stable is reserved for a future release track and stays hidden until that track
@@ -34,8 +41,10 @@ work has completed. Main-world updates alone cannot confirm startup or discard t
 - **macOS:** the helper replaces the complete signed app bundle from the DMG and preserves its
   signature and notarization ticket. The previous bundle remains beside it until the new client
   completes startup. A failed new start restores the previous bundle.
-- **Linux:** the same swap and startup rollback apply to AppImages. Unpacked installations use
-  the manual download action.
+- **Linux:** the same swap and startup rollback apply to AppImages and extracted AppDirs,
+  including installations made by `install.sh`. AppDirs are updated by extracting the verified
+  AppImage beside the installation, then replacing the complete directory and relaunching `AppRun`.
+  Other unpacked layouts use the manual download action.
 - **Windows:** the helper runs the verified MSI passively with existing rights and relaunches
   the client. The previous downloaded MSI remains in the update directory for manual repair.
 
@@ -45,6 +54,15 @@ The updater does not request elevated privileges or reboot the machine.
 Manual installers are copied out of the waiting stage before opening. A newer download or channel
 change can replace that stage while the handed-off installer remains available. Manual copies use
 the same lease and handoff retention window as copied update helpers.
+
+On Linux, launching an AppImage downloaded by Cinnabar also checks the installation created by
+`install.sh`. If that installed copy is older, the ready card offers **Restart and update** to
+finish installing the downloaded release. The signed manifest and image are verified again, and
+the helper replaces the installed AppDir so the application-menu launcher opens the new version.
+This action requires a click even when install-on-quit is enabled. AppImages launched from other
+locations remain portable copies.
+If the original client is still open, the card asks you to close the other windows first and
+offers installation once that client exits.
 
 The updater retains its verified offer while a later download replaces the cache. The helper
 revalidates that offer and queries the installed executable's version and build under the apply

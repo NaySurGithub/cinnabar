@@ -18,6 +18,8 @@ pub struct AttachableAnimationInput<'a> {
     /// Whether the owner belongs to the current game window.
     pub is_local_player: bool,
     pub off_hand: bool,
+    /// Sampled owner main-hand scale, applied by equipment placement outside the item VM.
+    pub held_item_scale: Option<f32>,
     /// A worn model has independent controller state from either held item.
     pub worn: bool,
     /// Armour slot index of a worn model, so each worn piece keeps its own state.
@@ -42,6 +44,25 @@ pub struct AttachableAnimationInput<'a> {
 }
 
 impl AttachableAnimationInput<'_> {
+    /// Index of the separately replicated body slot in worn-item query context.
+    pub const BODY_SLOT: u8 = 4;
+
+    /// Returns the model binding name assigned to the rendered equipment slot.
+    pub fn item_slot(self) -> &'static str {
+        item_slot(self.worn, self.worn_slot, self.off_hand)
+    }
+
+    /// Keeps owner item scaling independent of offhand and worn item models.
+    pub fn main_hand_scale(self) -> f32 {
+        if self.off_hand || self.worn {
+            1.0
+        } else {
+            self.held_item_scale
+                .filter(|value| value.is_finite() && *value > 0.0)
+                .unwrap_or(1.0)
+        }
+    }
+
     /// Selects the rendered hand from the owner's first-person use frame.
     pub fn for_hand(self, off_hand: bool) -> Self {
         if off_hand {
@@ -74,18 +95,23 @@ pub struct AttachableQueryContext {
 impl AttachableQueryContext {
     /// Returns the model binding name assigned to the rendered equipment slot.
     pub(super) fn item_slot(self) -> &'static str {
-        if self.worn {
-            match self.worn_slot {
-                0 => "head",
-                1 => "torso",
-                4 => "body",
-                _ => "",
-            }
-        } else if self.off_hand {
-            "off_hand"
-        } else {
-            "main_hand"
+        item_slot(self.worn, self.worn_slot, self.off_hand)
+    }
+}
+
+/// Shares the slot context between query evaluation and owner-bone placement.
+fn item_slot(worn: bool, worn_slot: u8, off_hand: bool) -> &'static str {
+    if worn {
+        match worn_slot {
+            0 => "head",
+            1 => "torso",
+            AttachableAnimationInput::BODY_SLOT => "body",
+            _ => "",
         }
+    } else if off_hand {
+        "off_hand"
+    } else {
+        "main_hand"
     }
 }
 
@@ -363,7 +389,6 @@ impl AttachablesRuntime {
             static_draw: (!self.previewing)
                 .then_some(self.assets.rig_bindings()[binding].geometry_count == 1),
         };
-        render::cache_layer_skeletons(&self.assets, state);
         let geometry = if self.previewing {
             geometry::reselect_geometry_preview(
                 &self.assets,

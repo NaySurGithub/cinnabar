@@ -52,6 +52,9 @@ pub(super) fn build(
     } else {
         serde_json::from_slice(animation).ok()?
     };
+    if definition.cloth.is_some() {
+        definition.wind = None;
+    }
     if definition.wind.as_ref().is_some_and(|wind| {
         !["x", "y", "z"].contains(&wind.axis.as_str())
             || ![wind.max_degrees, wind.speed, wind.rise, wind.fall]
@@ -155,6 +158,40 @@ pub(super) fn build(
             .map(|asset| asset.sha256.as_str()),
         (&texture, &item.assets.texture.sha256),
     )?;
+    if emitters
+        .iter()
+        .any(|e| e.trigger != super::emitters::CosmeticTrigger::Continuous)
+        && (item.slot != "aura"
+            || emitters
+                .iter()
+                .any(|e| e.trigger == super::emitters::CosmeticTrigger::Continuous)
+            || definition.companion.is_some()
+            || definition.cloth.is_some()
+            || definition.wind.is_some()
+            || definition.tip_flex.is_some()
+            || !definition.animations.is_empty()
+            || definition.playback.is_some())
+    {
+        return None;
+    }
+    let companion = match definition.companion.take() {
+        Some(controller) => {
+            if item.slot != "pet"
+                || definition.cloth.is_some()
+                || definition.tip_flex.is_some()
+                || definition.wind.is_some()
+                || definition.playback.is_some()
+            {
+                return None;
+            }
+            Some(super::companion::Rig::build(
+                controller,
+                std::mem::take(&mut definition.animations),
+                &names,
+            )?)
+        }
+        None => None,
+    };
     let playback =
         cosmetics_animation::Playback::build(&mut definition, &names, &mut original, &mut parents)?;
     while flex.len() < parents.len() {
@@ -170,9 +207,20 @@ pub(super) fn build(
             })
         })
         .collect();
+    let cloth = match definition.cloth.as_ref() {
+        Some(definition) => Some(super::cloth::ClothRig::build(
+            definition,
+            &names,
+            &mut original,
+            &mut parents,
+        )?),
+        None => None,
+    };
+    flex.resize(parents.len(), 0.0);
     rest_rotations.resize(parents.len(), Quat::IDENTITY);
     let mut rig = HatRig {
         playback,
+        companion,
         geometry: original,
         parents,
         flex,
@@ -189,9 +237,14 @@ pub(super) fn build(
         pixels,
         world_pixels,
         emitters,
+        cloth,
         wind: definition.wind,
     };
     rig.rest_vertices = rig.preview_vertices(rig.preview_motion(0.0)).into();
+    let clearance = super::companion::clearance::build(&rig);
+    if let Some(companion) = &mut rig.companion {
+        companion.clearance = clearance;
+    }
     Some(rig)
 }
 

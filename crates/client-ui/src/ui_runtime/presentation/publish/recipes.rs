@@ -39,8 +39,17 @@ pub(super) fn recipe_entries(
                 icon,
             );
         } else {
+            let sources = presentation::forms::BookIconSources {
+                registry: items.authority.map(|authority| {
+                    std::sync::Arc::clone(authority.item_presentation_generation())
+                }),
+                catalog: presentation.icon_catalog.clone(),
+                session_icons: presentation.session_icon_generation(),
+                dials: presentation.dial_frames(),
+            };
             window_icons.book_entries =
-                presentation::forms::recipe_book_icons(player_runtime, runtime, icon);
+                presentation::forms::recipe_book_icons(player_runtime, runtime, sources, icon)
+                    .to_vec();
         }
     }
 }
@@ -55,10 +64,8 @@ pub(super) fn creative_page(
     let runtime = items.runtime;
     let presentation = items.presentation;
     if inventory_screen == InventoryScreen::Creative {
-        let entries = crate::ui_runtime::inventory_actions::visible_creative_entries(
-            runtime.inventory_ledger(player_runtime),
-            runtime,
-        );
+        let entries =
+            crate::ui_runtime::inventory_actions::visible_creative_entries(player_runtime, runtime);
         let first = runtime.screen_state().creative_row * presentation::screens::GRID_COLUMNS;
         for (cell, item) in entries
             .iter()
@@ -91,11 +98,42 @@ pub(super) fn screen_outputs(
 ) {
     let runtime = items.runtime;
     if let Some(kind) = runtime.inventory_ledger(player_runtime).window_kind() {
+        if let Some(trade) = runtime.inventory_ledger(player_runtime).trading() {
+            window_icons.recipe = trade
+                .offers
+                .iter()
+                .flat_map(|offer| {
+                    offer
+                        .inputs
+                        .iter()
+                        .chain(std::iter::once(&offer.output))
+                        .map(|stack| {
+                            stack.as_ref().and_then(|stack| {
+                                if stack.metadata == u32::from(protocol::RECIPE_ANY_AUX) {
+                                    let mut preview = stack.clone();
+                                    preview.metadata = 0;
+                                    items.icon(&preview, None)
+                                } else {
+                                    items.icon(stack, None)
+                                }
+                            })
+                        })
+                })
+                .collect();
+            if let Some(stack) = runtime.inventory_ledger(player_runtime).trade_output() {
+                window_icons.recipe_output = Some(ui_screens::container_source::StationOutput {
+                    stack: stack.clone(),
+                    icon: items.icon(stack, None),
+                    durability: items.durability(stack, None),
+                });
+            }
+            return;
+        }
         let output_stack = |output: protocol::RecipeOutput| protocol::NetworkItemStack {
             network_id: output.network_id,
             metadata: u32::from(output.aux),
             count: u16::from(output.count),
-            block_runtime_id: i32::try_from(output.block_runtime_id).unwrap_or(0),
+            block_runtime_id: i32::from_ne_bytes(output.block_runtime_id.to_ne_bytes()),
             ..protocol::NetworkItemStack::empty()
         };
         if kind == protocol::WindowKind::Stonecutter {
@@ -116,10 +154,12 @@ pub(super) fn screen_outputs(
             .inventory_ledger(player_runtime)
             .created_output_stack()
             .is_none();
-        if kind == protocol::WindowKind::Anvil
-            && no_server_output
-            && let Some(stack) = runtime.anvil_output(player_runtime)
-        {
+        let derived = match kind {
+            protocol::WindowKind::Anvil => runtime.anvil_output(player_runtime),
+            protocol::WindowKind::Grindstone => runtime.grindstone_output(player_runtime),
+            _ => None,
+        };
+        if no_server_output && let Some(stack) = derived {
             let icon = items.icon(&stack, None);
             let durability = items.durability(&stack, None);
             window_icons.recipe_output = Some(ui_screens::container_source::StationOutput {
@@ -161,7 +201,7 @@ pub(super) fn book_page(
         window_text.book_title = runtime
             .translation("recipe.book.title")
             .map(|text| text.to_string());
-        if runtime.screen_state().book_open.unwrap_or(false) {
+        if crate::ui_runtime::presentation::forms::recipe_book_shown(player_runtime, runtime) {
             let first = runtime.screen_state().book_page * presentation::screens::BOOK_CELLS;
             let page =
                 runtime.book_recipes(player_runtime, first, presentation::screens::BOOK_CELLS + 1);
@@ -171,12 +211,12 @@ pub(super) fn book_page(
                 .take(presentation::screens::BOOK_CELLS)
                 .enumerate()
             {
-                let output = recipe.output();
+                let output = recipe.recipe.output();
                 let stack = protocol::NetworkItemStack {
                     network_id: output.network_id,
                     metadata: u32::from(output.aux),
                     count: u16::from(output.count),
-                    block_runtime_id: i32::try_from(output.block_runtime_id).unwrap_or(0),
+                    block_runtime_id: i32::from_ne_bytes(output.block_runtime_id.to_ne_bytes()),
                     ..protocol::NetworkItemStack::empty()
                 };
                 window_icons.book[cell] = items.icon(&stack, None);

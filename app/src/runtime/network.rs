@@ -59,6 +59,7 @@ pub(crate) fn receive_network_events(
     mut pack_reload: Option<ResMut<PackReload>>,
     mut chunk_textures: Option<ResMut<ChunkTextureAssets>>,
     mut block_entity_scene: Option<ResMut<render_scene::BlockEntitySceneResource>>,
+    mut actor_artwork: Option<ResMut<render_scene::ActorArtworkResource>>,
     mut state: AppWorldState,
     #[cfg(feature = "acceptance")] mut acceptance: ResMut<AcceptanceRun>,
     #[cfg(feature = "acceptance")] metrics: Res<AppMetrics>,
@@ -68,6 +69,7 @@ pub(crate) fn receive_network_events(
     mut local_player: NetworkLocalPlayerState,
     profiler: Option<Res<RuntimeStageProfiler>>,
 ) {
+    let _join_profile = network.enter_join_profile();
     let _timer = profiler
         .as_deref()
         .map(|profiler| profiler.time(RuntimeStage::NetworkIngestion));
@@ -85,6 +87,7 @@ pub(crate) fn receive_network_events(
         NETWORK_CONTROL_BUDGET_PER_FRAME,
     ) {
         if matches!(control, NetworkControlEvent::Bootstrap { .. }) {
+            bridge::join_profile::JoinProfile::current().mark("bootstrap_received");
             bootstrap::apply(
                 control,
                 &mut state,
@@ -95,6 +98,7 @@ pub(crate) fn receive_network_events(
                     pack_reload: pack_reload.as_mut().map(|reload| reload.reborrow()),
                     chunk_textures: chunk_textures.as_mut().map(|textures| textures.reborrow()),
                     block_entity_scene: block_entity_scene.as_mut().map(|scene| scene.reborrow()),
+                    actor_artwork: actor_artwork.as_mut().map(|artwork| artwork.reborrow()),
                     acknowledgements: &acknowledgements,
                     publication: &publication,
                     display_interval,
@@ -155,12 +159,13 @@ mod actor_publication;
 pub(crate) use actor_publication::custom_emotes::fixture as actor_publication_test_world;
 mod block_overlay;
 mod bootstrap_timing;
+mod compile_execution;
 pub(crate) mod entity_pack;
 mod entity_texture_reload;
-mod glyph_sheets;
+pub(crate) mod glyph_sheets;
 mod item_icons;
 mod server_animation;
-pub(crate) use item_icons::{set_vanilla_item_paths, set_vanilla_item_sprites};
+pub(crate) use item_icons::install_vanilla_item_assets;
 #[cfg(test)]
 mod join_first_frame_tests;
 #[cfg(test)]
@@ -172,7 +177,7 @@ mod pack_reload_diff_tests;
 mod pack_reload_tests;
 #[cfg(test)]
 mod pack_reload_world_witness;
-pub(crate) use entity_texture_reload::set_base_actor_artwork;
+pub(crate) use entity_texture_reload::{set_base_actor_artwork, startup_actor_artwork};
 pub(crate) mod block_entity_art;
 pub(crate) mod reload_environment;
 pub(crate) mod resource_packs;

@@ -3,7 +3,7 @@
 //! centring on the press, a draggable box, and a gesture-enabled touch pan
 //! with its fling stepped every frame.
 
-use std::time::Instant;
+use web_time::Instant;
 
 use json_ui::{Draggable, HitKind, HitRegion, ScrollMetrics};
 use semantic_input::ScrollUnit;
@@ -80,6 +80,10 @@ pub(super) fn press(
             key: region.key.clone(),
             last: point,
         });
+        return true;
+    }
+    // A slider owns its track for the whole gesture, including diagonal movement.
+    if region.is_some_and(|region| region.enabled && region.kind == HitKind::Slider) {
         return true;
     }
     // The view maps `button.menu_select` to its touch button: a press anywhere in it.

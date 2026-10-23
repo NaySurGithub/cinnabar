@@ -3,9 +3,12 @@ use std::io::Write;
 use zip::{ZipWriter, write::SimpleFileOptions};
 
 use super::*;
+use zip_footer::EOCD_MIN_BYTES;
 
 const PACK_ID: Uuid = Uuid::from_u128(0x11111111_2222_3333_4444_555555555555);
 const MODULE_ID: Uuid = Uuid::from_u128(0xaaaaaaaa_bbbb_cccc_dddd_eeeeeeeeeeee);
+
+mod content;
 
 fn manifest(extra: &str) -> String {
     format!(
@@ -310,6 +313,44 @@ fn encrypted_pack_decrypts_listed_files_and_keeps_plaintext_despite_key() {
     assert_eq!(
         validate_archive_parts(PACK_ID, "1.2.3", "", archive, wrong, None).unwrap_err(),
         AdmissionError::MalformedContentsIndex
+    );
+}
+
+// A plaintext JSON listed with a key must stay readable even when its value tree is too large to
+// build: the syntax probe that picks plaintext over decrypted bytes builds no tree.
+#[test]
+fn keyed_plaintext_json_too_large_for_a_value_tree_is_still_read_as_plaintext() {
+    const PACK_KEY: &[u8; 32] = b"0123456789abcdefghijklmnopqrstuv";
+    const FILE_KEY: &str = "abcdefghijklmnopqrstuvwxyz012345";
+    let index = format!(r#"{{"content":[{{"path":"dense.json","key":"{FILE_KEY}"}}]}}"#);
+    let mut contents = vec![0u8; 256];
+    let mut body = index.into_bytes();
+    crate::crypto::tests::encrypt(PACK_KEY, &mut body);
+    contents.extend_from_slice(&body);
+    let mut dense = b"[".to_vec();
+    for _ in 0..1_200_000 {
+        dense.extend_from_slice(br#"{"":0},"#);
+    }
+    dense.extend_from_slice(b"0]");
+    assert!(pack_json::parse_jsonc::<serde_json::Value>(&dense).is_err());
+    let manifest = manifest("");
+    let archive = zip_files(&[
+        ("manifest.json", manifest.as_bytes()),
+        ("contents.json", &contents),
+        ("dense.json", &dense),
+    ]);
+    let (pack, _) = validate_archive_parts(
+        PACK_ID,
+        "1.2.3",
+        "",
+        archive,
+        ContentKey::new(PACK_KEY),
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        pack.read_file("dense.json").unwrap().unwrap().as_ref(),
+        dense.as_slice()
     );
 }
 

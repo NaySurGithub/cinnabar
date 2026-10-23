@@ -1,4 +1,5 @@
 use bytes::Bytes;
+use web_time::Instant;
 // Keyed stream state uses hashbrown's seeded foldhash: SipHash dominated frame-thread lookups.
 use hashbrown::{HashMap, HashSet};
 use std::{
@@ -7,7 +8,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     },
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use ::meshing::{
@@ -22,10 +23,14 @@ use assets::{
 use client_world::ingestion::vanilla_dimension_range;
 use client_world::ingestion::{
     BiomeDefinitionEvent, BlockCrackEvent, BlockUpdateEvent, DimensionRange, LevelChunkEvent,
-    LevelChunkMode, Packet, SubChunkBatchEvent, SubChunkReplyAdmissionEvent,
-    SyncedBlockUpdateEvent, WorldBootstrap, WorldEvent, request_sub_chunk_column,
+    LevelChunkMode, SubChunkBatchEvent, SubChunkReplyAdmissionEvent, SyncedBlockUpdateEvent,
+    WorldBootstrap, WorldEvent,
 };
 use crossbeam_channel::{Receiver, Sender, bounded};
+use render_api::sub_chunk_requests::{
+    MAX_SUB_CHUNK_COLUMN_HEIGHT, MAX_SUB_CHUNK_REQUESTS, SubChunkRequestMember,
+    SubChunkRequestReceipt, sub_chunk_request_offset,
+};
 use thiserror::Error;
 use world::{
     BiomeStorage, BlockEntityKey, BlockIds, BlockPos, BlockUpdate, BoundaryLightSample, ChunkKey,
@@ -87,6 +92,7 @@ mod prediction;
 mod publication;
 #[cfg(feature = "publication-test-support")]
 mod publication_test_support;
+mod ray_queries;
 mod request_queue;
 mod requests;
 mod residency;
@@ -103,9 +109,9 @@ pub use service::{ServicedStream, WorldStreamService};
 mod sign_edit;
 mod transfer_priority;
 pub(crate) mod workers;
-#[cfg(not(target_arch = "wasm32"))]
-pub use workers::on_idle_world_cores;
 pub use workers::world_worker_threads;
+#[cfg(not(target_arch = "wasm32"))]
+pub use workers::{logical_cores, on_idle_world_cores};
 
 use client_world::ingestion::{
     BlockMutationBatch, CommitBudget, CommitStep, DecodeCommit, DecodeCompletion, DecodeIds,
@@ -348,8 +354,8 @@ pub use block_cracks::{
 };
 pub use model::{
     CohortProgress, ForcedRemeshManifest, ForcedRemeshManifestState, PendingSubChunkRequest,
-    ViewCohortStatus, WorldMeshChange, WorldStreamFatalError, WorldStreamNormalizationStats,
-    WorldStreamPoll, WorldStreamStats,
+    SubChunkRequestBatch, ViewCohortStatus, WorldMeshChange, WorldStreamFatalError,
+    WorldStreamNormalizationStats, WorldStreamPoll, WorldStreamStats,
 };
 
 /// Ordered Bedrock world ingestion and bounded background meshing.
@@ -365,6 +371,9 @@ pub struct WorldStream {
     /// Whether the server sent terrain before spawn; when it did not, startup
     /// has no view to wait for until the server publishes one.
     startup_terrain_announced: bool,
+    /// Java meshing for shader packs, with the sorted network values of the blocks Java fills
+    /// with water; see [`WorldStream::set_java_meshing`].
+    java_meshing: Option<Arc<[u32]>>,
     seasonal_foliage: seasonal_foliage::SeasonalFoliage,
     /// Dimension at the newest admitted wire position; commits may still lag behind it.
     ingress_dimension: i32,

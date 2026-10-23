@@ -1,14 +1,23 @@
 use launcher::menu::settings_options::SettingId;
 mod cancel;
+pub(super) mod clipboard;
 pub(super) mod command_macros;
 pub mod context;
 mod death;
+mod modifiers;
+use modifiers::MenuModifiers;
 pub(super) mod fields;
+mod ime;
+pub use ime::drive_window_ime;
 mod preview;
 mod remapping;
+mod scroll;
 mod server_list;
 mod settings_pointer;
+mod touch;
+mod touch_editor;
 
+use clipboard::MenuClipboard;
 use context::MenuInputContext;
 use settings_pointer::{native_release_action, update_slider};
 
@@ -21,16 +30,13 @@ use bevy::{
         mouse::{MouseButtonInput, MouseScrollUnit, MouseWheel},
         touch::Touches,
     },
-    prelude::{
-        ButtonInput, Entity, KeyCode, Local, MouseButton, Query, Res, ResMut, Resource, Single,
-        With,
-    },
+    prelude::{ButtonInput, Entity, KeyCode, Local, MouseButton, Query, Res, ResMut, Single, With},
     window::{CursorGrabMode, CursorOptions, PrimaryWindow, Window},
 };
-use ui::{ChatClipboard, ChatEditor, ToastPress, UiPoint};
+use ui::{ChatEditor, ToastPress, UiPoint};
 
 use crate::ui_resources::{UiPresentationResource, UiRuntimeResource};
-use client_ui::ui_runtime::{PlatformClipboard, presentation::UiPresentationRuntime};
+use client_ui::ui_runtime::presentation::UiPresentationRuntime;
 use launcher::menu::view::MenuCaret;
 use {super::MenuRuntime, launcher::menu::MenuField};
 
@@ -39,65 +45,6 @@ pub const HOTKEY_OPTIONS: [(KeyCode, SettingId); 2] = [
     (KeyCode::F1, SettingId::HideHud),
     (KeyCode::F8, SettingId::HidePaperdoll),
 ];
-
-#[derive(Resource)]
-pub struct MenuClipboard(
-    Box<dyn FnMut(usize) -> Option<String> + Send + Sync + 'static>,
-    Box<dyn FnMut(String) + Send + Sync + 'static>,
-);
-
-impl MenuClipboard {
-    pub fn with_access(
-        reader: impl FnMut(usize) -> Option<String> + Send + Sync + 'static,
-        writer: impl FnMut(String) + Send + Sync + 'static,
-    ) -> Self {
-        Self(Box::new(reader), Box::new(writer))
-    }
-
-    fn read_text_bounded(&mut self, maximum_bytes: usize) -> Option<String> {
-        (self.0)(maximum_bytes)
-    }
-
-    pub fn write_text(&mut self, text: String) {
-        (self.1)(text);
-    }
-}
-
-impl Default for MenuClipboard {
-    fn default() -> Self {
-        let mut reader = PlatformClipboard;
-        let mut writer = PlatformClipboard;
-        Self::with_access(
-            move |maximum_bytes| {
-                reader
-                    .read_text_bounded(maximum_bytes)
-                    .ok()
-                    .flatten()
-                    .map(|text| text.to_string())
-            },
-            move |text| {
-                let _ = writer.write_text(text);
-            },
-        )
-    }
-}
-
-impl ChatClipboard for MenuClipboard {
-    type Error = std::convert::Infallible;
-
-    fn read_text_bounded(
-        &mut self,
-        maximum_bytes: usize,
-    ) -> Result<Option<std::sync::Arc<str>>, Self::Error> {
-        Ok(self
-            .read_text_bounded(maximum_bytes)
-            .filter(|text| text.len() <= maximum_bytes)
-            .map(std::sync::Arc::from))
-    }
-}
-
-#[derive(Default)]
-pub struct MenuModifiers(u8);
 
 #[derive(Clone, Copy, Debug, Default)]
 pub(super) enum MenuInputMode {
@@ -133,73 +80,22 @@ pub struct GuiScaleDrag {
     pointer_anchor: Option<bevy::prelude::Vec2>,
     touch_slider: Option<(u64, u16)>,
     pending_press: Option<launcher::menu::MenuAction>,
-    touch_press: Option<(u64, launcher::menu::MenuAction)>,
+    touch_press: Option<(u64, launcher::menu::MenuAction, UiPoint)>,
     preview_touch: Option<u64>,
     server_list_touch: Option<u64>,
-}
-
-impl MenuModifiers {
-    const CONTROL_LEFT: u8 = 1 << 0;
-    const CONTROL_RIGHT: u8 = 1 << 1;
-    const SUPER_LEFT: u8 = 1 << 2;
-    const SUPER_RIGHT: u8 = 1 << 3;
-    const ALT_LEFT: u8 = 1 << 4;
-    const ALT_RIGHT: u8 = 1 << 5;
-    const SHIFT_LEFT: u8 = 1 << 6;
-    const SHIFT_RIGHT: u8 = 1 << 7;
-
-    fn capture_pressed(&mut self, keys: &ButtonInput<KeyCode>) {
-        for key in [
-            KeyCode::ControlLeft,
-            KeyCode::ControlRight,
-            KeyCode::SuperLeft,
-            KeyCode::SuperRight,
-            KeyCode::AltLeft,
-            KeyCode::AltRight,
-            KeyCode::ShiftLeft,
-            KeyCode::ShiftRight,
-        ] {
-            if keys.pressed(key) {
-                self.0 |= Self::mask(key);
-            }
-        }
-    }
-
-    fn observe(&mut self, input: &KeyboardInput) {
-        let mask = Self::mask(input.key_code);
-        if input.state == ButtonState::Pressed {
-            self.0 |= mask;
-        } else {
-            self.0 &= !mask;
-        }
-    }
-
-    fn shortcut(&self) -> bool {
-        self.0 & 0b0000_1111 != 0 && self.0 & 0b0011_0000 == 0
-    }
-
-    fn shift(&self) -> bool {
-        self.0 & 0b1100_0000 != 0
-    }
-
-    const fn mask(key: KeyCode) -> u8 {
-        match key {
-            KeyCode::ControlLeft => Self::CONTROL_LEFT,
-            KeyCode::ControlRight => Self::CONTROL_RIGHT,
-            KeyCode::SuperLeft => Self::SUPER_LEFT,
-            KeyCode::SuperRight => Self::SUPER_RIGHT,
-            KeyCode::AltLeft => Self::ALT_LEFT,
-            KeyCode::AltRight => Self::ALT_RIGHT,
-            KeyCode::ShiftLeft => Self::SHIFT_LEFT,
-            KeyCode::ShiftRight => Self::SHIFT_RIGHT,
-            _ => 0,
-        }
-    }
+    scroll_touch: Option<u64>,
+    menu_touch: Option<u64>,
+    editor_touch: Option<touch_editor::Capture>,
+    editor_mode: bool,
 }
 
 impl MenuRuntime {
     /// Focus `field` with its caret after the text, as a newly selected box.
     pub(super) fn focus_field(&mut self, field: MenuField) {
+        if let MenuField::WorldOption(id) = field {
+            self.local_ui.begin_option_edit(id);
+        }
+        self.field_activation = self.field_activation.wrapping_add(1);
         self.field = Some(field);
         self.edit_field(|editor| editor.move_end(false));
     }
@@ -210,12 +106,15 @@ impl MenuRuntime {
 
     fn editor(&self, field: MenuField) -> &ChatEditor {
         match field {
+            MenuField::FriendQuery => &self.friend_query,
+            MenuField::SettingsQuery => &self.settings_query,
             MenuField::RealmCode => &self.realm_membership.code,
             MenuField::Name => &self.name,
             MenuField::Address => &self.address,
             MenuField::Port => &self.port,
             MenuField::WorldName => &self.local_ui.name,
             MenuField::WorldSeed => &self.local_ui.seed,
+            MenuField::WorldOption(id) => &self.local_ui.options[&id],
             MenuField::SkinName => &self.skin_name,
             MenuField::MacroCommand(slot) => &self.macro_commands[slot],
         }
@@ -223,12 +122,19 @@ impl MenuRuntime {
 
     fn editor_mut(&mut self, field: MenuField) -> &mut ChatEditor {
         match field {
+            MenuField::FriendQuery => &mut self.friend_query,
+            MenuField::SettingsQuery => &mut self.settings_query,
             MenuField::RealmCode => &mut self.realm_membership.code,
             MenuField::Name => &mut self.name,
             MenuField::Address => &mut self.address,
             MenuField::Port => &mut self.port,
             MenuField::WorldName => &mut self.local_ui.name,
             MenuField::WorldSeed => &mut self.local_ui.seed,
+            MenuField::WorldOption(id) => self
+                .local_ui
+                .options
+                .get_mut(&id)
+                .expect("numeric world option"),
             MenuField::SkinName => &mut self.skin_name,
             MenuField::MacroCommand(slot) => &mut self.macro_commands[slot],
         }
@@ -387,22 +293,54 @@ pub fn drive_menu_input(
         player_runtime,
         time,
         mut keyboard_messages,
+        touch_messages,
+        mut touch_cursor,
         mut focus,
         driven,
     } = context;
+    let touch_events: Vec<_> = touch_messages
+        .as_deref()
+        .map(|messages| {
+            touch_cursor
+                .read(messages)
+                .filter(|event| event.window == window.0)
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default();
+    if driven.is_none()
+        && (!window.1.focused || focus.as_ref().is_some_and(|focus| !focus.available()))
+        || !menu.is_visible()
+        || consent.as_ref().is_some_and(|consent| consent.0)
+        || runtime.as_ref().is_some_and(|runtime| {
+            runtime.server_forms().owns_input() || runtime.credits().owns_input()
+        })
+    {
+        scroll::drive(
+            &mut presentation,
+            &touches,
+            false,
+            None,
+            &mut gui_scale_drag.scroll_touch,
+        );
+    }
     if let Some(time) = time {
         menu.advance_death_controls(time.delta_secs_f64());
     }
-    menu.settings_slider_hovered = None;
+    menu.settings.slider_hovered = None;
     if consent.is_some_and(|consent| consent.0) {
+        presentation.cancel_touch_editor_pointer();
+        gui_scale_drag.editor_touch = None;
         presentation.cancel_menu_player_preview_input();
         presentation.cancel_menu_server_list_input();
         gui_scale_drag.preview_touch = None;
-        menu.settings_slider_pointer = None;
-        menu.settings_slider_drag = None;
+        menu.settings.slider_pointer = None;
+        menu.settings_input.slider_drag = None;
+        menu.settings_input.shader_slider_drag = None;
         gui_scale_drag.pending_press = None;
         gui_scale_drag.touch_press = None;
         gui_scale_drag.touch_slider = None;
+        gui_scale_drag.menu_touch = None;
         keyboard_messages.clear();
         menu.pressed = None;
         menu.hovered = None;
@@ -458,14 +396,18 @@ pub fn drive_menu_input(
             || runtime.server_forms().owns_input()
                 && (!menu.is_visible() || runtime.server_forms().settings_form_active())
     }) {
+        presentation.cancel_touch_editor_pointer();
+        gui_scale_drag.editor_touch = None;
         presentation.cancel_menu_player_preview_input();
         presentation.cancel_menu_server_list_input();
         gui_scale_drag.preview_touch = None;
-        menu.settings_slider_pointer = None;
-        menu.settings_slider_drag = None;
+        menu.settings.slider_pointer = None;
+        menu.settings_input.slider_drag = None;
+        menu.settings_input.shader_slider_drag = None;
         gui_scale_drag.pending_press = None;
         gui_scale_drag.touch_press = None;
         gui_scale_drag.touch_slider = None;
+        gui_scale_drag.menu_touch = None;
         gui_scale_drag.captured = false;
         gui_scale_drag.left_held = false;
         keyboard_messages.clear();
@@ -475,14 +417,18 @@ pub fn drive_menu_input(
     if driven.is_none()
         && (!window.focused || focus.as_ref().is_some_and(|focus| !focus.available()))
     {
+        presentation.cancel_touch_editor_pointer();
+        gui_scale_drag.editor_touch = None;
         presentation.cancel_menu_player_preview_input();
         presentation.cancel_menu_server_list_input();
         gui_scale_drag.preview_touch = None;
-        menu.settings_slider_pointer = None;
-        menu.settings_slider_drag = None;
+        menu.settings.slider_pointer = None;
+        menu.settings_input.slider_drag = None;
+        menu.settings_input.shader_slider_drag = None;
         gui_scale_drag.pending_press = None;
         gui_scale_drag.touch_press = None;
         gui_scale_drag.touch_slider = None;
+        gui_scale_drag.menu_touch = None;
         gui_scale_drag.captured = false;
         gui_scale_drag.left_held = false;
         if !menu.is_visible()
@@ -502,6 +448,40 @@ pub fn drive_menu_input(
         menu.pointer_down = false;
         return;
     }
+    if menu.touch_editor_active() {
+        if !gui_scale_drag.editor_mode {
+            let held = gui_scale_drag.left_held;
+            gui_scale_drag.cancel_pointer(&mut menu, &mut presentation);
+            gui_scale_drag.left_held = held;
+            gui_scale_drag.editor_mode = true;
+        }
+        modifiers.capture_pressed(&keys);
+        for input in keyboard_messages.read() {
+            modifiers.observe(input);
+            if input.state == ButtonState::Pressed {
+                presentation.touch_editor_key(&format!("{:?}", input.key_code), modifiers.field());
+            }
+        }
+        presentation.touch_editor_modifiers(modifiers.field());
+        touch_editor::drive(
+            &mut menu,
+            &mut presentation,
+            &touches,
+            &touch_events,
+            &mut gui_scale_drag,
+            window.cursor_position().map(|at| [at.x, at.y]),
+            &mouse_buttons,
+        );
+        keyboard_messages.clear();
+        keys.reset_all();
+        mouse_buttons.reset_all();
+        crate::physical_input::release_cursor(&mut cursor);
+        return;
+    }
+    menu.touch_editor_open = false;
+    presentation.close_touch_editor();
+    gui_scale_drag.editor_touch = None;
+    gui_scale_drag.editor_mode = false;
     if !menu.is_visible()
         && runtime
             .as_ref()
@@ -520,14 +500,18 @@ pub fn drive_menu_input(
         }
     }
     if !menu.is_visible() {
+        presentation.cancel_touch_editor_pointer();
+        gui_scale_drag.editor_touch = None;
         presentation.cancel_menu_player_preview_input();
         presentation.cancel_menu_server_list_input();
         gui_scale_drag.preview_touch = None;
-        menu.settings_slider_pointer = None;
-        menu.settings_slider_drag = None;
+        menu.settings.slider_pointer = None;
+        menu.settings_input.slider_drag = None;
+        menu.settings_input.shader_slider_drag = None;
         gui_scale_drag.pending_press = None;
         gui_scale_drag.touch_press = None;
         gui_scale_drag.touch_slider = None;
+        gui_scale_drag.menu_touch = None;
         gui_scale_drag.captured = false;
         // Gameplay/chat handled these messages already. In particular, do not
         // replay the Escape that opens pause as "back" on the following frame.
@@ -564,7 +548,7 @@ pub fn drive_menu_input(
         return;
     }
 
-    if menu.key_remap.is_some() {
+    if menu.settings.key_remap.is_some() {
         remapping::capture(
             &mut menu,
             &mut keyboard_messages,
@@ -572,6 +556,24 @@ pub fn drive_menu_input(
             &mut mouse_buttons,
             &gamepads,
         );
+        return;
+    }
+
+    if mouse_buttons.just_pressed(MouseButton::Back) {
+        menu.go_back_from_input();
+        gui_scale_drag.cancel_pointer(&mut menu, &mut presentation);
+        modifiers.capture_pressed(&keys);
+        for input in keyboard_messages.read() {
+            modifiers.observe(input);
+        }
+        keys.reset_all();
+        mouse_buttons.reset_all();
+        if !menu.is_visible()
+            && !menu.intents.disconnect
+            && let Some(focus) = focus.as_deref_mut()
+        {
+            focus.authorize_screen_return();
+        }
         return;
     }
 
@@ -591,10 +593,10 @@ pub fn drive_menu_input(
     let pointer_moved = cursor_position != gui_scale_drag.previous_pointer;
     gui_scale_drag.previous_pointer = cursor_position;
     menu.hovered = pointer.and_then(|position| presentation.hit_test_menu(position));
-    menu.settings_slider_hovered = native_settings
+    menu.settings.slider_hovered = native_settings
         .then(|| pointer.and_then(|point| presentation.settings_slider_thumb_hit_test(point)))
         .flatten();
-    let slider_hovered = menu.settings_slider_hovered;
+    let slider_hovered = menu.settings.slider_hovered;
     let pointer_can_focus = |action| {
         !native_settings
             || match action {
@@ -616,6 +618,10 @@ pub fn drive_menu_input(
     let pointer_pressed = mouse_buttons.pressed(MouseButton::Left) || gui_scale_drag.left_held;
     let pointer_just_pressed =
         mouse_buttons.just_pressed(MouseButton::Left) || (pointer_pressed && !menu.pointer_down);
+    if gui_scale_drag.menu_touch.is_none() {
+        gui_scale_drag.menu_touch = touches.iter_just_pressed().next().map(|touch| touch.id());
+    }
+    let touch_owner = gui_scale_drag.menu_touch;
     let server_list_owns_pointer = server_list::drive(
         &mut presentation,
         &mut menu,
@@ -623,6 +629,7 @@ pub fn drive_menu_input(
         pointer_pressed,
         pointer_just_pressed,
         &touches,
+        touch_owner,
         &mut gui_scale_drag.server_list_touch,
     );
     let preview_owns_pointer =
@@ -638,6 +645,7 @@ pub fn drive_menu_input(
                 pointer_pressed,
                 pointer_just_pressed,
                 &touches,
+                touch_owner,
                 &mut gui_scale_drag.preview_touch,
             )
         };
@@ -685,6 +693,17 @@ pub fn drive_menu_input(
             && pointer.is_some_and(|point| presentation.press_menu_scrollbar(point)));
     if on_scrollbar {
         menu.hovered = None;
+    }
+    let scrolled = scroll::drive(
+        &mut presentation,
+        &touches,
+        !server_list_owns_pointer && !preview_owns_pointer,
+        touch_owner,
+        &mut gui_scale_drag.scroll_touch,
+    );
+    if scrolled.is_some() {
+        gui_scale_drag.touch_press = None;
+        menu.pressed = None;
     }
     let press = |menu: &mut MenuRuntime, action| {
         let action = if native_settings {
@@ -735,7 +754,9 @@ pub fn drive_menu_input(
         && let Some(action) = menu.hovered
     {
         if native_settings {
-            gui_scale_drag.pending_press = menu.settings_slider_drag.is_none().then_some(action);
+            gui_scale_drag.pending_press = (menu.settings_input.slider_drag.is_none()
+                && menu.settings_input.shader_slider_drag.is_none())
+            .then_some(action);
             menu.pressed = Some(action);
             if pointer_can_focus(action) {
                 menu.focus_pointer(action);
@@ -758,98 +779,16 @@ pub fn drive_menu_input(
         press(&mut menu, action);
         caret_press = pointer.zip(action.text_field());
     }
-    if touches.any_just_pressed() {
-        menu.input_mode = MenuInputMode::Touch;
-    }
-    for touch in touches.iter_just_pressed() {
-        if server_list_owns_pointer || gui_scale_drag.preview_touch == Some(touch.id()) {
-            continue;
-        }
-        let position = touch.position();
-        if let Ok(position) = UiPoint::new(position.x, position.y)
-            && let Some(action) = native_settings
-                .then(|| presentation.settings_slider_thumb_hit_test(position))
-                .flatten()
-                .map(|index| {
-                    launcher::menu::MenuAction::SettingsOption(
-                        index,
-                        menu.settings_options.get(usize::from(index)),
-                    )
-                })
-                .or_else(|| presentation.hit_test_menu(position))
-        {
-            menu.input_mode = MenuInputMode::Touch;
-            if native_settings {
-                if !matches!(action, launcher::menu::MenuAction::SettingsOption(index, _)
-                    if launcher::menu::settings_options::SETTINGS_OPTIONS.get(usize::from(index))
-                        .is_some_and(|option| matches!(option.kind, launcher::menu::settings_options::SettingKind::Slider)))
-                    || matches!(action, launcher::menu::MenuAction::SettingsOption(index, _)
-                        if presentation.settings_slider_thumb_contains(index, position))
-                {
-                    menu.focus_pointer(action);
-                }
-                menu.pressed = Some(action);
-                if let launcher::menu::MenuAction::SettingsOption(index, _) = action
-                    && presentation.settings_slider_thumb_contains(index, position)
-                {
-                    gui_scale_drag.touch_slider = Some((touch.id(), index));
-                    gui_scale_drag.touch_press = None;
-                } else {
-                    gui_scale_drag.touch_press = Some((touch.id(), action));
-                }
-            } else {
-                press(&mut menu, action);
-                caret_press = action.text_field().map(|field| (position, field));
-            }
-        }
-    }
-    if let Some((id, index)) = gui_scale_drag.touch_slider {
-        if native_settings && let Some(touch) = touches.get_pressed(id) {
-            let position = touch.position();
-            if let Ok(point) = UiPoint::new(position.x, position.y)
-                && let Some(action @ launcher::menu::MenuAction::SettingsOption(_, value)) =
-                    presentation.settings_slider_drag_action(index, point)
-                && let Some(fraction) = presentation.settings_slider_drag_fraction(index, point)
-            {
-                menu.input_mode = MenuInputMode::Touch;
-                menu.set_option(index, value);
-                menu.settings_slider_pointer = Some(launcher::menu::view::SettingsSliderPointer {
-                    option: index,
-                    fraction,
-                    mouse_input: false,
-                });
-                menu.pressed = Some(action);
-            }
-        } else {
-            gui_scale_drag.touch_slider = None;
-            menu.settings_slider_pointer = None;
-        }
-    }
-    if let Some((id, action)) = gui_scale_drag.touch_press {
-        if let Some(touch) = touches.get_released(id) {
-            let position = touch.position();
-            let hovered = UiPoint::new(position.x, position.y)
-                .ok()
-                .and_then(|point| presentation.hit_test_menu(point));
-            if native_settings && let Some(action) = native_release_action(action, hovered) {
-                press(&mut menu, action);
-                caret_press = UiPoint::new(position.x, position.y)
-                    .ok()
-                    .zip(action.text_field());
-            }
-            gui_scale_drag.touch_press = None;
-        } else if native_settings && let Some(touch) = touches.get_pressed(id) {
-            let position = touch.position();
-            let hovered = UiPoint::new(position.x, position.y)
-                .ok()
-                .and_then(|point| presentation.hit_test_menu(point));
-            if native_release_action(action, hovered).is_some() {
-                menu.pressed = Some(action);
-            }
-        } else {
-            gui_scale_drag.touch_press = None;
-        }
-    }
+    caret_press = touch::drive(
+        &mut menu,
+        &presentation,
+        &touches,
+        &mut gui_scale_drag,
+        native_settings,
+        server_list_owns_pointer,
+        scrolled,
+    )
+    .or(caret_press);
     if let Some((point, field)) = caret_press
         && menu.field == Some(field)
         && let Some(byte) = presentation.menu_caret_at(point, field, menu.field_text(field))
@@ -980,7 +919,7 @@ pub fn drive_menu_input(
     // the camera's recapture-on-click path from turning a menu click into a
     // gameplay attack or mouse grab.
     let mouse_input = menu.input_mode.mouse();
-    if let Some(pointer) = menu.settings_slider_pointer.as_mut() {
+    if let Some(pointer) = menu.settings.slider_pointer.as_mut() {
         pointer.mouse_input = mouse_input;
     }
     keys.reset_all();
@@ -989,6 +928,9 @@ pub fn drive_menu_input(
 
 #[cfg(test)]
 mod gui_scale_drag_tests;
+
+#[cfg(test)]
+mod settings_search_tests;
 
 #[cfg(test)]
 mod settings_slider_tests;

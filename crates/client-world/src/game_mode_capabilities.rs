@@ -23,8 +23,16 @@ pub mod ability_bit {
     // the creative game mode, not the Instabuild ability (see game-mode-updates.md).
     pub const INSTANT_BUILD: u32 = 1 << 11;
     pub const NO_CLIP: u32 = 1 << 17;
+    pub const PRIVILEGED_BUILDER: u32 = 1 << 18;
     pub const FLY_SPEED: u32 = 1 << 13;
     pub const VERTICAL_FLY_SPEED: u32 = 1 << 19;
+}
+
+/// Known ability-layer identities shared by effective permission consumers.
+pub mod ability_layer {
+    pub const COUNT: usize = 6;
+    pub const BASE: usize = 1;
+    pub const SPECTATOR: usize = super::SPECTATOR_LAYER_TYPE as usize;
 }
 
 /// Spectator ability layer type, per the pinned gophertunnel
@@ -56,11 +64,32 @@ impl FlightAuthority {
     }
 }
 
+/// Which rule vanilla's block-permission check applies before the Build or Mine grant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditPermission {
+    /// Survival and Creative: the Build and Mine grants alone decide.
+    Granted,
+    /// Adventure: a held item's CanPlaceOn or CanDestroy list decides, and an empty hand
+    /// needs the PrivilegedBuilder ability.
+    Adventure { privileged_builder: bool },
+}
+
+/// What the player holds when vanilla checks one block edit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeldEditItem {
+    /// No item, or an empty stack.
+    EmptyHand,
+    /// An item whose relevant restriction list does (`true`) or does not name the block.
+    Item { lists_block: bool },
+}
+
 /// The interaction gates one game mode grants, after server ability overrides.
 ///
 /// `attack_reach` is 0.0 exactly when attacking is disallowed. `creative_reach`
-/// selects the block-pick reach profile, not a capability. The full surface is
-/// modeled from the authoritative reference; not every field gates a producer yet.
+/// selects the block-pick reach profile, not a capability. `can_build` and `can_mine`
+/// are the Build and Mine grants; [`Self::permits_edit`] adds the per-block adventure
+/// rule. The full surface is modeled from the authoritative reference; not every field
+/// gates a producer yet.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[allow(dead_code)]
 pub struct GameModeCapabilities {
@@ -82,6 +111,7 @@ pub struct GameModeCapabilities {
     pub has_collision: bool,
     pub attack_reach: f64,
     pub creative_reach: bool,
+    pub edit_permission: EditPermission,
 }
 
 impl GameModeCapabilities {
@@ -104,6 +134,7 @@ impl GameModeCapabilities {
                 has_collision: true,
                 attack_reach: SURVIVAL_ATTACK_REACH,
                 creative_reach: false,
+                edit_permission: EditPermission::Granted,
             },
             PlayerGameMode::Creative => Self {
                 can_build: true,
@@ -121,9 +152,10 @@ impl GameModeCapabilities {
                 has_collision: true,
                 attack_reach: CREATIVE_ATTACK_REACH,
                 creative_reach: true,
+                edit_permission: EditPermission::Granted,
             },
             // Adventure interacts and attacks; building and mining wait for
-            // explicit server grants.
+            // explicit server grants, and each edit also passes the adventure rule.
             PlayerGameMode::Adventure => Self {
                 can_build: false,
                 can_mine: false,
@@ -140,6 +172,9 @@ impl GameModeCapabilities {
                 has_collision: true,
                 attack_reach: SURVIVAL_ATTACK_REACH,
                 creative_reach: false,
+                edit_permission: EditPermission::Adventure {
+                    privileged_builder: false,
+                },
             },
             PlayerGameMode::Spectator => Self {
                 can_build: false,
@@ -157,11 +192,36 @@ impl GameModeCapabilities {
                 has_collision: false,
                 attack_reach: 0.0,
                 creative_reach: false,
+                edit_permission: EditPermission::Granted,
             },
             // Vanilla gives any id but survival its base game-mode logic, which
             // interacts freely; server abilities still refine Build and Mine.
             PlayerGameMode::Unknown => Self::for_mode(PlayerGameMode::Survival),
         }
+    }
+
+    /// Whether vanilla's block-permission rule admits one edit before its Build or Mine grant.
+    ///
+    /// In Adventure, holding an item replaces the PrivilegedBuilder check with that item's
+    /// list: an item whose list omits the block, or has no list, may not edit it.
+    pub const fn permits_edit(&self, held: HeldEditItem) -> bool {
+        match (self.edit_permission, held) {
+            (EditPermission::Granted, _) => true,
+            (EditPermission::Adventure { privileged_builder }, HeldEditItem::EmptyHand) => {
+                privileged_builder
+            }
+            (EditPermission::Adventure { .. }, HeldEditItem::Item { lists_block }) => lists_block,
+        }
+    }
+
+    /// These capabilities for one block edit: Build and Mine stay granted only when
+    /// [`Self::permits_edit`] admits what the player holds.
+    #[must_use]
+    pub const fn for_edit(mut self, held: HeldEditItem) -> Self {
+        let permitted = self.permits_edit(held);
+        self.can_build &= permitted;
+        self.can_mine &= permitted;
+        self
     }
 
     /// Whether any block use (placement or interaction) is permitted.
@@ -190,6 +250,9 @@ impl GameModeCapabilities {
             if let Some(value) = resolved(bit) {
                 *field = value;
             }
+        }
+        if let EditPermission::Adventure { privileged_builder } = &mut caps.edit_permission {
+            *privileged_builder = resolved(ability_bit::PRIVILEGED_BUILDER).unwrap_or(false);
         }
         if let Some(may_fly) = resolved(ability_bit::MAY_FLY) {
             caps.can_fly = may_fly;
@@ -225,7 +288,7 @@ pub fn resolved_layer(
     let AbilityLayersEvidence::Received(layers) = &update.layers else {
         return None;
     };
-    (0..6).rev().find_map(|kind| {
+    (0..ability_layer::COUNT as u16).rev().find_map(|kind| {
         layers
             .iter()
             .rev()

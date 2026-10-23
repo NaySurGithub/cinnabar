@@ -5,6 +5,7 @@ use std::sync::Arc;
 use json_ui::{Catalog, HudChanges, HudModel, HudSlot, HudTitle, Timed};
 use launcher::menu::settings_options::{SettingId, SettingsOptions};
 use ui::{BossBarView, IconRef, TimedText};
+use ui_screens::text::bounded_text;
 
 use super::super::super::{HudFrame, bounded_visible_text, resolve_chat_line};
 use super::{ITEM_NAME_MILLIS, MAX_BOSS_BARS, MAX_CHAT_LINES};
@@ -17,7 +18,7 @@ use components::{boss_model, sidebar_model, world_text_input, world_text_lines};
 #[derive(Default)]
 pub(in crate::ui_runtime::presentation) struct SemanticHud {
     pub(super) model: HudModel,
-    pub(super) icons: Vec<IconRef>,
+    pub(in crate::ui_runtime::presentation) icons: Vec<IconRef>,
     session: Option<u64>,
     catalog: Option<Arc<Catalog>>,
     language: [usize; 3],
@@ -186,9 +187,11 @@ impl SemanticHud {
         runtime: &UiRuntime,
         frame: &HudFrame,
     ) -> bool {
+        let facts = player.inventory.ledger().item_facts();
         self.model.hotbar.len() == frame.hotbar_stacks.len()
             && self.model.hotbar.iter().enumerate().all(|(index, slot)| {
                 self.slot_matches(
+                    facts,
                     slot,
                     frame.hotbar_stacks[index].as_ref(),
                     frame.hotbar_icons[index],
@@ -196,9 +199,10 @@ impl SemanticHud {
                     player.selected_hotbar_slot() == Some(index as u8),
                 )
             })
-            && match (&self.model.offhand, runtime.gameplay_hud().offhand_stack()) {
+            && match (&self.model.offhand, runtime.local_offhand_stack(player)) {
                 (None, None) => true,
                 (Some(slot), Some(stack)) => self.slot_matches(
+                    facts,
                     slot,
                     Some(stack),
                     frame.offhand_icon,
@@ -212,6 +216,7 @@ impl SemanticHud {
     /// Checks an item cell against its retained icon index and displayed stack values.
     fn slot_matches(
         &self,
+        facts: &inventory::SessionItemFacts,
         slot: &HudSlot,
         stack: Option<&protocol::NetworkItemStack>,
         icon: Option<IconRef>,
@@ -219,6 +224,7 @@ impl SemanticHud {
         selected: bool,
     ) -> bool {
         slot.count == stack.map_or(0, |stack| u32::from(stack.count))
+            && slot.id_aux == stack.map(|stack| facts.id_aux(stack))
             && slot.selected == selected
             && slot.durability == stack.and(durability).map(f64::from)
             && slot.icon.and_then(|index| self.icons.get(index).copied()) == stack.and(icon)
@@ -232,6 +238,7 @@ impl SemanticHud {
         frame: &HudFrame,
     ) {
         self.icons.clear();
+        let facts = player.inventory.ledger().item_facts();
         let mut slot = |stack: Option<&protocol::NetworkItemStack>,
                         icon: Option<IconRef>,
                         durability: Option<f32>,
@@ -242,6 +249,7 @@ impl SemanticHud {
             });
             HudSlot {
                 icon,
+                id_aux: stack.map(|stack| facts.id_aux(stack)),
                 count: stack.map_or(0, |stack| u32::from(stack.count)),
                 selected,
                 durability: stack.and(durability).map(f64::from),
@@ -257,7 +265,7 @@ impl SemanticHud {
                 )
             })
             .collect();
-        self.model.offhand = runtime.gameplay_hud().offhand_stack().map(|stack| {
+        self.model.offhand = runtime.local_offhand_stack(player).map(|stack| {
             slot(
                 Some(stack),
                 frame.offhand_icon,
@@ -278,6 +286,9 @@ impl SemanticHud {
         let title = runtime.hud().title().filter(|text| text.visible_at(now));
         let subtitle = runtime.hud().subtitle().filter(|text| text.visible_at(now));
         let mut changed = refresh_title(&mut self.model.title, title, subtitle);
+        changed |= refresh_controller_text(&mut self.model.title_text, runtime.hud().title_text());
+        changed |=
+            refresh_controller_text(&mut self.model.subtitle_text, runtime.hud().subtitle_text());
         changed |= refresh_timed(
             &mut self.model.actionbar,
             runtime
@@ -299,7 +310,7 @@ impl SemanticHud {
             .filter(|changed| now.saturating_sub(*changed) < ITEM_NAME_MILLIS)
             .zip(frame.selected_item_name.as_deref())
             .filter(|_| self.model.hotbar_visible && player.selected_hotbar_slot().is_some())
-            .map(|(changed, name)| (name, changed));
+            .map(|(changed, name)| (bounded_visible_text(name), changed));
         changed |= refresh_timed(&mut self.model.item_name, item_name);
         changed
     }
@@ -364,6 +375,10 @@ impl SemanticHud {
             &mut self.model.chat_background_opacity,
             f64::from(settings.value(SettingId::ChatBackgroundOpacity)) / 100.0,
         );
+        changed |= replace(
+            &mut self.model.chat_text,
+            ui_screens::settings_chat::chat_text(settings),
+        );
         changed
     }
 }
@@ -383,9 +398,24 @@ fn seconds(millis: u64) -> f64 {
     millis as f64 / 1_000.0
 }
 
+/// Retains full pack binding inputs after native title instances finish their fades.
+fn refresh_controller_text(model: &mut Option<String>, input: &str) -> bool {
+    let input = bounded_text(input, protocol::MAX_UI_TEXT_BYTES);
+    if model.as_deref() == Some(input) {
+        return false;
+    }
+    *model = Some(input.to_owned());
+    true
+}
+
 /// Allocates bounded timed text only when its visible content or creation clock changes.
 fn refresh_timed(model: &mut Option<Timed>, input: Option<(&str, u64)>) -> bool {
-    let input = input.map(|(text, born)| (bounded_visible_text(text), seconds(born)));
+    let input = input.map(|(text, born)| {
+        (
+            bounded_text(text, protocol::MAX_UI_TEXT_BYTES),
+            seconds(born),
+        )
+    });
     if model.as_ref().map(|text| (text.text.as_str(), text.born)) == input {
         return false;
     }
@@ -405,8 +435,10 @@ fn refresh_title(
     let Some(title) = title else {
         return model.take().is_some();
     };
-    let text = bounded_visible_text(&title.text);
-    let subtitle = subtitle.map_or("", |text| bounded_visible_text(&text.text));
+    let text = bounded_text(&title.text, protocol::MAX_UI_TEXT_BYTES);
+    let subtitle = subtitle.map_or("", |text| {
+        bounded_text(&text.text, protocol::MAX_UI_TEXT_BYTES)
+    });
     let fade_in = seconds(title.fade_in_millis);
     let fade_out = seconds(title.fade_out_millis);
     let total = title.expires_millis.saturating_sub(title.started_millis);

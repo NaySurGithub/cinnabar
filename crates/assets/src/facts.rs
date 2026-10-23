@@ -1,6 +1,7 @@
 //! Validated block and item facts compiled from the pinned registries.
 
 pub mod block;
+pub mod liquid;
 pub mod rules;
 pub use block::{BlockFact, BlockFacts, BlockStateIdentity};
 mod placement;
@@ -13,17 +14,18 @@ mod properties_generated;
 mod property_domains_generated;
 
 pub(crate) use properties::decode;
-pub use properties::{PropertyDomain, StateValue};
+pub use properties::{PropertyDomain, StateValue, block_property_domain};
 pub use properties_generated::BlockProperty;
 
 pub mod entity;
 mod item;
 mod item_carrier;
 pub use item::{
-    ARROW_IDENTIFIER, ArmourMaterial, ContainerRoles, EMPTY_BUCKET_IDENTIFIER,
-    FILLED_MAP_IDENTIFIER, ItemFact, ItemFactRecord, ItemFactsPayload, ItemRepairMaterial, ItemTag,
-    ItemTagDefinition, ItemTagSet, ItemTier, ItemTraits, ItemUseAnimationFact, PotionForm,
-    TOTEM_IDENTIFIER,
+    ARROW_IDENTIFIER, ArmourMaterial, BANNER_IDENTIFIER, ContainerRoles, EMPTY_BUCKET_IDENTIFIER,
+    FILLED_MAP_IDENTIFIER, FISHING_ROD_IDENTIFIER, HARNESS_TAG, ItemFact, ItemFactRecord,
+    ItemFactsPayload, ItemRepairMaterial, ItemTag, ItemTagDefinition, ItemTagSet, ItemTier,
+    ItemTraits, ItemUseAnimationFact, PotionForm, TIPPED_ARROW_ATLAS_KEY, TOTEM_IDENTIFIER,
+    harness_color,
 };
 pub use item_carrier::{
     ITEM_FACTS_EXPANSION_PATH, ITEM_FACTS_FILENAME, ITEM_FACTS_INPUTS, ITEM_FACTS_SOURCE_PATH,
@@ -59,6 +61,9 @@ pub mod presentation;
 
 mod presentation_generated;
 pub use presentation_generated::{UiItemIcon, dimension_fallback_biome, dimension_id};
+
+pub mod java_mapping;
+pub use java_mapping::{JavaBlockMapping, JavaBlockState, java_biome, java_block_state};
 
 /// Pack texture selectors and native presentation contracts checked against pinned inputs.
 pub mod pack;

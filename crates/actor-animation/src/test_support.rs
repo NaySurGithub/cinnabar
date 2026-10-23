@@ -171,6 +171,7 @@ pub fn compiled_fixture() -> CompiledEntityAssets {
             item_condition: None,
             scale: scalar(1.0),
             scale_expressions: None,
+            held_item_scale: None,
         }]
         .into_boxed_slice(),
         rig_geometries: vec![EntityRigGeometryBinding {
@@ -217,6 +218,7 @@ pub fn compiled_fixture() -> CompiledEntityAssets {
             slots: vec![EntityRenderSlot {
                 first_candidate: 0,
                 candidate_count: 1,
+                default_candidate: None,
             }]
             .into_boxed_slice(),
             candidates: vec![EntityRenderCandidate {
@@ -419,3 +421,6 @@ impl ActorAnimationStore {
         self.schedule.world_budget = budget;
     }
 }
+
+mod composition;
+pub use composition::CompositionFixture;

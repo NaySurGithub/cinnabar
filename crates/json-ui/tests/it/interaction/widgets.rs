@@ -31,6 +31,102 @@ fn toggles_keep_their_own_state() {
     assert!(screen.visible("t_off"));
 }
 
+/// Touch releases interact only with the control that accepted their corresponding press.
+#[test]
+fn touch_release_over_a_different_toggle_cannot_change_it() {
+    for start in [[150.0, 150.0], [5.0, 5.0], [55.0, 5.0]] {
+        let mut screen = Screen::new(page(vec![
+            toggle(
+                "a",
+                json!({"toggle_name":"a", "toggle_default_state":false}),
+            ),
+            toggle(
+                "b",
+                json!({"toggle_name":"b", "toggle_default_state":false, "offset":[50,0]}),
+            ),
+        ]));
+        for (down, point) in [(true, start), (false, [55.0, 5.0])] {
+            let regions = screen.regions();
+            screen.dispatcher.pointer(
+                &regions,
+                &mut screen.view,
+                PointerInput {
+                    point: Some(point),
+                    held: down,
+                    mode: InputMode::Touch,
+                    now: 0.0,
+                },
+            );
+            let output = screen.dispatcher.button(
+                &regions,
+                &mut screen.view,
+                json_ui::ButtonInput {
+                    id: "button.menu_select",
+                    down,
+                    point: Some(point),
+                    mode: InputMode::Touch,
+                    now: 0.0,
+                },
+            );
+            let changed = output.events.iter().any(|event| matches!(event, ScreenEvent::Toggle { name, checked:true, .. } if name == "b"));
+            assert_eq!(
+                changed,
+                !down && start == [55.0, 5.0],
+                "start={start:?}, down={down}"
+            );
+        }
+    }
+}
+
+/// A consuming release ends all of that gesture's presses before the next finger begins.
+#[test]
+fn crossed_touch_gestures_cannot_reuse_an_earlier_down() {
+    let mut screen = Screen::new(page(vec![
+        toggle("a", json!({"toggle_default_state":false})),
+        toggle("b", json!({"toggle_default_state":false, "offset":[50,0]})),
+    ]));
+    let edges = [
+        (true, [5.0, 5.0]),
+        (false, [55.0, 5.0]),
+        (true, [55.0, 5.0]),
+        (false, [5.0, 5.0]),
+        (true, [5.0, 5.0]),
+        (false, [5.0, 5.0]),
+    ];
+    for (edge, (down, point)) in edges.into_iter().enumerate() {
+        let regions = screen.regions();
+        screen.dispatcher.pointer(
+            &regions,
+            &mut screen.view,
+            PointerInput {
+                point: Some(point),
+                held: down,
+                mode: InputMode::Touch,
+                now: 0.0,
+            },
+        );
+        let output = screen.dispatcher.button(
+            &regions,
+            &mut screen.view,
+            json_ui::ButtonInput {
+                id: "button.menu_select",
+                down,
+                point: Some(point),
+                mode: InputMode::Touch,
+                now: 0.0,
+            },
+        );
+        assert_eq!(
+            output
+                .events
+                .iter()
+                .any(|event| matches!(event, ScreenEvent::Toggle { checked: true, .. })),
+            edge == 5,
+            "edge={edge}"
+        );
+    }
+}
+
 // T3: selecting a radio member checks it and unchecks the rest of its group.
 #[test]
 fn radio_groups_stay_exclusive() {
@@ -589,6 +685,117 @@ fn toggles_publish_their_grid_collection_name() {
         bound.children[0].properties["#collection_name"],
         json!("rows")
     );
+}
+
+#[test]
+fn standalone_widgets_keep_explicit_collection_indices() {
+    for (kind, property) in [
+        ("toggle", "toggle_grid_collection_name"),
+        ("dropdown", "toggle_grid_collection_name"),
+        ("slider", "slider_collection_name"),
+        ("edit_box", "text_edit_box_grid_collection_name"),
+    ] {
+        for (index, unrelated_scope) in [(0, false), (7, false), (0, true)] {
+            let properties = json!({property:"settings", "collection_index":index,
+                "size":[30,20], "always_listening":true});
+            let mut child = match kind {
+                "toggle" | "dropdown" => toggle("setting", properties),
+                "slider" => slider(properties, vec![]),
+                "edit_box" => edit_box(properties),
+                _ => unreachable!(),
+            };
+            child.name = "setting".into();
+            child.control_type = Some(kind.into());
+            if unrelated_scope {
+                child = ctrl(
+                    "outer",
+                    "panel",
+                    json!({"collection_scope":"unrelated", "collection_index":7,
+                        "size":[50,30]}),
+                    vec![child],
+                );
+            }
+            let mut screen = Screen::new(page(vec![child]));
+            let hits = screen.regions();
+            let setting = hits.iter().find(|hit| hit.name == "setting").unwrap();
+            assert_eq!(setting.collection_index, Some(index), "{kind}");
+            let events = if kind == "edit_box" {
+                screen
+                    .dispatcher
+                    .text(&hits, &mut screen.view, "x", None)
+                    .events
+            } else {
+                screen.click([5.0, 5.0])
+            };
+            assert!(
+                events.iter().any(|event| matches!(event,
+                    ScreenEvent::Toggle { index: Some(found), .. }
+                    | ScreenEvent::Slider { index: Some(found), .. }
+                    | ScreenEvent::TextEdit { index: Some(found), .. } if *found == index
+                )),
+                "{kind}: {events:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn nested_factories_keep_the_named_widget_collection_index() {
+    for (kind, property) in [
+        ("toggle", "toggle_grid_collection_name"),
+        ("slider", "slider_collection_name"),
+        ("edit_box", "text_edit_box_grid_collection_name"),
+    ] {
+        let child = ctrl(
+            "setting",
+            kind,
+            json!({property:"settings", "size":[30,20]}),
+            vec![],
+        );
+        let wrapper = ctrl(
+            "render",
+            "panel",
+            json!({"collection_scope":"renderer", "collection_index":0, "size":[50,30]}),
+            vec![child],
+        );
+        let row = ctrl(
+            "row",
+            "panel",
+            json!({"collection_scope":"settings", "collection_index":7, "size":[50,30]}),
+            vec![wrapper],
+        );
+        let screen = Screen::new(page(vec![row]));
+        let hits = screen.regions();
+        let setting = hits.iter().find(|hit| hit.name == "setting").unwrap();
+        assert_eq!(setting.collection.as_deref(), Some("settings"), "{kind}");
+        assert_eq!(setting.collection_index, Some(7), "{kind}");
+    }
+}
+
+#[test]
+fn widgets_do_not_adopt_an_unrelated_collection_index() {
+    for (kind, property) in [
+        ("toggle", "toggle_grid_collection_name"),
+        ("slider", "slider_collection_name"),
+        ("edit_box", "text_edit_box_grid_collection_name"),
+    ] {
+        let child = ctrl(
+            "setting",
+            kind,
+            json!({property:"settings", "size":[30,20]}),
+            vec![],
+        );
+        let row = ctrl(
+            "row",
+            "panel",
+            json!({"collection_scope":"unrelated", "collection_index":7, "size":[50,30]}),
+            vec![child],
+        );
+        let screen = Screen::new(page(vec![row]));
+        let hits = screen.regions();
+        let setting = hits.iter().find(|hit| hit.name == "setting").unwrap();
+        assert_eq!(setting.collection_index, None, "{kind}");
+    }
 }
 
 // Anonymous array entries (vanilla `"@ns.radio_with_label"` items) share a name, not hover.

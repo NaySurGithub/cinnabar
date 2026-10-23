@@ -76,10 +76,13 @@ impl UiPresentationRuntime {
         let shown = view.as_ref();
         self.menu_scrolls.begin_frame(format!(
             "{:?}/{:?}/{:?}/{}",
-            shown.screen, shown.server_tab, shown.profile_tab, shown.settings_section
+            shown.screen, shown.server_tab, shown.profile_tab, shown.settings.section
         ));
         self.menu_scrolls.clear_areas();
-        let drawn = if shown.visible {
+        let drawn = if shown.visible && shown.touch_editor_open {
+            self.append_touch_editor(runtime, shown, nodes, next, metrics, [width, height])
+                .map(|()| Some(Vec::new()))
+        } else if shown.visible {
             self.append_engine_menu(runtime, shown, nodes, next, metrics, width, height)
         } else {
             Ok(Some(Vec::new()))
@@ -244,6 +247,9 @@ impl UiPresentationRuntime {
                     // Drawn by the OreUI create and edit screens, not JSON-UI.
                     launcher::menu::MenuField::WorldName
                     | launcher::menu::MenuField::WorldSeed
+                    | launcher::menu::MenuField::WorldOption(_)
+                    | launcher::menu::MenuField::FriendQuery
+                    | launcher::menu::MenuField::SettingsQuery
                     | launcher::menu::MenuField::SkinName
                     | launcher::menu::MenuField::RealmCode
                     | launcher::menu::MenuField::MacroCommand(_) => {
@@ -598,15 +604,15 @@ impl UiPresentationRuntime {
 
 /// Wall-clock seconds since the Unix epoch, which live-event countdowns run to.
 pub(super) fn unix_seconds() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_secs() as i64)
 }
 
 /// A seed that picks this launch's splash from the wall clock's sub-second nanoseconds.
 fn splash_seed() -> usize {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.subsec_nanos() as usize)
 }
 

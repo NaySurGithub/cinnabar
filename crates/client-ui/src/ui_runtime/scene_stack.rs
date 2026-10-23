@@ -20,7 +20,7 @@ const SERVER_FORM_SCREEN: &str = "server_form.third_party_server_screen";
 pub enum Scene {
     /// The world and its in-world overlays: vanilla's in-game play screen.
     Gameplay,
-    /// The crosshair overlay, which stays drawn under other screens.
+    /// The crosshair overlay, drawn while gameplay owns input.
     Crosshair,
     Hud,
     Bed,
@@ -208,6 +208,20 @@ impl UiRuntime {
         self.scenes(player_runtime, SceneHost::of(menu, self))
             .top()
             .is_none_or(|scene| scene.settings.should_steal_mouse)
+    }
+
+    /// Whether an open container screen counts as a menu. Vanilla answers a server form busy
+    /// while the top screen shows a menu, which every screen does unless its definition sets
+    /// `is_showing_menu` false, as server packs may for menus built from containers.
+    pub(super) fn container_shows_menu(&self, player_runtime: &player_state::PlayerState) -> bool {
+        self.inventory_open()
+            && crate::ui_runtime::presentation::forms::container_screen_reference(
+                player_runtime,
+                self,
+            )
+            .and_then(|reference| self.screen_settings.get(reference))
+            .unwrap_or_default()
+            .is_showing_menu
     }
 
     pub fn note_player_hurt(&mut self) {

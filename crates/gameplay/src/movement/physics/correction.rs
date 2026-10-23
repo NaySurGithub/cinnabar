@@ -97,7 +97,7 @@ impl LocalPhysicsController {
         );
         // Vanilla's correction input writes both position and velocity
         // into the corrected frame before replaying later inputs.
-        corrected.position = feet;
+        corrected.set_position(feet);
         corrected.on_ground = on_ground;
         // Axis collisions describe the motion that produced a position, so they
         // cannot be recomputed from a corrected anchor. They are retained only
@@ -221,6 +221,7 @@ impl LocalPhysicsController {
         let mut anchor_state = anchor_controller.anchor_state;
         let mut eye = anchor_controller.eye_offset;
         let deferred_corrections = self.deferred_corrections.clone();
+        let boosts = self.boosts.clone();
         let (replay, replayed_ticks) = self
             .history
             .rewind_and_replay_prepared(
@@ -241,6 +242,7 @@ impl LocalPhysicsController {
                     }
                     input.liquid_attach_height = Some(f64::from(eye.height(1.0)));
                     deferred_corrections.apply_before(state);
+                    boosts.apply(state.tick + 1, &mut input.effects);
                     let frame = controller_frames
                         .iter_mut()
                         .find(|frame| frame.tick == state.tick + 1)
@@ -409,6 +411,9 @@ impl LocalPhysicsController {
         };
 
         self.refresh_motion_ticks();
+        if let (Some(position), Some(state)) = (self.actor_position_pending, self.state.as_mut()) {
+            position.apply(state);
+        }
         let state = self
             .state
             .as_ref()

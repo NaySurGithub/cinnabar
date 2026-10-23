@@ -3,6 +3,7 @@ use assets::EntityControllerAnimationTarget;
 use protocol_ids::ActorFlag;
 
 pub(super) mod controller;
+pub(super) mod scale;
 pub(super) mod selection;
 use controller::ControllerWalk;
 
@@ -98,6 +99,8 @@ pub struct ActorTickContext {
     pub camera_position: [f32; 3],
     /// Worn stacks in helmet, chestplate, leggings, boots, body order.
     pub armor: [Option<WornArmor>; 5],
+    /// Nonempty worn slots, including stacks whose item identity is not yet resolved.
+    pub equipment_count: u8,
     /// The player's skin carries a cape image.
     pub has_cape: bool,
     /// The player's skin model inputs, when it may name its own geometry.
@@ -175,6 +178,10 @@ pub(super) fn advance_motion(
     if query::is_arrow(actor) {
         motion.body_yaw = 0.0;
         motion.previous_body_yaw = 0.0;
+    }
+    // Boats are not mobs: they face their own rotation without body-turn lag.
+    if super::boat::is_boat(actor) {
+        motion.body_yaw = actor.yaw();
     }
     let baby_scale = if query::actor_flag(actor, ActorFlag::Baby.wire_value()) {
         BABY_MOVE_SPEED_SCALE
@@ -503,6 +510,7 @@ pub(super) fn evaluate_state(
         || (state.samples_swing_poses
             && (state.local_swing.is_some() || state.remote_swing().is_some())))
     .then(|| super::render_frame::FrameState {
+        cache: Default::default(),
         previous_rotation: if context.is_local_first_person {
             input
         } else {
@@ -542,6 +550,7 @@ pub(super) fn evaluate_state(
         motion_layers: BTreeMap::new(),
         swelling: [actor.creeper_swell_amount(context.frame_alpha); 2],
     });
+    let held_item_scale = scale::evaluate_held_item(&evaluator, rig, &mut variables, budget)?;
     if let Some(script) = rig.pre_animation {
         let static_draw = budget.static_draw.take().map(|cacheable| {
             cacheable
@@ -559,7 +568,7 @@ pub(super) fn evaluate_state(
             .spear
             .apply(&mut variables, actor, context, &input, input.attack_time);
     }
-    let scale = evaluate_scale(&evaluator, rig, &mut variables, budget)?;
+    let scale = scale::evaluate_model(&evaluator, rig, &mut variables, budget)?;
     set_item_rotation_factor(engine, &mut variables);
     let mut controllers = topology
         .map_or(&state.controllers, |replay| &replay.controllers)
@@ -679,18 +688,22 @@ pub(super) fn evaluate_state(
         .as_ref()
         .filter(|frame| !frame.samples_camera_poses)
         .map(|_| variables.begin_effects());
-    let local = sample_clips(
+    let local = pose::sample_clips_reused(
         &evaluator,
         &mut variables,
         &state.bones,
-        &state.bone_names,
+        pose::ChannelBones::bound(&state.bone_names, &state.channel_bindings),
         &weighted_clips,
         budget,
-    )?;
+    )?
+    .into_vec();
     if let Some(capture) = pose_capture {
         render_frame.as_mut().unwrap().retained_pose_effects = variables.finish_effects(capture);
     }
-    let pose = state.compose(&local).ok_or(EvalError::Invalid)?;
+    let mut pose = vec![BoneTransform::default(); state.posed_bones().len()];
+    state
+        .compose_into(&local, &mut pose)
+        .ok_or(EvalError::Invalid)?;
     // Initial publication needs a complete selection; later ticks can retain completed layers.
     let mut motion_layers = BTreeMap::new();
     let render = super::render::evaluate_render(
@@ -714,7 +727,7 @@ pub(super) fn evaluate_state(
         };
         let posed = super::render::pose_layers(
             &evaluator,
-            &variables,
+            &mut variables,
             &state.layer_skeletons,
             &weighted_clips,
             &mut layers,
@@ -775,6 +788,7 @@ pub(super) fn evaluate_state(
         skin_layers,
         render,
         scale,
+        held_item_scale,
         controllers,
         server_animations,
         clip_clocks,
@@ -954,25 +968,6 @@ fn blend_weight(
     // A non-finite weight propagates, as in vanilla, and fails the pose closed.
     Ok(parent * weight)
 }
-
-/// Scale scripts share the variable and random stream that later animation channels read.
-pub(super) fn evaluate_scale(
-    evaluator: &Evaluator<'_>,
-    rig: &assets::EntityRigBinding,
-    variables: &mut MolangVariables,
-    budget: &mut EvalBudget<'_>,
-) -> Result<Option<[f32; 4]>, EvalError> {
-    let Some(expressions) = rig.scale_expressions else {
-        return Ok(None);
-    };
-    let mut scale = [1.0; 4];
-    for (slot, expression) in scale.iter_mut().zip(expressions) {
-        let value = evaluator.number(expression as usize, variables, 1.0, budget)?;
-        *slot = if value.is_finite() { value } else { 1.0 };
-    }
-    Ok(Some(scale))
-}
-
 /// Uses neutral owner rotations for view-following queries in the camera-space hand.
 pub(super) fn evaluation_input(
     input: ActorTickInput,

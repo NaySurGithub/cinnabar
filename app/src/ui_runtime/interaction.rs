@@ -1,5 +1,3 @@
-use crate::runtime::network::resource_packs::PackApplication;
-use client_runtime::network::NetworkHandle;
 use launcher::menu::settings_options::BindingId;
 mod chat;
 mod chat_coordinates;
@@ -45,8 +43,8 @@ use client_shell::{
     ui_resources::{UiPresentationResource, UiRuntimeResource},
 };
 use client_ui::ui_runtime::interaction::{
-    ChatFlushError, PointerRouter, PressRoute, dispatch_chat_ui_action, dispatch_inventory_hotbar,
-    flush_chat_sends, flush_inventory_send, is_chat_edit_shortcut, paste_chat_shortcut,
+    PointerRouter, PressRoute, dispatch_chat_ui_action, dispatch_inventory_hotbar,
+    is_chat_edit_shortcut, paste_chat_shortcut,
 };
 use input_capture::{
     ordered_pointer_presses, restore_gameplay_input_after_chat, suppress_gameplay_input_for_chat,
@@ -69,83 +67,6 @@ pub(crate) fn dispatch_bound_inventory_hotbar(
     matched
 }
 
-pub(crate) fn flush_inventory_network(
-    mut player_runtime: bevy::prelude::ResMut<client_state::PlayerRuntime>,
-    time: Res<Time<Real>>,
-    mut runtime: ResMut<UiRuntimeResource>,
-    network: Res<NetworkHandle<PackApplication>>,
-) {
-    let now_millis = u64::try_from(time.elapsed().as_millis()).unwrap_or(u64::MAX);
-    match flush_inventory_send(&mut player_runtime, &mut runtime, now_millis, |packet| {
-        network.send_inventory_packet(packet)
-    }) {
-        Ok(_) | Err(client_session::PacketSendError::Full(_)) => {}
-        Err(client_session::PacketSendError::Closed(_)) => {
-            runtime.inventory_transport_closed(&mut player_runtime);
-        }
-    }
-    while let Some(packet) = runtime.take_client_packet() {
-        match network.send_inventory_packet(packet) {
-            Ok(()) => {}
-            Err(client_session::PacketSendError::Full(packet)) => {
-                runtime.requeue_client_packet(packet);
-                break;
-            }
-            Err(client_session::PacketSendError::Closed(_)) => break,
-        }
-    }
-}
-
-pub(crate) fn flush_chat_network(
-    player_runtime: bevy::prelude::Res<client_state::PlayerRuntime>,
-    mut runtime: ResMut<UiRuntimeResource>,
-    network: Res<NetworkHandle<PackApplication>>,
-    mut fatal_error: ResMut<crate::runtime::shutdown::FatalError>,
-) {
-    runtime.service_pending_chat_autocomplete(&player_runtime);
-    if network.closed_command_has_pending_control() {
-        return;
-    }
-    let runtime_id = runtime.local_runtime_id(&player_runtime);
-    runtime.flush_wake_request(runtime_id, |packet| network.send_inventory_packet(packet));
-    match flush_chat_sends(
-        &mut runtime,
-        8,
-        |session, sequence, action, packet| match network
-            .send_chat_packet(session, sequence, action, packet)
-        {
-            Err(client_session::PacketSendError::Closed(packet))
-                if network.closed_command_has_pending_control() =>
-            {
-                Err(client_session::PacketSendError::Full(packet))
-            }
-            result => result,
-        },
-    ) {
-        Ok(_) | Err(ChatFlushError::Transport(client_session::PacketSendError::Full(_))) => {}
-        Err(ChatFlushError::Transport(client_session::PacketSendError::Closed(_))) => {
-            crate::runtime::shutdown::record_fatal_error(
-                &mut fatal_error.0,
-                "chat send failed because the network command channel closed".to_owned(),
-            );
-        }
-        Err(ChatFlushError::Packet(error)) => {
-            crate::runtime::shutdown::record_fatal_error(
-                &mut fatal_error.0,
-                format!("queued chat packet became invalid: {error}"),
-            );
-        }
-        Err(ChatFlushError::SessionChanged { expected, actual }) => {
-            crate::runtime::shutdown::record_fatal_error(
-                &mut fatal_error.0,
-                format!(
-                    "queued chat packet crossed a session boundary: expected {expected}, got {actual}"
-                ),
-            );
-        }
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn drive_inventory_ui_actions(
     mut player_runtime: bevy::prelude::ResMut<client_state::PlayerRuntime>,
@@ -161,9 +82,11 @@ pub(crate) fn drive_inventory_ui_actions(
     mut runtime: ResMut<UiRuntimeResource>,
     mut focus: Option<ResMut<client_state::CursorFocus>>,
     driven: Option<Res<client_state::DrivenInput>>,
+    consent: Option<Res<client_state::ConsentInput>>,
 ) {
-    let input_available = driven.is_some()
-        || (window.focused && focus.as_ref().is_none_or(|focus| focus.available()));
+    let input_available = !consent.is_some_and(|consent| consent.0)
+        && (driven.is_some()
+            || (window.focused && focus.as_ref().is_none_or(|focus| focus.available())));
     let notches: Vec<(f32, MouseScrollUnit)> = wheel_messages
         .as_deref()
         .map(|messages| {
@@ -174,16 +97,14 @@ pub(crate) fn drive_inventory_ui_actions(
         })
         .unwrap_or_default();
     // Button state is reset below while the inventory owns the pointer, so a later
-    // physical release no longer surfaces as `just_released`; read raw releases too.
-    let (mut raw_primary_release, mut raw_secondary_release) = (false, false);
+    // physical release no longer surfaces as `just_released`; read raw edges too.
+    let (mut primary_edge, mut secondary_edge) = (None, None);
     if let Some(messages) = mouse_messages.as_deref() {
         for input in release_cursor.read(messages) {
-            if input.state == ButtonState::Released {
-                match input.button {
-                    MouseButton::Left => raw_primary_release = true,
-                    MouseButton::Right => raw_secondary_release = true,
-                    _ => {}
-                }
+            match input.button {
+                MouseButton::Left => primary_edge = Some(input.state),
+                MouseButton::Right => secondary_edge = Some(input.state),
+                _ => {}
             }
         }
     }
@@ -191,6 +112,7 @@ pub(crate) fn drive_inventory_ui_actions(
     let (presses, shift, control) = runtime.inventory_keys_mut().take_frame();
     if runtime.credits().owns_input() || runtime.server_forms().owns_input() {
         runtime.screen_state_mut().container_close_armed = false;
+        runtime.screen_state_mut().container_scroll_drag = None;
         return;
     }
     if menu.as_ref().is_some_and(|menu| menu.is_visible())
@@ -198,6 +120,7 @@ pub(crate) fn drive_inventory_ui_actions(
         || !input_available
     {
         runtime.screen_state_mut().container_close_armed = false;
+        runtime.screen_state_mut().container_scroll_drag = None;
         runtime.set_inventory_pointer_gui(None);
         runtime.screen_state_mut().hover = None;
         runtime.screen_state_mut().pointer.reset();
@@ -205,6 +128,14 @@ pub(crate) fn drive_inventory_ui_actions(
             runtime.screen_state_mut().book = None;
         }
         return;
+    }
+    // ButtonInput retains both edge flags for a release followed by a press.
+    // The last raw edge decides whether that new inventory gesture remains held.
+    if primary_edge == Some(ButtonState::Pressed) {
+        mouse_buttons.clear_just_released(MouseButton::Left);
+    }
+    if secondary_edge == Some(ButtonState::Pressed) {
+        mouse_buttons.clear_just_released(MouseButton::Right);
     }
     let now_millis = time.map_or(0, |time| {
         u64::try_from(time.elapsed().as_millis()).unwrap_or(u64::MAX)
@@ -216,7 +147,10 @@ pub(crate) fn drive_inventory_ui_actions(
         &presentation,
         menu.as_deref(),
         &mut mouse_buttons,
-        (raw_primary_release, raw_secondary_release),
+        (
+            primary_edge == Some(ButtonState::Released),
+            secondary_edge == Some(ButtonState::Released),
+        ),
         (presses, shift, control),
         &notches,
         focus.as_deref_mut(),
@@ -230,11 +164,15 @@ fn route_press(
     button: MouseButton,
     router: &mut PointerRouter<MouseButton>,
     menu: Option<&client_shell::menu::MenuRuntime>,
-    player_runtime: &mut client_state::PlayerRuntime,
+    player: (
+        &mut client_state::PlayerRuntime,
+        Option<&client_world::WorldAuthority>,
+    ),
     runtime: &mut UiRuntime,
     mut presentation: Option<&mut UiPresentationRuntime>,
     pointer: (Option<[f32; 2]>, f64),
 ) -> (PressRoute, bool) {
+    let (player_runtime, authority) = player;
     if runtime.inventory_open()
         && button == MouseButton::Left
         && let Some(view) = presentation.as_deref_mut()
@@ -248,10 +186,18 @@ fn route_press(
     let mod_view = presentation
         .as_deref()
         .is_some_and(|view| view.mod_ui().mod_view_shown());
+    if button == MouseButton::Back
+        && inventory::cancel_from_mouse_back(player_runtime, runtime, presentation.as_deref())
+    {
+        return (PressRoute::Binding, true);
+    }
+    if button == MouseButton::Back && chat::cancel_from_mouse_back(runtime, presentation) {
+        return (PressRoute::Binding, false);
+    }
     if !runtime.chat_focused() && (!runtime.screen_state().text_focused() || mod_view) && !mod_text
     {
         if binding_mouse_button(menu, BindingId::Inventory, button) {
-            runtime.toggle_inventory(player_runtime);
+            runtime.toggle_inventory(player_runtime, authority);
             return (PressRoute::Binding, true);
         }
         if !runtime.inventory_open() {
@@ -332,9 +278,10 @@ pub(crate) fn drive_chat_keyboard_input(
     mut presentation: Option<ResMut<UiPresentationResource>>,
     mut clipboard: Option<ResMut<client_shell::menu::MenuClipboard>>,
     mut modifiers: Local<ButtonInput<KeyCode>>,
-    (emote_input, driven): (
-        Option<Res<super::emotes::EmoteInputConsumed>>,
+    (emote_input, driven, world): (
+        Option<Res<client_state::EmoteInputConsumed>>,
         Option<Res<client_state::DrivenInput>>,
+        Option<Res<crate::runtime::world::ClientWorld>>,
     ),
     mut focus: Option<ResMut<client_state::CursorFocus>>,
     (window_events, mut window_cursor, mut semantic): (
@@ -344,11 +291,19 @@ pub(crate) fn drive_chat_keyboard_input(
     ),
 ) {
     // Only the window event stream keeps keyboard and pointer events in arrival order.
-    let pointer_presses = window_events
+    let mut pointer_presses = window_events
         .as_deref()
         .map(|events| ordered_pointer_presses(window_cursor.read(events)))
         .unwrap_or_default();
+    // Earlier screen owners consume Back in button state before this stream is routed.
+    pointer_presses.retain(|(_, button)| {
+        *button != MouseButton::Back || mouse_buttons.just_pressed(MouseButton::Back)
+    });
     let (window, mut cursor) = window.into_inner();
+    let authority = world
+        .as_deref()
+        .and_then(|world| world.stream.as_ref())
+        .map(|stream| stream.authority());
     let input_available = driven.is_some()
         || (window.focused && focus.as_ref().is_none_or(|focus| focus.available()));
     if runtime.credits().owns_input() {
@@ -362,6 +317,7 @@ pub(crate) fn drive_chat_keyboard_input(
         let had_active_credits = runtime.credits().active().is_some();
         if input_available {
             let cancel = keys.just_pressed(KeyCode::Escape)
+                || mouse_buttons.just_pressed(MouseButton::Back)
                 || gamepads
                     .iter()
                     .any(|pad| pad.just_pressed(GamepadButton::East));
@@ -489,12 +445,34 @@ pub(crate) fn drive_chat_keyboard_input(
     let mod_view = presentation
         .as_deref()
         .is_some_and(|view| view.mod_ui().mod_view_shown());
+    // Platform Back is routed below at its place among this frame's keys.
+    let platform_back = keyboard_events
+        .iter()
+        .any(crate::ui_runtime::platform_back::is_platform_back);
+    if mouse_bindings && !platform_back && mouse_buttons.just_pressed(MouseButton::Back) {
+        let inventory_cancelled = inventory::cancel_from_mouse_back(
+            &mut player_runtime,
+            &mut runtime,
+            presentation.as_deref().map(|view| &view.0),
+        );
+        if inventory_cancelled
+            || chat::cancel_from_mouse_back(
+                &mut runtime,
+                presentation.as_deref_mut().map(|view| &mut view.0),
+            )
+        {
+            dismissed |= !runtime.ui_focused(&player_runtime);
+            inventory_ownership_changed |= inventory_cancelled;
+            consumed_gameplay = true;
+            mouse_buttons.clear_just_pressed(MouseButton::Back);
+        }
+    }
     if !runtime.chat_focused() && (!runtime.screen_state().text_focused() || mod_view) && !mod_text
     {
         if (mouse_bindings && binding_mouse(menu.as_deref(), BindingId::Inventory, &mouse_buttons))
             || binding_gamepad(menu.as_deref(), BindingId::Inventory, &gamepads)
         {
-            runtime.toggle_inventory(&mut player_runtime);
+            runtime.toggle_inventory(&mut player_runtime, authority);
             dismissed |= !runtime.inventory_open();
             inventory_ownership_changed = true;
             consumed_gameplay = true;
@@ -536,7 +514,7 @@ pub(crate) fn drive_chat_keyboard_input(
                 button,
                 &mut router,
                 menu.as_deref(),
-                &mut player_runtime,
+                (&mut player_runtime, authority),
                 &mut runtime,
                 presentation.as_deref_mut().map(|view| &mut view.0),
                 pointer,
@@ -546,6 +524,7 @@ pub(crate) fn drive_chat_keyboard_input(
                 PressRoute::Binding => {
                     // The binding's transition holds for every later input.
                     router.observe(runtime.inventory_open());
+                    dismissed |= !runtime.ui_focused(&player_runtime);
                     consumed.push(button);
                     consumed_gameplay = true;
                     if toggled_inventory {
@@ -574,6 +553,28 @@ pub(crate) fn drive_chat_keyboard_input(
             input.state == ButtonState::Pressed,
         );
         if input.state != ButtonState::Pressed {
+            continue;
+        }
+        if crate::ui_runtime::platform_back::is_platform_back(input) {
+            // Back cancels like a mouse Back press; a held key never cancels twice.
+            if !input.repeat {
+                let inventory_cancelled = inventory::cancel_from_mouse_back(
+                    &mut player_runtime,
+                    &mut runtime,
+                    presentation.as_deref().map(|view| &view.0),
+                );
+                if inventory_cancelled
+                    || chat::cancel_from_mouse_back(
+                        &mut runtime,
+                        presentation.as_deref_mut().map(|view| &mut view.0),
+                    )
+                {
+                    dismissed |= !runtime.ui_focused(&player_runtime);
+                    inventory_ownership_changed |= inventory_cancelled;
+                    consumed_gameplay = true;
+                    mouse_buttons.clear_just_pressed(MouseButton::Back);
+                }
+            }
             continue;
         }
         if let Some(presentation) = presentation.as_deref_mut()
@@ -632,7 +633,7 @@ pub(crate) fn drive_chat_keyboard_input(
                     && (key == KeyCode::Escape
                         || binding_key(menu.as_deref(), BindingId::Inventory, key)) => {}
                 key if binding_key(menu.as_deref(), BindingId::Inventory, key) => {
-                    runtime.toggle_inventory(&mut player_runtime);
+                    runtime.toggle_inventory(&mut player_runtime, authority);
                     inventory_ownership_changed = true;
                 }
                 // Escape returns from a player mod's view to the container, and the hidden
@@ -686,7 +687,7 @@ pub(crate) fn drive_chat_keyboard_input(
             }
             match input.key_code {
                 key if binding_key(menu.as_deref(), BindingId::Inventory, key) => {
-                    runtime.toggle_inventory(&mut player_runtime);
+                    runtime.toggle_inventory(&mut player_runtime, authority);
                     inventory_ownership_changed = true;
                     consumed_gameplay = true;
                 }
@@ -818,6 +819,7 @@ pub(crate) fn drive_chat_keyboard_input(
     if routes_presses {
         // The frame's last key changed the screen for every press after it.
         router.observe(runtime.inventory_open());
+        let mut deferred_inventory = Vec::new();
         while let Some(button) = router.next_rest() {
             if command_macros::dispatch_mouse(
                 menu.as_deref(),
@@ -830,11 +832,32 @@ pub(crate) fn drive_chat_keyboard_input(
                 mouse_buttons.clear_just_pressed(button);
                 continue;
             }
+            if button == MouseButton::Back
+                && inventory::accepts_mouse_back(
+                    &runtime,
+                    presentation.as_deref().map(|view| &view.0),
+                )
+            {
+                for earlier in deferred_inventory.drain(..) {
+                    inventory::apply_screen_presses(
+                        &[earlier],
+                        &mut player_runtime,
+                        &mut runtime,
+                        window,
+                        presentation.as_deref().map(|view| &view.0),
+                        menu.as_deref(),
+                        focus.as_deref_mut(),
+                        &time,
+                    );
+                    kept.retain(|candidate| *candidate != earlier);
+                    consumed.push(earlier);
+                }
+            }
             let (route, toggled_inventory) = route_press(
                 button,
                 &mut router,
                 menu.as_deref(),
-                &mut player_runtime,
+                (&mut player_runtime, authority),
                 &mut runtime,
                 presentation.as_deref_mut().map(|view| &mut view.0),
                 pointer,
@@ -843,6 +866,7 @@ pub(crate) fn drive_chat_keyboard_input(
                 PressRoute::Binding => {
                     // The binding's transition holds for every later input.
                     router.observe(runtime.inventory_open());
+                    dismissed |= !runtime.ui_focused(&player_runtime);
                     consumed.push(button);
                     consumed_gameplay = true;
                     if toggled_inventory {
@@ -850,8 +874,8 @@ pub(crate) fn drive_chat_keyboard_input(
                         dismissed |= !runtime.inventory_open();
                     }
                 }
-                // A screen opened this frame takes its presses now; its opening suppresses the
-                // buttons.
+                // Newly opened screens act now; existing screens combine releases and presses
+                // in the inventory adapter unless a later Back first flushes their presses.
                 PressRoute::Screen { opening } if opening > 0 => {
                     consumed.push(button);
                     inventory::apply_screen_presses(
@@ -865,8 +889,11 @@ pub(crate) fn drive_chat_keyboard_input(
                         &time,
                     );
                 }
-                // Gameplay, and the screen open all frame, read the edge later.
-                PressRoute::Gameplay | PressRoute::Screen { .. } => kept.push(button),
+                PressRoute::Screen { .. } => {
+                    deferred_inventory.push(button);
+                    kept.push(button);
+                }
+                PressRoute::Gameplay => kept.push(button),
             }
         }
         // A press a screen consumed cannot be replayed; gameplay presses keep their edge.

@@ -4,6 +4,24 @@ use super::{CameraDelta, ModHost};
 use anyhow::Result;
 
 impl ModHost {
+    /// Successfully committed local weather target, in rain/thunder channel order.
+    pub fn weather_override(&self) -> Option<[f32; 2]> {
+        use crate::runtime::cinnabar::extension::environment::Weather;
+        self.instance.weather_override().map(|value| match value {
+            Weather::Clear => [0., 0.],
+            Weather::Rain => [1., 0.],
+            Weather::Thunder => [1., 1.],
+        })
+    }
+    /// Retained attack/use caps; an absent channel leaves ordinary input unchanged.
+    pub fn click_limits(&self) -> [Option<u32>; 2] {
+        self.instance.click_limits()
+    }
+
+    /// Current-frame ordinary input modes; absence restores the player's saved preferences.
+    pub fn movement_toggles(&self) -> Option<&crate::MovementToggles> {
+        self.instance.movement_toggles()
+    }
     /// Successfully committed local lighting override.
     pub fn fullbright(&self) -> bool {
         self.instance.fullbright()
@@ -37,6 +55,11 @@ impl ModHost {
     /// Retained host-rendered cards from the last successful callback.
     pub fn hud(&self) -> Option<&ui::mod_hud::Hud> {
         self.instance.hud()
+    }
+
+    /// Process-unique committed HUD identity, including changes from native bindings.
+    pub fn hud_revision(&self) -> Option<u64> {
+        self.hud().map(|_| self.instance.hud_revision())
     }
 
     /// Consumes a committed native-editor request without entering the guest.

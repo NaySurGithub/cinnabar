@@ -47,6 +47,8 @@ pub struct PhysicsFrameInput {
     pub active: bool,
     /// Cancels retained presses when the semantic router releases input ownership.
     pub input_authority_released: bool,
+    /// Mod-held controls bypass physical toggle latches.
+    pub resolved_movement: bool,
     pub movement: [f32; 2],
     pub raw_movement: [f32; 2],
     pub analogue_movement: [f32; 2],
@@ -192,6 +194,7 @@ impl LocomotionState {
                 .unwrap_or_else(|_| physics.mode() == sim::MovementMode::Swimming);
             let controlled = self.controls.update(ControlObservation {
                 now,
+                resolved_movement: frame.resolved_movement,
                 forward: movement[1],
                 sideways: movement[0],
                 touch_input: input_mode == protocol::PlayerInputMode::Touch,
@@ -275,6 +278,7 @@ impl LocomotionState {
                         sprint_down: controlled.sprint_down,
                         sneak_down: input.sneaking,
                         server_sprinting: server.and_then(|flags| flags.sprinting),
+                        server_sneaking: server.and_then(|flags| flags.sneaking),
                     },
                 },
                 world,
@@ -340,31 +344,36 @@ impl LocomotionState {
 
     /// Retains riding input even when transport admission pauses physics, preserving server links.
     pub fn observe_dismount(&mut self, frame: &PhysicsFrameInput, session: u64) {
-        let trigger = if frame.facts.ride == Some(super::RideKind::Boat) {
-            ClientInputLock::Jump
-        } else {
-            ClientInputLock::Sneak
-        };
+        // A boat maps both jump and sneak to dismount; other mounts keep jump for themselves.
+        // A press counts through whichever pressed button its locks still allow.
+        let boat = frame.facts.ride == Some(super::RideKind::Boat);
+        let allowed = |lock| !frame.facts.input_locks.blocks(lock);
+        let trigger = [
+            (boat && frame.jump.pressed, ClientInputLock::Jump),
+            (frame.sneak.pressed, ClientInputLock::Sneak),
+        ]
+        .into_iter()
+        .find(|(pressed, lock)| *pressed && allowed(*lock))
+        .map(|(_, lock)| lock);
         let mount = frame
             .facts
             .ride
             .and(frame.facts.mount_runtime_id)
             .filter(|mount| *mount != 0)
             .filter(|_| frame.active && !frame.input_authority_released && frame.hold.is_none())
-            .map(|mount| (session, mount, trigger));
-        if self.pending_dismount != mount {
+            .map(|mount| (session, mount));
+        // A retained press survives later frames on the same mount, whichever button made it.
+        if self
+            .pending_dismount
+            .map(|(session, mount, _)| (session, mount))
+            != mount
+        {
             self.pending_dismount = None;
         }
-        let pressed = if frame.facts.ride == Some(super::RideKind::Boat) {
-            frame.jump.pressed
-        } else {
-            frame.sneak.pressed
-        };
-        if pressed
-            && !frame.facts.input_locks.blocks(ClientInputLock::Dismount)
-            && !frame.facts.input_locks.blocks(trigger)
+        if let (Some(trigger), Some((session, mount))) = (trigger, mount)
+            && allowed(ClientInputLock::Dismount)
         {
-            self.pending_dismount = mount;
+            self.pending_dismount = Some((session, mount, trigger));
         }
     }
 }

@@ -62,6 +62,7 @@ pub(super) fn bootstrap(
     custom_blocks: protocol::CustomBlocks,
 ) -> session::NetworkControlEvent {
     session::NetworkControlEvent::Bootstrap {
+        identity: Default::default(),
         session_generation: simulation_clock::identity::SessionGeneration::new(1),
         world: protocol::WorldBootstrap {
             dimension: 0,
@@ -93,6 +94,7 @@ pub(super) fn bootstrap(
         hardcore: false,
         hud_rules: Default::default(),
         death_rules: Default::default(),
+        crafting_rules: Default::default(),
         packs,
         terrain_before_spawn: true,
         level_identity: None,

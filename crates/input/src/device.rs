@@ -151,6 +151,8 @@ impl Default for TouchControlLayout {
                 crate::touch::LOOK_SURFACE,
                 crate::touch::JOYSTICK,
                 crate::touch::INVENTORY,
+                crate::touch::CHAT,
+                crate::touch::EMOTE,
             ]
             .map(|hit_id| TouchControl {
                 hit_id,
@@ -171,6 +173,8 @@ impl Default for TouchControlLayout {
 /// in `KeyboardMouse`, `GamePad`, then `Touch` order.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct DeviceFrame {
+    /// Present when a backend supplies ordered desktop events; held state stays in the sample.
+    pub desktop_events: Option<crate::DesktopEvents>,
     pub keyboard_mouse: Option<KeyboardMouseFrame>,
     pub controllers: Vec<ControllerFrame>,
     pub touches: Vec<TouchContact>,
@@ -221,6 +225,19 @@ pub enum FrameError {
 
 impl DeviceFrame {
     pub(crate) fn validate(&self, touch_layout: &TouchControlLayout) -> Result<(), FrameError> {
+        if let Some(events) = &self.desktop_events {
+            for event in events.events() {
+                if let crate::DesktopEvent::Button { control, .. } = event
+                    && !matches!(
+                        control,
+                        crate::PhysicalControl::KeyboardUsage(0x04..=0xe7)
+                            | crate::PhysicalControl::MouseButton(1..=8)
+                    )
+                {
+                    return Err(FrameError::UnknownPhysicalCode);
+                }
+            }
+        }
         if self.controllers.len() > MAX_CONTROLLERS {
             return Err(FrameError::TooManyControllers {
                 actual: self.controllers.len(),

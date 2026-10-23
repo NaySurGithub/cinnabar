@@ -2,34 +2,9 @@
 use super::*;
 use crate::runtime::world::{advance_dimension_transfer, drain_committed_ui_before_authority};
 
-pub(crate) fn configure_client_frame_schedule(app: &mut App) {
-    app.init_resource::<client_state::ScreenFocus>()
-        .init_resource::<client_state::GameplayScreenControls>();
-    app.configure_sets(
-        Update,
-        (
-            ClientFrameSet::RawInput,
-            ClientFrameSet::SemanticSample,
-            ClientFrameSet::UiAuthority,
-            ClientFrameSet::SemanticFinalize,
-            ClientFrameSet::Physics,
-            ClientFrameSet::Camera,
-            ClientFrameSet::Interaction,
-            // Packets leave before world, actor and UI preparation, as vanilla flushes before render.
-            ClientFrameSet::NetworkSend,
-            ClientFrameSet::WorldPublication,
-            ClientFrameSet::ActorPreparation,
-            ClientFrameSet::UiPreparation,
-            ClientFrameSet::ActorFinalization,
-            ClientFrameSet::ActorPublication,
-            ClientFrameSet::UiPublication,
-        )
-            .chain(),
-    );
-}
-
 pub(crate) fn configure_client_authority_systems(app: &mut App) {
     app.init_resource::<client_interaction::movement::LocomotionState>();
+    app.init_resource::<crate::ui_runtime::touch_pointer::UiPointerSource>();
     app.add_systems(
         bevy::prelude::Startup,
         (
@@ -45,7 +20,7 @@ pub(crate) fn configure_client_authority_systems(app: &mut App) {
     .add_message::<bevy::input::mouse::MouseWheel>()
     .init_resource::<WorldStreamFramePoll>()
     .init_resource::<crate::ui_runtime::presentation::publish::PreparedUiPublication>()
-    .init_resource::<crate::ui_runtime::emotes::EmoteInputConsumed>()
+    .init_resource::<client_state::EmoteInputConsumed>()
     .add_systems(
         Update,
         (drive_gameplay_touch_targets, collect_raw_input)
@@ -56,6 +31,12 @@ pub(crate) fn configure_client_authority_systems(app: &mut App) {
         bevy::prelude::PreUpdate,
         crate::ui_runtime::touch_pointer::emulate_ui_pointer
             .before(bevy::input::InputSystems)
+            .run_if(|| cfg!(target_os = "android")),
+    )
+    .add_systems(
+        bevy::prelude::PreUpdate,
+        crate::ui_runtime::platform_back::press_mouse_back_for_platform_back
+            .after(bevy::input::InputSystems)
             .run_if(|| cfg!(target_os = "android")),
     )
     .add_systems(
@@ -76,9 +57,7 @@ pub(crate) fn configure_client_authority_systems(app: &mut App) {
             drive_chat_keyboard_input
                 .run_if(client_extensions::server_experiences::input::ordinary_input)
                 .before(client_state::ShellFrameSet::MenuInput),
-            drive_inventory_ui_actions
-                .run_if(client_extensions::server_experiences::input::ordinary_input)
-                .after(client_state::ShellFrameSet::MenuInput),
+            drive_inventory_ui_actions.after(client_state::ShellFrameSet::MenuInput),
             drive_menu_services,
             drive_session.in_set(client_state::ShellFrameSet::Session),
             crate::render_distance::apply_render_distance

@@ -6,6 +6,52 @@ under the ignored `.local/assets/block-data/` directory, and the verified
 download cache stays in the ignored sibling `.local/assets/block-data.downloads/`
 directory. This notice is checked in and is not rewritten by the acquisition script.
 
+## Android dedicated-server runtime
+
+Experimental Android builds package [Box64](https://github.com/ptitSeb/box64), copyright (c) 2020 ptitSeb,
+under the MIT license in `assets/licenses/Box64-MIT.txt`. Its source archive is pinned in
+`packaging/android/runtime.json`.
+
+These builds also package the GNU C Library with Android adaptations from
+[glibc-packages](https://github.com/termux-pacman/glibc-packages). GNU C Library code is
+copyright the Free Software Foundation and its other contributors; the Android adaptations
+are copyright (c) 2023 Ivan Max under the MIT license in
+`assets/licenses/Termux-glibc-MIT.txt`. GNU license texts and additional required notices are
+retained in `assets/licenses/glibc-*.txt`. The native package, upstream source archive and
+platform patch set are identified in `packaging/android/runtime.json`. The unchanged native
+package, matching GNU source, platform adaptations and notices are also preserved in the
+[Android runtime dependency release](https://github.com/cinnabar-mc/cinnabar/releases/tag/android-bds-runtime-20261022).
+The adaptations also include Android Bionic code under BSD and Apache 2.0 and
+BSD-licensed `libandroid-shmem`, with Android ashmem code under Apache 2.0. Their notices are retained in
+`assets/licenses/Android-Bionic-BSD.txt`, `libandroid-shmem-BSD.txt`,
+`Android-ashmem-NOTICE.txt` and `Apache-2.0.txt` in the same directory.
+
+The translator uses Android Bionic's application-safe interface enumeration under the BSD
+license. Its sources are pinned in the same manifest; the 2015 and 2016 Android Open Source
+Project notices are retained in `assets/licenses/Android-Bionic-BSD.txt`.
+
+To use a modified native runtime, build those sources with the Android adaptations and set
+`CINNABAR_ANDROID_BDS_NATIVE_DIR` to the resulting library directory when rebuilding the APK.
+The packager uses the source filenames and APK filenames in the manifest's `libraries` list.
+This replaces the shared libraries without changing the client or translator sources.
+
+The translated backend downloads only its required x86 GNU runtime library from the pinned
+upstream revision, verifies the file's size and SHA-256, and caches it locally. It is not bundled in the APK. GNU
+runtime libraries retain the GPL version 3 with the GCC Runtime Library Exception version 3.1;
+the corresponding license texts are in `assets/licenses/GCC-GPL-3.0.txt` and
+`assets/licenses/GCC-Runtime-Exception-3.1.txt`. Mojang's server remains a separate official download.
+
+## Native Bedrock catalog facts
+
+Block hardness, ordinary-tool tags, harvest requirements and recipe item tags
+come from the shared [protocolgen catalog](https://github.com/cinnabar-mc/protocolgen/tree/cf01aa84b74df45df5fa24569e1ac358e4afbb87/generated/data).
+Its selected native 1.26.51 measurements are from
+[didntpot/bedrock-data](https://github.com/didntpot/bedrock-data), commit
+`bb896a46ba856c58383e3cfb962a38c45a0dea78`, under CC0-1.0. The source lock and
+upstream licence are retained in protocolgen. Sword/shears speed targets still
+use the provisional Prismarine input described below; complete mining parity
+remains incomplete.
+
 ## Block property and component data
 
 `crates/assets/data/block-properties-v2193.json` and
@@ -287,6 +333,84 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 <!-- END PRISMARINEJS-MINECRAFT-DATA-MIT -->
 
+## GeyserMC mappings
+
+- Source: https://github.com/GeyserMC/mappings
+- Commit: `81700ab543c1f4e9f9041f58dac4154ecb0d0c8b` (Java Edition 26.3, Bedrock Edition 1.26.50)
+- Archive: the `2.1.0-build.1` release of https://github.com/GeyserMC/mappings-generator,
+  the generator's published output for that commit, pinned in
+  `assets/geyser-mappings-source.json`
+- License: MIT
+- Copyright: Copyright (c) 2019-2026 GeyserMC
+- Upstream license SHA-256:
+  `4f49de5134b13de98672e8f870aae5d36f5b415086fb1c6fdf832b78c47c7094`
+- Use: `crates/assets/data/java-mapping-v2193.bin` is generated from its Java-to-Bedrock
+  block-state, biome and item mappings and from the archive's MCProtocolLib network exports
+  (`mcpl/data/networkTags.nbt` block and biome tags, `mcpl/data/networkCodec.nbt` Java biome
+  registry). GeyserMC licenses only its contributors' own work; it does not relicense
+  Minecraft data owned by Mojang or Microsoft.
+
+<!-- BEGIN GEYSERMC-MAPPINGS-MIT -->
+The MIT License
+
+Copyright (c) 2019-2026 GeyserMC. http://geysermc.org
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+<!-- END GEYSERMC-MAPPINGS-MIT -->
+
+## GeyserMC Geyser
+
+- Source: https://github.com/GeyserMC/Geyser
+- Commit: `8f6a9d20b05c302282f9496314b7c18cf6d4cc53`, pinned in
+  `assets/geyser-mappings-source.json`
+- License: MIT
+- Copyright: Copyright (c) 2019-2025 GeyserMC
+- Upstream license SHA-256:
+  `7380cf017734f26977e907a07fd806e9dcba38023d522b7c6e56bd3a2482b08a`
+- Use: the Java entity type to Bedrock entity id pairs in
+  `crates/assets/data/java-mapping-v2193.bin` are read from its `VanillaEntities.java` and
+  `BedrockEntityDefinitions.java`.
+
+<!-- BEGIN GEYSERMC-GEYSER-MIT -->
+The MIT License
+
+Copyright (c) 2019-2025 GeyserMC. http://geysermc.org
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+<!-- END GEYSERMC-GEYSER-MIT -->
+
 ## Axolotl Stack
 
 - Source: https://github.com/axolotl-stack/axolotl-stack
@@ -332,8 +456,7 @@ SOFTWARE.<!-- END AXOLOTL-STACK-MIT -->
 - Copyright: Copyright (c) 2019 Dragonfly Tech
 - Upstream license SHA-256:
   `9b0866098f4b7bfadafa43adec71dae35968053ceaea0487fb4b23c46cc72755`
-- Item tag table: `crates/protocol/data/item_tags_dragonfly.tsv`, derived from
-  the `hashimthearab/dragonfly` fork at
+- Earlier item-tag tables were derived from the `hashimthearab/dragonfly` fork at
   `3d29a693c54b8412a6a1c619f5b06bd8cb09a0e5` under the same license.
 
 <!-- BEGIN DRAGONFLY-MIT -->
@@ -435,4 +558,52 @@ SOFTWARE.
   HTTP client for symbol servers; `devtool symbolicate` configures none and never uses it.
 - Distribution: none. `devtool symbolicate` is a developer tool and is not packaged.
 
+## Inter
+
+- File: `assets/fonts/InterVariable.ttf`
+- Source: https://github.com/rsms/inter
+- Version: 4.1, commit `e3a3d4c57d5ecc01453a575621882a384c1995a3`
+- Copyright (c) 2016 The Inter Project Authors (https://github.com/rsms/inter)
+- License: SIL Open Font License 1.1; full text in `assets/licenses/Inter-OFL-1.1.txt`.
+- Font SHA-256: `4989b125924991b90d05b2d16e0e388c48f7d5bb8b30539bbf9c755278d0ccaf`
+
+Authored native panels may select Inter with `font_type: "mod_panel_sans"`.
 The cosmetic regression geometry and textures in `crates/render-model/src/hats/` are original Cinnabar artwork, distributed under the repository license. Editable projects and production catalog assets are maintained in cinnabar-mc/cinnabar-api.
+
+## pp-rs shader preprocessor
+
+- Source: https://github.com/Kangz/glslpp-rs
+- Cinnabar fork: https://github.com/cinnabar-mc/glslpp-rs, pinned in `Cargo.lock`.
+- Dependency: `pp-rs`, shared by properties and shader preprocessing.
+- License: BSD-3-Clause.
+- The fork adds opt-in Iris conditions and text output, and bounds expression recursion.
+
+BSD 3-Clause License
+
+Copyright (c) 2020, Corentin Wallez
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.

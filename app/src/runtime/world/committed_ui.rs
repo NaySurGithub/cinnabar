@@ -48,12 +48,15 @@ pub(crate) fn drain_committed_ui_before_authority(
     };
     let authority = stream.authority();
     if let Some(name) = authority.actor_display_name(authority.local_player_unique_id()) {
-        ui_runtime.set_chat_source_name(name);
+        ui_runtime.set_local_player_display_name(name);
     }
     ui_runtime.note_stream_dimension(stream.current_dimension());
     let current_dimension = stream.current_dimension();
     let dimension_epoch = stream.form_dimension_epoch();
-    ui_runtime.experiences.epoch = dimension_epoch;
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        ui_runtime.experiences.epoch = dimension_epoch;
+    }
     ui_runtime
         .server_forms_mut()
         .synchronize_epoch(session, dimension_epoch);
@@ -77,7 +80,13 @@ pub(crate) fn drain_committed_ui_before_authority(
             // Every message reaches the extension: its ingress drops and counts envelopes of a
             // world epoch it has left, while their sequence numbers stay spent.
             CommittedUiEvent::Experience { event, .. } => {
+                #[cfg(not(target_arch = "wasm32"))]
                 ui_runtime.experiences.receive(&event.bytes, local_millis);
+                #[cfg(target_arch = "wasm32")]
+                bevy::log::debug!(
+                    bytes = event.bytes.len(),
+                    "server extension execution unavailable on this host"
+                );
                 Ok(())
             }
             CommittedUiEvent::LocalAbilities {
@@ -103,6 +112,16 @@ pub(crate) fn drain_committed_ui_before_authority(
                 if event_epoch != dimension_epoch {
                     continue;
                 }
+                // Authority may already include actors spawned after this form.
+                let npc_actor = if let protocol::ServerFormModel::NpcDialogue(npc) = &event.model {
+                    let authority = client_world.stream.as_ref().unwrap().authority();
+                    authority
+                        .actor_by_unique_id(npc.npc_unique_id)
+                        .and_then(|actor| authority.actor_lifetime(actor.runtime_id))
+                        .filter(|actor| actor.spawn_revision <= sequence)
+                } else {
+                    None
+                };
                 ui_runtime
                     .apply(
                         &mut player_runtime,
@@ -114,7 +133,17 @@ pub(crate) fn drain_committed_ui_before_authority(
                             event: protocol::UiEvent::Form(event),
                         },
                     )
-                    .map(|_| ())
+                    .map(|_| {
+                        let store = ui_runtime.server_forms_mut();
+                        if let Some(actor) = npc_actor
+                            && let Some(entry) = store
+                                .active()
+                                .filter(|entry| entry.fifo_sequence() == sequence)
+                        {
+                            let identity = entry.identity;
+                            store.bind_npc_actor(identity, actor);
+                        }
+                    })
             }
             // A generic UI entry must never bypass the form lifetime fence.
             CommittedUiEvent::Ui {
@@ -225,6 +254,21 @@ pub(crate) fn drain_committed_ui_before_authority(
                 event,
                 local_millis,
             ),
+            CommittedUiEvent::LocalSpawn {
+                sequence,
+                health,
+                ridden_unique_id,
+            } => ui_runtime.apply_local_spawn(
+                &mut player_runtime,
+                SequencedLocalAttributes {
+                    session_id: clock.session_generation(),
+                    fifo_sequence: sequence,
+                    local_millis,
+                    server_tick: 0,
+                    attributes: health,
+                },
+                ridden_unique_id,
+            ),
             CommittedUiEvent::LocalMount {
                 sequence,
                 ridden_unique_id,
@@ -240,6 +284,9 @@ pub(crate) fn drain_committed_ui_before_authority(
                 sequence,
                 local_millis,
             ),
+            CommittedUiEvent::LocalRespawnReady { sequence } => {
+                ui_runtime.apply_respawn_ready(clock.session_generation(), sequence, local_millis)
+            }
         };
         if let Err(error) = result {
             player_runtime.facts.clear_local_abilities();

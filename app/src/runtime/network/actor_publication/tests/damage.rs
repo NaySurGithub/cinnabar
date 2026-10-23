@@ -14,8 +14,8 @@ fn observe_damage(ui: Res<UiRuntimeResource>, mut damage: ResMut<DamageAtUiPrepa
 #[test]
 fn actor_damage_publication_advances_before_ui_and_clears_with_the_stream() {
     let mut app = App::new();
-    crate::app::configure_client_frame_schedule(&mut app);
-    crate::app::configure_actor_render_systems(&mut app);
+    crate::game_frame::configure_client_frame_schedule(&mut app);
+    crate::game_frame::configure_actor_render_systems(&mut app);
     app.add_systems(
         Update,
         observe_damage.in_set(client_state::ClientFrameSet::UiPreparation),
@@ -142,6 +142,16 @@ fn local_actor_life_state_preserves_health_below_hud_precision_and_retires_with_
                 },
             )),
         )
+        .unwrap();
+    let mut clock = client_presentation::environment::WorldClock::default();
+    client_presentation::environment::bind_session_generation(
+        &mut clock,
+        &mut client_presentation::environment::WeatherState::default(),
+        1,
+    );
+    world.insert_resource(clock);
+    world
+        .run_system_cached(crate::runtime::world::drain_committed_ui_before_authority)
         .unwrap();
     world.run_system_cached(publish_local_actor_damage).unwrap();
     let ui = world.resource::<UiRuntimeResource>();

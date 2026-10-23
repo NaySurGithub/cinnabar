@@ -15,10 +15,11 @@ use semantic_input::identity::{InputAuthorityGeneration, InputSequence};
 use sim::{DestroyConditions, HeldTool, PaletteWorld};
 use simulation_clock::identity::PositionAuthorityGeneration;
 
-/// Freezes the destroy facts used when the shared queue admits a block press.
+/// Reads the destroy facts used for this frame's block press.
 pub(crate) fn observe_destroy_target(
     player_runtime: &client_state::PlayerRuntime,
     context: &crate::melee::MeleeContext,
+    origin: &client_presentation::local_player::InteractionOriginSnapshot,
     caps: Option<GameModeCapabilities>,
     input_mode: semantic_input::InputMode,
     input_authority: (InputAuthorityGeneration, InputSequence),
@@ -34,7 +35,7 @@ pub(crate) fn observe_destroy_target(
     let selection = hand_interaction_selection(player_runtime)?;
     let input_mode = protocol_input_mode(input_mode);
     let observed = observe_block(
-        &context.origin,
+        origin,
         ui,
         &context.client_world,
         &context.collisions,
@@ -55,18 +56,51 @@ pub(crate) fn observe_destroy_target(
         return None;
     }
     let stream = context.client_world.stream.as_ref()?;
-    let mode = stream.network_id_mode();
-    let block = sim::BlockDestroyInfo::from_facts(
-        stream
-            .runtime_assets()
-            .resolve(mode, observed.target.runtime_id)
-            .destroy(),
+    let held = stream.authority().held_edit_item(
+        &observed.selection.item,
+        protocol::ItemBlockList::CanDestroy,
+        observed.target.runtime_id,
     );
+    if !caps.permits_edit(held) {
+        return None;
+    }
+    let mode = stream.network_id_mode();
+    let mut destroy_facts = stream
+        .runtime_assets()
+        .resolve(mode, observed.target.runtime_id)
+        .destroy();
     let item = &observed.selection.item;
     let fact = ui
         .inventory_ledger(player_runtime)
         .item_facts()
         .get(item.network_id());
+    if let Some((mining, effective_tools)) = context
+        .collisions
+        .custom_block_mining(mode, observed.target.runtime_id)
+    {
+        let entry = ui
+            .inventory_ledger(player_runtime)
+            .negotiated_item_entry(item.network_id());
+        let builtin = assets::facts::ItemFacts::builtin().ok();
+        let seconds = pack_runtime::custom_mining_seconds(
+            mining,
+            &context.client_world.mining_filters,
+            entry.map(|entry| entry.identifier.as_ref()),
+            item.metadata(),
+            &|tag| {
+                entry.is_some_and(|entry| entry.item_tags.iter().any(|value| value.as_ref() == tag))
+                    || builtin
+                        .as_ref()
+                        .and_then(|facts| facts.tag(tag))
+                        .is_some_and(|tag| fact.tags.contains(tag))
+            },
+        );
+        destroy_facts = assets::compiled::block_destroy::BlockDestroyFacts::Custom {
+            seconds_to_destroy_bits: seconds.to_bits(),
+            effective_tools,
+        };
+    }
+    let block = sim::BlockDestroyInfo::from_facts(destroy_facts);
     let instant = caps.instant_break;
     if instant && !destroys_in_creative(fact) {
         return None;
@@ -103,6 +137,7 @@ pub(crate) fn observe_destroy_target(
         })
     });
     Some(DestroyTarget {
+        local_runtime_id: stream.local_player_runtime_id(),
         position: observed.target.position,
         face: observed.target.face,
         runtime_id: observed.target.runtime_id,

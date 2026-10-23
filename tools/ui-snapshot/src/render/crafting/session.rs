@@ -59,7 +59,7 @@ pub const ITEMS: [Item; 4] = [
 ];
 
 /// Admits fixture facts through the owning session, then acknowledges its personal-open request.
-pub fn player() -> Result<PlayerState, String> {
+pub fn player(block_identity: i32) -> Result<PlayerState, String> {
     let mut player = PlayerState::new(1);
     player
         .facts
@@ -101,7 +101,10 @@ pub fn player() -> Result<PlayerState, String> {
             IngredientFixture::tagged(TAG),
             IngredientFixture::named(LOG_NAME, 0),
         ],
-        vec![OutputFixture::new(FURNACE, 1)],
+        vec![OutputFixture {
+            block_runtime_id: block_identity,
+            ..OutputFixture::new(FURNACE, 1)
+        }],
     );
     recipe.net_id = 77;
     for (sequence, event) in [
@@ -124,7 +127,12 @@ pub fn player() -> Result<PlayerState, String> {
         .inventory
         .synchronize_crafting_frontier(1, Some((1, 0, Some(2))));
     player.inventory.drain_pending_inventory();
-    if player.inventory.book_recipes(false, 0, usize::MAX).len() != 1 {
+    if player
+        .inventory
+        .book_recipes(false, false, 0, usize::MAX)
+        .len()
+        != 1
+    {
         return Err("craft fixture recipe was not committed".into());
     }
     let ledger = player.inventory.ledger_mut();

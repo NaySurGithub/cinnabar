@@ -206,9 +206,10 @@ impl Harness {
             AttackFrame {
                 attack,
                 mining_target: match input {
-                    DestroyInput::Held(target) => target,
+                    DestroyInput::Held(target) | DestroyInput::Continue(target) => target,
                     DestroyInput::Released => None,
                 },
+                allow_mining_start: true,
                 attack_held: held,
                 authority: BlockBreakingAuthority::Server,
                 now_millis: self.now,
@@ -420,6 +421,7 @@ impl Harness {
 fn target(id: u64) -> DestroyTarget {
     let stack = protocol::NetworkItemStack::empty();
     DestroyTarget {
+        local_runtime_id: 8,
         position: [id as i32, 2, 3],
         face: 1,
         runtime_id: 9,

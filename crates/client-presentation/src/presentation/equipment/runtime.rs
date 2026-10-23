@@ -1,5 +1,6 @@
 //! Builds equipment rig layers (held sprite meshes and worn armor) for a body submission.
 
+use crate::presentation::equipment::LAYER_MAIN_HAND;
 use std::{collections::BTreeMap, sync::Arc};
 
 use assets::{
@@ -21,6 +22,7 @@ use render_model::{
 mod alpha;
 mod attack;
 mod block_items;
+mod body;
 mod camera;
 mod combat;
 mod diagnostics;
@@ -33,6 +35,7 @@ mod modern;
 pub(crate) use modern::HeldSelection;
 mod native;
 mod pack;
+mod placement_cache;
 mod push;
 mod readiness;
 mod routing;
@@ -55,7 +58,7 @@ use {
         atlas::{Placement, SpriteAtlas},
         display::{
             FirstPersonHand, FirstPersonShape, LAYER_BOOTS, LAYER_CHESTPLATE, LAYER_HELMET,
-            LAYER_LEGGINGS, LAYER_MAIN_HAND, LAYER_OFF_HAND, head_block_display, view_bone,
+            LAYER_LEGGINGS, LAYER_OFF_HAND, head_block_display, view_bone,
         },
     },
     render_model::equipment::{self as attachable, blocks::BlockSheets},
@@ -135,6 +138,7 @@ pub struct EquipmentRuntime {
     /// `(identifier, reason)` pairs already logged as drawing no layer.
     logged_misses: std::collections::HashSet<(Box<str>, &'static str)>,
     poses: PoseMemo,
+    attachment_poses: placement_cache::PlacementCache,
     /// Reused output storage for one actor, bounded by held and worn layer counts.
     layers: Vec<EquipmentPresentation>,
     attachables: actor_animation::AttachablesRuntime,
@@ -144,14 +148,24 @@ pub struct EquipmentRuntime {
     java_rasters: BTreeMap<AttachableMeshKey, Option<JavaRasterFrame>>,
     /// Render-controller models queued beyond the scene's binding geometries.
     selected_geometries: std::collections::BTreeSet<EntityRigId>,
+    /// Startup equipment meshes returned to the scene for registration.
+    startup_geometries: std::collections::BTreeSet<EntityRigId>,
     /// The strip frame each held dial (compass or clock) shows this frame.
     dial_frames: inventory::DialFrames,
+    /// Whether server-pack held models may replace their ordinary item sprites.
+    show_custom_item_models: bool,
 }
 
 impl EquipmentRuntime {
+    /// Applies the current video preference to the frame's held-item model selection.
+    pub fn set_show_custom_item_models(&mut self, enabled: bool) {
+        self.show_custom_item_models = enabled;
+    }
+
     /// Releases memoized poses of layers no recent frame drew.
     pub fn begin_frame(&mut self) {
         self.poses.begin_frame();
+        self.attachment_poses.retain(self.poses.frame);
     }
 
     /// Places the item atlas and attachable textures on new artwork pages. Returns the runtime,
@@ -223,7 +237,7 @@ impl EquipmentRuntime {
             }
         }
         let held_block_entities =
-            held_block_entities::build(skull_atlas.as_ref(), skull_location, &mut artwork);
+            held_block_entities::build(skull_atlas.as_ref(), &assets, skull_location, &mut artwork);
         pending.extend(held_block_entities.geometries.iter().cloned());
         let mut geometries = catalog
             .iter()
@@ -285,7 +299,9 @@ impl EquipmentRuntime {
             native_meshes: BTreeMap::new(),
             java_rasters: BTreeMap::new(),
             selected_geometries: Default::default(),
+            startup_geometries: geometries.iter().copied().map(equipment_rig_id).collect(),
             dial_frames: Default::default(),
+            show_custom_item_models: ui::DEFAULT_SHOW_CUSTOM_ITEM_MODELS,
             external_armor: external_armor::ExternalArmor::new(catalog.as_deref()),
             assets,
             icons,
@@ -315,6 +331,7 @@ impl EquipmentRuntime {
             pack: None,
             logged_misses: Default::default(),
             poses: PoseMemo::default(),
+            attachment_poses: placement_cache::PlacementCache::default(),
             layers: Vec::new(),
         };
         (runtime, artwork, geometries)
@@ -402,6 +419,13 @@ impl EquipmentRuntime {
             (&input.off, LAYER_OFF_HAND, bones.left_item),
         ] {
             let Some(item) = item else { continue };
+            let held_item_scale = animation.and_then(|animation| animation.rig.held_item_scale);
+            let scale = actor_animation::AttachableAnimationInput {
+                off_hand: layer == LAYER_OFF_HAND,
+                held_item_scale,
+                ..Default::default()
+            }
+            .main_hand_scale();
             let before = layers.len();
             let route = self.equipment_route(
                 item,
@@ -423,6 +447,7 @@ impl EquipmentRuntime {
                     input.java,
                     actor_animation::AttachableAnimationInput {
                         off_hand: layer == LAYER_OFF_HAND,
+                        held_item_scale,
                         animation_frame: inventory::crossbow_animation_frame(
                             elapsed,
                             item.use_facts.ticks.unwrap_or_default(),
@@ -451,6 +476,7 @@ impl EquipmentRuntime {
                     &bones,
                     source.as_ref(),
                     (input, animation),
+                    scale,
                     layers,
                 );
             }
@@ -485,6 +511,7 @@ impl EquipmentRuntime {
                             layer,
                             bones.head,
                             Some(head_block_display()),
+                            1.0,
                             layers,
                         );
                         continue;
@@ -518,7 +545,26 @@ impl EquipmentRuntime {
                 }
             }
         }
+        if let Some(animation) = animation
+            && let Some(item) = &input.body
+        {
+            self.push_body(body, item, input, animation, layers);
+        }
         wearing_elytra
+    }
+
+    /// Bone identities of an armor rig already selected for rendering this frame.
+    pub(crate) fn armor_bone_names(&self, rig: EntityRigId) -> Option<&[Box<str>]> {
+        self.armor_geometry
+            .values()
+            .chain(
+                self.pack
+                    .iter()
+                    .flat_map(|pack| pack.armor_geometry.values()),
+            )
+            .filter_map(Option::as_ref)
+            .find(|geometry| geometry.rig == rig)
+            .map(|geometry| geometry.names.as_slice())
     }
 
     /// Records the bones of a skin model registered under `rig`, replacing any earlier model.

@@ -22,12 +22,40 @@ use ui_screens::container_actions::{InventoryCellHit, Widget};
 use {
     client_ui::ui_runtime::{
         UiRuntime,
-        presentation::{UiPresentationRuntime, inventory_pointer::InventoryScreen},
+        presentation::{
+            UiPresentationRuntime, forms::recipe_book_shown, inventory_pointer::InventoryScreen,
+        },
     },
     inventory::inventory_ledger::DropSource,
 };
 
 use launcher::menu::settings_options::BindingId;
+
+/// Whether the vanilla inventory owns Back, independently of an overlaid mod view.
+pub(super) fn accepts_mouse_back(
+    runtime: &UiRuntime,
+    presentation: Option<&UiPresentationRuntime>,
+) -> bool {
+    runtime.inventory_open()
+        && !presentation
+            .is_some_and(|view| view.mod_ui().mod_view_shown() || view.mod_ui().mod_text_focused())
+}
+
+/// Consumes Back on a vanilla inventory, saving book edits before closing it.
+pub(super) fn cancel_from_mouse_back(
+    player: &mut player_state::PlayerState,
+    runtime: &mut UiRuntime,
+    presentation: Option<&UiPresentationRuntime>,
+) -> bool {
+    if !accepts_mouse_back(runtime, presentation) {
+        return false;
+    }
+    if runtime.commit_book(false) {
+        runtime.close_inventory(player);
+    }
+    true
+}
+
 /// In-world inventory keys: Q drops one item from the selected hotbar cell
 /// (Control+Q the whole stack) and a right-click with a book in hand opens it.
 #[allow(
@@ -43,7 +71,7 @@ pub(crate) fn drive_world_inventory_keys(
     menu: Option<Res<client_shell::menu::MenuRuntime>>,
     presentation: Option<Res<UiPresentationResource>>,
     mut runtime: ResMut<UiRuntimeResource>,
-    emote_input: Option<Res<crate::ui_runtime::emotes::EmoteInputConsumed>>,
+    emote_input: Option<Res<client_state::EmoteInputConsumed>>,
     swing: DropSwing,
     touch: Option<Res<crate::semantic_controls::SemanticTouchTargets>>,
     book_transport: (
@@ -173,18 +201,25 @@ pub(super) fn apply_inventory_pointer(
     mouse_buttons.reset_all();
     runtime.observe_inventory_window(player_runtime);
     let screen = InventoryScreen::of_runtime(player_runtime, runtime);
-    runtime.observe_inventory_search_focus(player_runtime);
+    runtime.observe_inventory_search_focus(
+        player_runtime,
+        presentation.engine_container_frame().is_some(),
+    );
     let Some(position) = window.cursor_position() else {
         // A cancelled touch withdraws the pointer, so its release closes nothing.
         runtime.set_inventory_pointer_gui(None);
         runtime.screen_state_mut().hover = None;
         runtime.screen_state_mut().container_close_armed = false;
+        runtime.screen_state_mut().container_scroll_drag = None;
+        runtime.screen_state_mut().pointer.reset();
         return;
     };
     let Ok(point) = UiPoint::new(position.x, position.y) else {
         runtime.set_inventory_pointer_gui(None);
         runtime.screen_state_mut().hover = None;
         runtime.screen_state_mut().container_close_armed = false;
+        runtime.screen_state_mut().container_scroll_drag = None;
+        runtime.screen_state_mut().pointer.reset();
         return;
     };
     let physical_size = [window.physical_width(), window.physical_height()];
@@ -194,6 +229,9 @@ pub(super) fn apply_inventory_pointer(
     let mod_owned = presentation
         .mod_ui()
         .mod_screens_own([point.x(), point.y()]);
+    if mod_owned || gui.is_none() || presentation.engine_container_frame().is_none() {
+        runtime.screen_state_mut().container_scroll_drag = None;
+    }
     if mod_owned || screen == InventoryScreen::Book {
         runtime.screen_state_mut().container_close_armed = false;
     }
@@ -204,6 +242,7 @@ pub(super) fn apply_inventory_pointer(
         .and_then(|gui| presentation.engine_container_hit(gui))
         == Some(InventoryCellHit::Widget(Widget::Close));
     if primary_pressed {
+        runtime.screen_state_mut().container_scroll_drag = None;
         runtime.screen_state_mut().container_close_armed = on_close;
     }
     if runtime.screen_state().container_close_armed {
@@ -218,7 +257,7 @@ pub(super) fn apply_inventory_pointer(
         }
         return;
     }
-    let book_open = runtime.screen_state().book_open.unwrap_or(false);
+    let book_open = recipe_book_shown(player_runtime, runtime);
     let reader_mode = runtime
         .screen_state()
         .book
@@ -241,10 +280,20 @@ pub(super) fn apply_inventory_pointer(
             })
     });
     runtime.screen_state_mut().hover = hit;
-    if let (Some(gui), Some(frame), false) = (gui, presentation.engine_container_frame(), mod_owned)
+    let scrollbar_owned = if let (Some(gui), Some(frame), false) =
+        (gui, presentation.engine_container_frame(), mod_owned)
     {
-        scroll_container(runtime, frame, gui, notches);
-    }
+        scroll_container(
+            runtime,
+            frame,
+            gui,
+            notches,
+            primary_pressed,
+            primary_released,
+        )
+    } else {
+        false
+    };
     for key in presses {
         if key.usage().is_some_and(|code| {
             dispatch_bound_inventory_hotbar(
@@ -263,31 +312,33 @@ pub(super) fn apply_inventory_pointer(
     for control in mouse_hotbar {
         dispatch_bound_inventory_hotbar(menu, control, player_runtime, runtime, hit);
     }
-    let frame = crate::ui_runtime::inventory_drag::PointerFrame {
-        primary_pressed,
-        primary_released,
-        secondary_pressed,
-        secondary_released,
-        shift,
-        holding: runtime
-            .inventory_ledger(player_runtime)
-            .cursor_stack()
-            .is_some(),
-        hit,
-        now_millis,
-    };
-    let actions = runtime.screen_state_mut().pointer.step(frame);
-    for action in actions {
-        let was_open = runtime.inventory_open();
-        runtime.perform_pointer_action(player_runtime, action);
-        if was_open
-            && !runtime.inventory_open()
-            && let Some(focus) = focus.as_deref_mut()
-        {
-            focus.authorize_screen_return();
+    if !scrollbar_owned {
+        let frame = crate::ui_runtime::inventory_drag::PointerFrame {
+            primary_pressed,
+            primary_released,
+            secondary_pressed,
+            secondary_released,
+            shift,
+            holding: runtime
+                .inventory_ledger(player_runtime)
+                .cursor_stack()
+                .is_some(),
+            hit,
+            now_millis,
+        };
+        let actions = runtime.screen_state_mut().pointer.step(frame);
+        for action in actions {
+            let was_open = runtime.inventory_open();
+            runtime.perform_pointer_action(player_runtime, action);
+            if was_open
+                && !runtime.inventory_open()
+                && let Some(focus) = focus.as_deref_mut()
+            {
+                focus.authorize_screen_return();
+            }
         }
     }
-    if hit.is_none() && !mod_owned {
+    if !scrollbar_owned && hit.is_none() && !mod_owned {
         // A held stack clicked off the screen's panels is dropped: all of it
         // on a primary click, one item on a secondary click.
         let outside = gui.is_some_and(|gui| {
@@ -305,19 +356,113 @@ pub(super) fn apply_inventory_pointer(
 #[cfg(test)]
 mod tests;
 
-/// Wheel notches over an engine-drawn screen scroll the view under the pointer.
+/// Applies scrolling and reports whether a scrollbar owns this frame's pointer edges.
 pub(super) fn scroll_container(
     runtime: &mut UiRuntime,
     frame: &ui_engine::frame::EngineFrame,
     gui: [f32; 2],
     notches: &[(f32, MouseScrollUnit)],
-) {
+    primary_pressed: bool,
+    primary_released: bool,
+) -> bool {
     let point = [f64::from(gui[0]), f64::from(gui[1])];
+    if primary_pressed {
+        runtime.screen_state_mut().container_scroll_drag = None;
+    }
+    let drag = runtime.screen_state().container_scroll_drag.clone();
+    if let Some((key, last)) = drag {
+        let Some(view) = frame
+            .hits
+            .iter()
+            .find(|view| view.key == key && view.enabled)
+        else {
+            runtime.screen_state_mut().container_scroll_drag = None;
+            return true;
+        };
+        let Some(metrics) = frame.report.scrolls.get(&key) else {
+            runtime.screen_state_mut().container_scroll_drag = None;
+            return true;
+        };
+        // `apply_inventory_pointer` clears ButtonInput after routing the frame so a held
+        // physical button cannot leak into gameplay. Once this state exists, the absence of a
+        // release message is the held state for the scrollbar drag.
+        let local = view.local(point);
+        let axis = usize::from(!metrics.horizontal);
+        let at = local[axis];
+        let current = json_ui::ScrollMetrics {
+            offset: runtime
+                .screen_state()
+                .container_scroll
+                .get(&key)
+                .copied()
+                .unwrap_or(metrics.offset),
+            ..metrics.clone()
+        };
+        let offset = current.thumb_drag_target(at - last);
+        runtime
+            .screen_state_mut()
+            .container_scroll
+            .insert(key, offset);
+        runtime.screen_state_mut().container_scroll_drag =
+            (!primary_released).then(|| (view.key.clone(), at));
+        return true;
+    }
+    if primary_pressed && let Some(target) = json_ui::hit_test(&frame.hits, point) {
+        for view in frame
+            .hits
+            .iter()
+            .rev()
+            .filter(|view| view.kind == json_ui::HitKind::ScrollView && view.enabled)
+        {
+            let Some(metrics) = frame.report.scrolls.get(&view.key) else {
+                continue;
+            };
+            if metrics.bar_visible == Some(false) {
+                continue;
+            }
+            let on_thumb = metrics.thumb_key.as_deref() == Some(target.key.as_str());
+            let on_track = metrics.track_key.as_deref() == Some(target.key.as_str());
+            if !on_thumb && !on_track {
+                continue;
+            }
+            if on_track
+                && (metrics.track_button.is_none() || target.pressed != metrics.track_button)
+            {
+                break;
+            }
+            runtime.screen_state_mut().pointer.reset();
+            if on_thumb {
+                let draggable = if metrics.horizontal {
+                    matches!(
+                        metrics.box_drag,
+                        json_ui::Draggable::Horizontal | json_ui::Draggable::Both
+                    )
+                } else {
+                    matches!(
+                        metrics.box_drag,
+                        json_ui::Draggable::Vertical | json_ui::Draggable::Both
+                    )
+                };
+                if draggable && !primary_released {
+                    let local = view.local(point);
+                    let axis = usize::from(!metrics.horizontal);
+                    runtime.screen_state_mut().container_scroll_drag =
+                        Some((view.key.clone(), local[axis]));
+                }
+            } else {
+                runtime.screen_state_mut().container_scroll.insert(
+                    view.key.clone(),
+                    metrics.offset_for_track(view.local(point)),
+                );
+            }
+            return true;
+        }
+    }
     let Some(view) = json_ui::scroll_target(&frame.hits, &frame.report, point) else {
-        return;
+        return false;
     };
     let Some(metrics) = frame.report.scrolls.get(&view.key) else {
-        return;
+        return false;
     };
     let mut offset = runtime
         .screen_state()
@@ -343,6 +488,7 @@ pub(super) fn scroll_container(
             .container_scroll
             .insert(view.key.clone(), offset);
     }
+    false
 }
 
 /// Syncs `swings` to the movement `authority` before swinging for `tick`, so the later swing

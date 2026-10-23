@@ -45,6 +45,11 @@ pub fn predicted_placement(
     world: &PaletteWorld<'_>,
     context: &PlacementContext<'_>,
 ) -> Option<PredictedPlacement> {
+    if let Some((definition, state)) = collisions.custom_placement_state(mode, held) {
+        return crate::placement_custom::predict(
+            collisions, mode, held, definition, state, world, context,
+        );
+    }
     let fact = collisions.block_facts(mode, held);
     let identity = fact.identity?;
     let canonical = collisions.block_canonical_state(mode, held)?;
@@ -59,7 +64,7 @@ pub fn predicted_placement(
     {
         let states = serde_json::from_str(collisions.block_canonical_state(mode, clicked)?).ok()?;
         if crate::placement_state::value(&states, P::Candles.name())?.as_u64()?
-            >= crate::placement_state::maximum(P::Candles)?
+            >= crate::placement_state::maximum(fact, P::Candles)?
         {
             return None;
         }

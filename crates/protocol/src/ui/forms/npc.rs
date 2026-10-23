@@ -21,10 +21,12 @@ use crate::ui::{MAX_FORM_JSON_BYTES, MAX_UI_TEXT_BYTES, UiEvent, UiPacketError};
 pub const NPC_DIALOGUE_FORM_ID: u32 = u32::MAX;
 /// NPC action entries whose `mode` makes them a clickable button.
 const BUTTON_MODE: u64 = 0;
+const URL_ACTION_TYPE: u64 = 0;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NpcDialogueForm {
-    pub npc_runtime_id: u64,
+    /// Persistent ID from the dialogue; replies resolve its live actor.
+    pub npc_unique_id: i64,
     pub scene_name: Arc<str>,
     pub npc_name: Arc<str>,
     pub dialogue: Arc<str>,
@@ -36,6 +38,8 @@ pub struct NpcDialogueForm {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NpcButton {
     pub text: Arc<str>,
+    /// Selects the URL label style rather than the command label style.
+    pub is_url: bool,
     /// Index into the full action list, echoed back in the request.
     pub action_index: u8,
 }
@@ -71,7 +75,7 @@ pub(crate) fn normalize_npc_dialogue(packet: NpcDialogue) -> Result<UiEvent, UiP
     } else {
         match buttons(&action_json) {
             Ok(buttons) => ServerFormModel::NpcDialogue(NpcDialogueForm {
-                npc_runtime_id: packet.npc_id_raw_id.0,
+                npc_unique_id: packet.npc_id_raw_id.0 as i64,
                 scene_name: Arc::from(&*scene_name),
                 npc_name: Arc::from(&*npc_name),
                 dialogue: Arc::from(&*dialogue),
@@ -123,6 +127,7 @@ fn buttons(json: &str) -> Result<Vec<NpcButton>, UnsupportedForm> {
         }
         buttons.push(NpcButton {
             text: Arc::from(text),
+            is_url: action.get("type").and_then(Value::as_u64) == Some(URL_ACTION_TYPE),
             action_index: index as u8,
         });
     }
@@ -170,6 +175,14 @@ pub fn server_settings_request_packet() -> crate::Packet {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn action_buttons_preserve_their_label_kind() {
+        let parsed = buttons(r#"[{"button_name":"Command","type":1,"mode":0},{"button_name":"Website","type":0,"mode":0},{"button_name":"Default"}]"#).unwrap();
+        assert!(!parsed[0].is_url);
+        assert!(parsed[1].is_url);
+        assert!(!parsed[2].is_url);
+    }
 
     #[test]
     fn button_mode_actions_keep_their_action_indexes() {

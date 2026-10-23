@@ -4,21 +4,6 @@ use anyhow::{Context, Result};
 use bevy::render::settings::{WgpuSettings, WgpuSettingsPriority};
 use launcher::graphics_backend::{Adapter, Backend};
 
-/// Applies renderer limits and compiler policy to Bevy's defaults.
-pub(super) fn configure_render_settings(settings: &mut WgpuSettings) {
-    #[cfg(target_arch = "wasm32")]
-    {
-        settings.priority = WgpuSettingsPriority::WebGPU;
-        settings.backends = Some(wgpu::Backends::BROWSER_WEBGPU);
-    }
-    // Shipping installs use FXC; a DLL in the launch directory must not change that.
-    settings.dx12_shader_compiler = wgpu::Dx12Compiler::Fxc;
-    settings.limits.max_storage_buffers_per_shader_stage = settings
-        .limits
-        .max_storage_buffers_per_shader_stage
-        .max(render::required_vertex_storage_buffers());
-}
-
 /// Converts the policy's backend to wgpu's flags without keeping a separate order table.
 pub(super) fn flags(backend: Backend) -> wgpu::Backends {
     match backend {
@@ -100,6 +85,7 @@ fn device_requirements(
             features.remove(wgpu::Features::MAPPABLE_PRIMARY_BUFFERS);
         }
     }
+    raise_window_texture_limits(&mut limits, &adapter.limits());
     if let Some(disabled) = settings.disabled_features {
         features.remove(disabled);
     }
@@ -108,6 +94,17 @@ fn device_requirements(
         limits = limits.or_worse_values_from(constrained);
     }
     (features, limits)
+}
+
+/// Window-sized targets follow the window, which can span monitors beyond the 8192 default, so
+/// every priority takes the adapter's texture dimensions.
+fn raise_window_texture_limits(limits: &mut wgpu::Limits, adapter: &wgpu::Limits) {
+    limits.max_texture_dimension_1d = limits
+        .max_texture_dimension_1d
+        .max(adapter.max_texture_dimension_1d);
+    limits.max_texture_dimension_2d = limits
+        .max_texture_dimension_2d
+        .max(adapter.max_texture_dimension_2d);
 }
 
 /// Builds exactly one backend with the shipping compiler and display policy.

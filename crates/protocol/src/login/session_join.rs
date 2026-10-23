@@ -35,6 +35,9 @@ pub struct SessionLogin<'a> {
     pub skin: Option<ClientSkin>,
     pub settings: &'a LoginSettings,
     pub tap: Option<Arc<dyn PacketTap>>,
+    /// Native packet reactor selected before this session starts.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub relay: Option<Arc<dyn crate::PacketRelay>>,
     pub target: Option<bridge::ConnectTarget>,
 }
 
@@ -57,86 +60,159 @@ impl LoginSequence {
     /// Joins over prepared play I/O using the existing handoff and spawn sequence. Dropping
     /// this future ends this join; the host must also cancel its writer and startup jobs.
     pub async fn connect_prepared<R: FrameRead, P: Send + 'static>(
-        io: SessionIo<R>,
+        mut io: SessionIo<R>,
         login: SessionLogin<'_>,
         preparation: &impl JoinPreparation,
         prepare: impl FnOnce(ResourcePackHandoff, GameData) -> P + Send + 'static,
     ) -> Result<(PlaySession<R>, P), ProtocolError> {
-        let SessionIo {
-            mut reader,
-            frames,
-            timers,
-        } = io;
-        let SessionLogin {
-            display_name,
-            client_random_id,
-            cache,
-            skin,
-            settings,
-            tap,
-            target,
-        } = login;
-        let request = ConnectRequest {
-            protocol: PROTOCOL_VERSION,
-            target,
-            client_cache: cache.is_some(),
-            client_data: super::client_data::login_client_data(
-                display_name,
-                client_random_id,
-                skin.as_ref(),
-                settings,
-            ),
-        };
-        frames
-            .send(crate::session_wire::encode_connect(&request).map_err(bridge_error)?)
-            .await
-            .map_err(bridge_error)?;
+        let profile = bridge::join_profile::JoinProfile::current();
+        let handoff_stage = profile.stage("upstream_login_and_pack_handoff");
+        send_connect(&io.frames, &login).await?;
         let (handoff, archives) = receive_handoff(
-            &mut reader,
-            settings.resource_pack_cache_dir.as_deref(),
+            &mut io.reader,
+            login.settings.resource_pack_cache_dir.as_deref(),
             preparation,
         )
         .await?;
+        drop(handoff_stage);
+        Self::continue_handoff(io, login, preparation, prepare, handoff, archives).await
+    }
+
+    /// Runs the shared spawn and preparation sequence after the transport verifies its packs.
+    pub(super) async fn continue_handoff<R: FrameRead, P: Send + 'static>(
+        io: SessionIo<R>,
+        login: SessionLogin<'_>,
+        preparation: &impl JoinPreparation,
+        prepare: impl FnOnce(ResourcePackHandoff, GameData) -> P + Send + 'static,
+        handoff: SessionHandoff,
+        archives: Vec<Vec<u8>>,
+    ) -> Result<(PlaySession<R>, P), ProtocolError> {
+        let SessionIo {
+            reader,
+            frames,
+            timers,
+        } = io;
+        #[cfg(not(target_arch = "wasm32"))]
+        let client_data = login.relay.as_ref().map(|_| {
+            super::client_data::login_client_data(
+                login.display_name,
+                login.client_random_id,
+                login.skin.as_ref(),
+                login.settings,
+            )
+            .to_string()
+        });
+        #[cfg(not(target_arch = "wasm32"))]
+        let relay = login.relay.clone();
+        let SessionLogin {
+            cache,
+            settings,
+            tap,
+            ..
+        } = login;
+        let profile = bridge::join_profile::JoinProfile::current();
         let packs = resource_pack_handoff(&handoff, archives)?;
         // A blob cache serves only a session whose upstream login advertised one.
         let cache = cache.filter(|_| handoff.client_cache);
         reader.set_trace_conn(handoff.trace_conn);
         let mut transport =
             SessionTransport::with_timers(reader, frames, &handoff.startup, timers).with_tap(tap);
+        #[cfg(not(target_arch = "wasm32"))]
+        let packs = if let Some(relay) = relay {
+            let added = crate::packet_relay::start(
+                Arc::clone(&relay),
+                handoff.identity.clone(),
+                client_data.expect("relay client data"),
+                &handoff.startup,
+            )
+            .await;
+            transport.set_relay(relay);
+            packs.with_relay_packs(added)
+        } else {
+            packs
+        };
         let mut prepared_job = None;
-        let spawned =
-            match super::startup::await_spawn(&mut transport, |start_game, item_registry| {
+        let spawn_stage = profile.stage("spawn_prerequisites");
+        let spawned = match super::startup::await_spawn(
+            &mut transport,
+            settings.view_distance_chunks,
+            |start_game, item_registry| {
                 prepared_job = Some(preparation.submit(move || {
                     prepare(packs, GameData::from_wire(&start_game, &item_registry))
                 }));
-            })
-            .await
-            {
-                Ok(spawned) => spawned,
-                Err(error) => {
-                    if let ProtocolError::Session(session) = &error
-                        && session.0.is_packet_failure()
-                    {
-                        transport.reject_current(PacketOutcome::Failed);
-                    }
-                    return Err(error);
+            },
+        )
+        .await
+        {
+            Ok(spawned) => spawned,
+            Err(error) => {
+                if let ProtocolError::Session(session) = &error
+                    && session.0.is_packet_failure()
+                {
+                    transport.reject_current(PacketOutcome::Failed);
                 }
-            };
-        let preparation = prepared_job.expect("spawn waits for StartGame and the item registry");
-        tokio::pin!(preparation);
-        // Keep reading while the packs prepare, so the server's backlog never stalls the core.
-        let prepared = tokio::select! {
-            prepared = &mut preparation => prepared,
-            () = transport.read_ahead(MAX_READ_AHEAD_BYTES) => preparation.await,
+                return Err(error);
+            }
         };
-        let session = PlaySession::new(
+        transport.finish_startup();
+        drop(spawn_stage);
+        let pack_wait = profile.stage("remaining_pack_preparation");
+        let preparation = prepared_job.expect("spawn waits for StartGame and the item registry");
+        let prepared = prepare_with_read_ahead(&mut transport, preparation).await?;
+        drop(pack_wait);
+        profile.mark("session_ready");
+        let mut session = PlaySession::new(
             transport,
             cache,
             spawned.runtime_id,
             spawned.terrain_before_spawn,
         );
+        session.identity = handoff.identity;
         Ok((session, prepared))
     }
+}
+
+/// Keeps bounded play frames in order while preparation runs, abandoning obsolete work on a
+/// usable core terminal. An unusable transfer retains its ordinary later handling.
+async fn prepare_with_read_ahead<R: FrameRead, P>(
+    transport: &mut SessionTransport<R>,
+    preparation: impl Future<Output = P>,
+) -> Result<P, ProtocolError> {
+    tokio::pin!(preparation);
+    tokio::select! {
+        prepared = &mut preparation => Ok(prepared),
+        () = transport.read_ahead(MAX_READ_AHEAD_BYTES) => {
+            if let Some(terminal) = transport.buffered_startup_terminal()?
+                && let Ok(error) = super::startup::terminal_error(terminal)
+            {
+                return Err(error);
+            }
+            Ok(preparation.await)
+        },
+    }
+}
+
+/// Sends the same login request through native or injected web play I/O.
+pub(super) async fn send_connect(
+    frames: &FrameQueue,
+    login: &SessionLogin<'_>,
+) -> Result<(), ProtocolError> {
+    let request = ConnectRequest {
+        protocol: PROTOCOL_VERSION,
+        join_profile_id: bridge::join_profile::JoinProfile::current().id(),
+        target: login.target.clone(),
+        client_cache: login.cache.is_some(),
+        client_data: super::client_data::login_client_data(
+            login.display_name,
+            login.client_random_id,
+            login.skin.as_ref(),
+            login.settings,
+        ),
+    };
+    frames
+        .send(crate::session_wire::encode_connect(&request).map_err(bridge_error)?)
+        .await
+        .map_err(bridge_error)
 }
 
 /// Reads the handoff and every archive it announces; a terminal message ends the join instead.
@@ -169,7 +245,11 @@ async fn receive_handoff<R: FrameRead>(
     Ok((handoff, archives))
 }
 
-async fn next_message<R: FrameRead>(reader: &mut R) -> Result<CoreMessage, ProtocolError> {
+/// Decodes the next bridge frame without choosing a transport implementation.
+pub(super) async fn next_message<S>(reader: &mut S) -> Result<CoreMessage, ProtocolError>
+where
+    S: futures::Stream<Item = Result<bytes::Bytes, BridgeError>> + Unpin,
+{
     match reader.next().await {
         Some(Ok(frame)) => crate::session_wire::decode_core_message(frame).map_err(bridge_error),
         Some(Err(error)) => Err(bridge_error(error)),
@@ -178,7 +258,7 @@ async fn next_message<R: FrameRead>(reader: &mut R) -> Result<CoreMessage, Proto
 }
 
 /// The error a message other than the next setup step ends the join with, as a login ended before.
-fn join_ended(message: CoreMessage) -> ProtocolError {
+pub(super) fn join_ended(message: CoreMessage) -> ProtocolError {
     match message {
         CoreMessage::Disconnect(disconnect) => join_disconnect(
             "login",
@@ -207,7 +287,8 @@ fn unexpected(reason: &'static str) -> ProtocolError {
     bridge_error(BridgeError::InvalidSessionMessage { reason })
 }
 
-fn bridge_error(error: BridgeError) -> ProtocolError {
+/// Preserves bridge failures as the protocol owner's public error.
+pub(super) fn bridge_error(error: BridgeError) -> ProtocolError {
     ProtocolError::Bridge(error.into())
 }
 

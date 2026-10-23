@@ -54,6 +54,7 @@ struct PresetOption {
 use Value::{Default, Fixed, HighestSamples, PerformanceDistance, QualityDistance};
 
 // Each row supplies every preset. Balanced reads existing defaults, including device limits.
+// VSync stays a separate player preference when applying or matching graphics presets.
 const PRESET_OPTIONS: &[PresetOption] = &[
     PresetOption {
         id: SettingId::RenderDistance,
@@ -91,10 +92,6 @@ const PRESET_OPTIONS: &[PresetOption] = &[
         ],
     },
     PresetOption {
-        id: SettingId::Vsync,
-        values: [Fixed(0), Default, Fixed(1)],
-    },
-    PresetOption {
         id: SettingId::GraphicsMode,
         values: [Fixed(0), Default, Fixed(1)],
     },
@@ -112,10 +109,6 @@ const PRESET_OPTIONS: &[PresetOption] = &[
     },
     PresetOption {
         id: SettingId::TransparentLeaves,
-        values: [Fixed(0), Default, Fixed(1)],
-    },
-    PresetOption {
-        id: SettingId::BubbleParticles,
         values: [Fixed(0), Default, Fixed(1)],
     },
 ];

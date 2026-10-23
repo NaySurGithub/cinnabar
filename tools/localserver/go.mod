@@ -3,7 +3,6 @@ module github.com/hashimthearab/rust-mcbe/tools/localserver
 go 1.26.1
 
 require (
-	github.com/bedrock-mc/vanilla-gen v0.0.0-20261007153212-e56215898732
 	github.com/df-mc/dragonfly v0.11.2-0.20260807000407-2988c7f4f621
 	github.com/df-mc/goleveldb v1.1.9
 	github.com/go-gl/mathgl v1.2.0
@@ -15,11 +14,12 @@ require (
 	github.com/brentp/intintmap v0.0.0-20251106190759-56907b1f8479 // indirect
 	github.com/cenkalti/backoff/v7 v7.0.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/cinnabar-mc/protocolgen/generated/data v0.0.0-20261019181927-1b7677ddec59 // indirect
 	github.com/coder/websocket v1.8.14 // indirect
 	github.com/coreos/go-oidc/v3 v3.17.0 // indirect
 	github.com/df-mc/go-nethernet v1.0.25-0.20260928201420-215e46422b58 // indirect
 	github.com/df-mc/go-playfab/v2 v2.0.3 // indirect
-	github.com/df-mc/go-xsapi/v2 v2.0.4-0.20260925130556-58a99d3044b7 // indirect
+	github.com/df-mc/go-xsapi/v2 v2.0.4-0.20261012072832-90ce120e31cd // indirect
 	github.com/df-mc/jsonc v1.0.5 // indirect
 	github.com/df-mc/worldupgrader v1.0.22 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
@@ -55,7 +55,7 @@ require (
 )
 
 replace (
-	github.com/df-mc/dragonfly => github.com/bedrock-mc/dragonfly v0.0.0-20261009181128-3ee589b2f500
-	github.com/sandertv/go-raknet => github.com/hashimthearab/go-raknet v1.15.1-0.20260908193618-2049463566ca
-	github.com/sandertv/gophertunnel => github.com/hashimthearab/gophertunnel v1.25.3-0.20261017173210-81e65c54fb21
+	github.com/df-mc/dragonfly => github.com/HashimTheArab/dragonfly v0.0.0-20261022024801-c272439d3975
+	github.com/sandertv/go-raknet => github.com/hashimthearab/go-raknet v1.15.1-0.20261011190141-6124f52657d4
+	github.com/sandertv/gophertunnel => github.com/hashimthearab/gophertunnel v1.25.3-0.20261022024750-27a649aeb9f9
 )

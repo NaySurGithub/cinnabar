@@ -17,6 +17,7 @@ fn row(name: &str, badged: bool) -> RosterRow {
     RosterRow {
         name: Arc::from(name),
         badged,
+        annotation: None,
         skin: None,
     }
 }
@@ -29,6 +30,7 @@ fn names(count: usize) -> Vec<RosterRow> {
 
 /// Renders the list's current data at a fixed test geometry.
 fn render(list: &mut PlayerList) -> Vec<json_ui::DrawNode> {
+    list.bind_rows(80., &Measure);
     let context = Context::default()
         .with_var("row_height", serde_json::json!(ROW_HEIGHT))
         .with_var("row_background_height", serde_json::json!(ROW_HEIGHT - 1.0))
@@ -119,6 +121,63 @@ fn same_name_rows_keep_their_own_badge() {
     assert_eq!(badges(&render(&mut list)), 1);
 }
 
+/// Counter runs preserve their RGBA colors, reserve space in narrow columns, and honor prefix placement.
+#[test]
+fn totem_counts_render_separate_tints_before_or_after_a_clipped_name() {
+    for before in [false, true] {
+        let mut list = PlayerList::new();
+        let style = ui::mod_hud::TotemCounterStyle {
+            render_first: before,
+            show_prefix: true,
+            prefix_color: [0.2, 0.4, 0.6, 0.5],
+            ..Default::default()
+        };
+        let mut player = row("VeryLongPlayerName", true);
+        player.annotation = style.annotation(2).map(Arc::new);
+        list.refresh(&[player], MAX_ROWS);
+        let nodes = render(&mut list);
+        let find = |wanted: &str| {
+            nodes
+                .iter()
+                .find_map(|node| match &node.draw {
+                    Draw::Text { text, color, .. } if text == wanted => Some((node.dest, *color)),
+                    _ => None,
+                })
+                .unwrap()
+        };
+        let (prefix, color) = find("| ");
+        assert_eq!(color, [51, 102, 153, 128]);
+        let (value, color) = find("-2");
+        assert_eq!(color, [85, 255, 85, 255]);
+        let (name, _) = find("VeryLongPlayerName");
+        let head = nodes
+            .iter()
+            .find(|node| {
+                matches!(&node.draw, Draw::Sprite { texture, .. }
+            if texture.starts_with(super::PORTRAIT_RASTER_NAMESPACE))
+            })
+            .unwrap();
+        assert!(
+            head.dest.x + head.dest.w <= name.x.min(prefix.x),
+            "skin head remains before both the player name and its counter"
+        );
+        assert!(prefix.x + prefix.w <= value.x + 0.001);
+        let badge = nodes
+            .iter()
+            .find(|node| matches!(&node.draw, Draw::Sprite { texture, .. } if texture == CINNABAR_BADGE))
+            .unwrap();
+        assert!(
+            value.x + value.w <= badge.dest.x,
+            "counter remains before its column's badge"
+        );
+        assert!(if before {
+            value.x + value.w <= name.x
+        } else {
+            name.x + name.w <= prefix.x
+        });
+    }
+}
+
 /// Counts rendered badge sprites.
 fn badges(nodes: &[json_ui::DrawNode]) -> usize {
     nodes
@@ -137,7 +196,9 @@ fn heads_precede_names_and_padding_has_no_head() {
     let heads: Vec<_> = nodes
         .iter()
         .filter_map(|node| match &node.draw {
-            Draw::Sprite { texture, .. } if texture.starts_with("client-raster:tab-head/") => {
+            Draw::Sprite { texture, .. }
+                if texture.starts_with(super::PORTRAIT_RASTER_NAMESPACE) =>
+            {
                 Some(node.dest)
             }
             _ => None,

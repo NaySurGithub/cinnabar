@@ -44,11 +44,26 @@ pub const RELAY_VERSION: u32 = 2;
 /// Largest relay Hello or control JSON payload in bytes.
 pub const RELAY_CONTROL_BYTES: usize = 4096;
 
-/// Largest WebSocket play message and upload burst in bytes.
+/// Largest WebSocket play message in bytes.
 pub const RELAY_PLAY_MESSAGE_BYTES: usize = 8388608;
+
+/// Maximum queued reliable frames or browser receive chunks.
+pub const QUEUED_FRAMES: usize = 16;
+
+/// Ordinary browser frame queue budget; a larger bridge frame is admitted alone.
+pub const RELAY_QUEUED_FRAME_BYTES: usize = 8388608;
+
+/// Upload rate limiter burst, independent of message and queue limits.
+pub const RELAY_UPLOAD_BURST_BYTES: usize = 8388608;
+
+/// Concurrent browser streams for control, active play and retiring play.
+pub const RELAY_BIDIRECTIONAL_STREAMS: usize = 3;
 
 /// Interval between control keepalives.
 pub const RELAY_KEEPALIVE_SECONDS: u32 = 30;
+
+/// Time to replenish one relay control request; busy sign-out retries wait at least this long.
+pub const RELAY_CONTROL_REFILL_MILLIS: u32 = 1000;
 
 /// WebTransport Extended CONNECT route.
 pub const RELAY_TRANSPORT_PATH: &str = "/v2/transport";
@@ -243,7 +258,7 @@ pub const METHOD_CINNABAR_PLAYERS: &str = "cinnabar_players.v1";
 pub const METHOD_CINNABAR_LOOKUP: &str = "cinnabar_lookup.v1";
 
 /// Cinnabar API origin; the package workflow reads it from this manifest.
-pub const CINNABAR_API_BASE_URL: &str = "https://cinnabar-api.cinnabar-api.workers.dev";
+pub const CINNABAR_API_BASE_URL: &str = "https://api.cinnabar.gg";
 
 /// Most XUIDs in one Cinnabar player lookup.
 pub const CINNABAR_API_MAX_LOOKUP_XUIDS: usize = 128;
@@ -344,6 +359,9 @@ pub const DISCONNECT_KEY_INVALID_NAME: &str = "disconnectionScreen.invalidName";
 /// Core disconnect message: The sign-in token was rejected because this device's clock is behind.
 pub const DISCONNECT_KEY_DEVICE_CLOCK: &str = "cinnabar.disconnect.deviceClock";
 
+/// Core disconnect message: The local Bedrock Dedicated Server world cannot be reached without a network connection.
+pub const DISCONNECT_KEY_LOCAL_WORLD_OFFLINE: &str = "cinnabar.disconnect.localWorldOffline";
+
 /// Inbox category names in display order.
 pub const INBOX_CATEGORIES: [&str; 4] = ["News", "Realms", "Invites", "Feedback"];
 
@@ -359,7 +377,7 @@ pub const MESSAGE_EVENT_TYPES: [&str; 7] = [
 ];
 
 /// Every lang key the core sends as a whole disconnect message.
-pub const CORE_DISCONNECT_KEYS: [&str; 8] = [
+pub const CORE_DISCONNECT_KEYS: [&str; 9] = [
     "disconnectionScreen.cantConnect",
     "disconnectionScreen.cantConnectToRealm",
     "disconnectionScreen.resourcePack",
@@ -368,7 +386,22 @@ pub const CORE_DISCONNECT_KEYS: [&str; 8] = [
     "disconnectionScreen.invalidSkin",
     "disconnectionScreen.invalidName",
     "cinnabar.disconnect.deviceClock",
+    "cinnabar.disconnect.localWorldOffline",
 ];
+
+/// A safe relay refusal code; unrecognized codes use the generic refusal.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum RefusalCode {
+    #[serde(rename = "resume_refused")]
+    ResumeRefused,
+    #[serde(rename = "admission_refused")]
+    AdmissionRefused,
+    #[serde(rename = "session_busy")]
+    SessionBusy,
+    #[serde(rename = "refused")]
+    #[serde(other)]
+    Refused,
+}
 
 /// Game mode a world starts players in.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -532,6 +565,9 @@ pub enum AuthState {
 /// Join progress stage reported by the core.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum ConnectStage {
+    /// No join is being prepared.
+    #[serde(rename = "")]
+    Idle,
     /// The Realm lookup.
     #[serde(rename = "realm")]
     Realm,
@@ -619,4 +655,10 @@ pub struct CinnabarPlayerUpdates {
     pub emotes: Vec<CinnabarRemoteEmote>,
     /// Nearby authenticated loadouts.
     pub loadouts: Vec<CinnabarRemoteLoadout>,
+    /// Verified local account identity, empty while disconnected.
+    #[serde(default)]
+    pub ownership_xuid: String,
+    /// Paid grants supplied by the account API database.
+    #[serde(default)]
+    pub owned_cosmetics: Vec<String>,
 }

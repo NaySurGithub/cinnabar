@@ -24,6 +24,7 @@ pub struct ActorFrameState {
     pub(super) skin_rigs: crate::presentation::skin_rig::SkinRigCache,
     pub(super) skin_layers: crate::presentation::skin_layers::SkinLayerCache,
     pub(super) poses: crate::presentation::actors::PoseConversions,
+    pub(super) coverage_poses: crate::presentation::actors::PoseConversions,
     pub(super) layer_poses: crate::presentation::entity_layers::LayerPoseCache,
     pub(super) hand_revision: u64,
     pub(super) java_hand: java::HandCache,
@@ -77,13 +78,12 @@ impl ActorFrameState {
     }
 }
 
-/// Predicts remote poses from the completed local step when available, otherwise the
-/// supplied interval. Live actor publication later consumes the same step.
+/// Predicts remote poses from the supplied interval, independently of local physics.
+/// Live actor publication later consumes the same step.
 pub fn advance_actor_motion(
     state: &mut ActorFrameState,
     stream: Option<&mut WorldStream>,
     delta: std::time::Duration,
-    local_step: Option<crate::actor_clock::ActorFrameStep>,
 ) {
     let session_id = stream
         .as_ref()
@@ -92,7 +92,7 @@ pub fn advance_actor_motion(
     if state.published_session != session_id {
         state.actor_clock.reset();
     }
-    let step = local_step.unwrap_or_else(|| state.actor_clock.advance(delta));
+    let step = state.actor_clock.advance(delta);
     if let Some(stream) = stream {
         stream.predict_remote_actor_motion(step.ticks);
     }
@@ -140,6 +140,7 @@ pub fn advance_actor_frame(
         cape_state,
         hat_state,
         poses,
+        coverage_poses,
         layer_poses,
         java_hand,
         java_poses,
@@ -216,7 +217,16 @@ pub fn advance_actor_frame(
         *published_pack = pack.clone();
         *published_items = items.clone();
         *published_artwork = prepared.clone();
-        let staged = StagedSessionIcons::stage(items.as_deref());
+        let placed = crate::prepared_actor_artwork::session_icons(
+            &artwork,
+            pack.as_ref(),
+            items.as_ref().and_then(|items| items.icons.as_ref()),
+            prepared.as_deref(),
+        );
+        let icons = match placed {
+            Some(placed) => SessionIconInput::Placed(placed),
+            None => SessionIconInput::Staged(StagedSessionIcons::stage(items.as_deref())),
+        };
         if new_session || pack_changed {
             *pack_geometry_ready = SessionGeometryReady::default();
         }
@@ -234,7 +244,7 @@ pub fn advance_actor_frame(
             &mut scene,
             &resources,
             pack.as_deref(),
-            staged,
+            icons,
             pack_geometry_ready,
             equipment.as_deref_mut(),
             profiler.as_deref(),
@@ -249,6 +259,7 @@ pub fn advance_actor_frame(
     partial_tick.0 = step.partial_tick;
     skin_rigs.begin_frame();
     poses.begin_frame();
+    coverage_poses.begin_frame();
     java_poses.begin_frame();
     if let Some(equipment) = equipment.as_deref_mut() {
         equipment.begin_frame();

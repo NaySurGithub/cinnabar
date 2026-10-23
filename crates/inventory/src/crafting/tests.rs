@@ -44,13 +44,12 @@ fn catalog(recipes: Vec<RecipeFixture>) -> RecipeCatalog {
     catalog
 }
 
-/// Represent one ordinary, plain grid item.
+/// Represents one ordinary ingredient descriptor.
 fn item(identifier: &str) -> Option<CraftGridItem<'_>> {
     Some(CraftGridItem {
         identifier,
         metadata: 0,
         count: 1,
-        plain: true,
         tags: &[],
     })
 }
@@ -122,9 +121,9 @@ fn shapeless_recipes_assign_each_cell_once() {
     }
 }
 
-/// Tags, item data and metadata never match loosely; two recipes are ambiguous.
+/// Unknown tags and wrong metadata cannot match; equal-priority different outputs are ambiguous.
 #[test]
-fn tags_data_and_duplicates_fail_closed() {
+fn tags_metadata_and_duplicates_fail_closed() {
     let mut unknown = recipe(1, 1, false, &[Some("custom:unknown_tag")]);
     unknown.ingredients[0].descriptor[0].0 = "item_tag".into();
     let catalog_with_tag = catalog(vec![unknown]);
@@ -151,16 +150,12 @@ fn tags_data_and_duplicates_fail_closed() {
         CraftGridMatch::Ambiguous
     ));
     let single = catalog(vec![recipe(1, 1, false, &[Some("a:x")])]);
-    let mut data = item("a:x");
-    data.as_mut().unwrap().plain = false;
     let mut variant = item("a:x");
     variant.as_mut().unwrap().metadata = 1;
-    for cell in [data, variant] {
-        assert!(matches!(
-            match_crafting_grid(&single, 2, &[cell, None, None, None]),
-            CraftGridMatch::NoMatch
-        ));
-    }
+    assert!(matches!(
+        match_crafting_grid(&single, 2, &[variant, None, None, None]),
+        CraftGridMatch::NoMatch
+    ));
     assert!(matches!(
         match_crafting_grid(
             &RecipeCatalog::default(),
@@ -251,6 +246,27 @@ fn lowest_priority_wins_among_matches() {
             &[item("a:x"), None, None, None]
         )),
         Some(2)
+    );
+}
+
+/// Recipes tied at the lowest priority are one match only when every result agrees.
+#[test]
+fn tied_recipes_with_different_extra_results_are_ambiguous() {
+    let plain = recipe(1, 1, false, &[Some("a:x")]);
+    let mut with_extra = recipe(1, 1, false, &[Some("a:x")]);
+    with_extra.results.push(OutputFixture::new(10, 1));
+    let grid = [item("a:x"), None, None, None];
+    assert!(matches!(
+        match_crafting_grid(&catalog(vec![plain.clone(), with_extra.clone()]), 2, &grid),
+        CraftGridMatch::Ambiguous
+    ));
+    assert!(
+        unique_id(match_crafting_grid(
+            &catalog(vec![with_extra.clone(), with_extra]),
+            2,
+            &grid
+        ))
+        .is_some()
     );
 }
 

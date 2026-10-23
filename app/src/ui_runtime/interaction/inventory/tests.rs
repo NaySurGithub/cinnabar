@@ -13,10 +13,105 @@ use ui_screens::container_actions::ReaderButton;
 
 const SIZE: [u32; 2] = [800, 600];
 
+mod ordered;
+mod scrollbar;
+
+#[test]
+fn mouse_back_preserves_an_earlier_inventory_click_in_the_same_frame() {
+    use bevy::input::mouse::MouseButtonInput;
+    let (mut app, window) = ordered::personal_app(2);
+    for button in [MouseButton::Left, MouseButton::Back] {
+        app.world_mut()
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .press(button);
+        app.world_mut()
+            .write_message(WindowEvent::MouseButtonInput(MouseButtonInput {
+                button,
+                state: ButtonState::Pressed,
+                window,
+            }));
+    }
+    app.update();
+    assert!(!app.world().resource::<UiRuntimeResource>().inventory_open());
+    let player = app.world().resource::<client_state::PlayerRuntime>();
+    // The pickup survives closing, followed by the usual cursor return request.
+    assert_eq!(player.inventory.ledger().pending_request_count(), 2);
+    assert!(player.inventory.ledger().cursor_stack().is_none());
+}
+
+#[test]
+fn mouse_back_closes_inventory_with_or_without_ordered_pointer_events() {
+    use super::super::{drive_chat_keyboard_input, drive_inventory_ui_actions};
+    use bevy::input::{keyboard::KeyboardInput, mouse::MouseButtonInput};
+    for ordered in [false, true] {
+        let mut player = client_state::PlayerRuntime(player_state::PlayerState::new(1));
+        let mut runtime = client_ui::test_support::inventory_session(&mut player);
+        runtime.toggle_inventory(&mut player, None);
+        let presentation = presentation(&player, &runtime);
+        let mut app = App::new();
+        app.add_message::<KeyboardInput>()
+            .add_message::<WindowEvent>()
+            .init_resource::<Time<Real>>()
+            .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<ButtonInput<MouseButton>>()
+            .init_resource::<AccumulatedMouseMotion>()
+            .insert_resource(player)
+            .insert_resource(UiRuntimeResource(runtime))
+            .insert_resource(UiPresentationResource(presentation))
+            .add_systems(
+                Update,
+                (drive_chat_keyboard_input, drive_inventory_ui_actions).chain(),
+            );
+        let window = app
+            .world_mut()
+            .spawn((
+                Window {
+                    focused: true,
+                    ..Default::default()
+                },
+                CursorOptions::default(),
+                PrimaryWindow,
+            ))
+            .id();
+        app.world_mut()
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .press(MouseButton::Back);
+        if ordered {
+            app.world_mut()
+                .write_message(WindowEvent::MouseButtonInput(MouseButtonInput {
+                    button: MouseButton::Back,
+                    state: ButtonState::Pressed,
+                    window,
+                }));
+        }
+        app.update();
+        assert!(
+            !app.world().resource::<UiRuntimeResource>().inventory_open(),
+            "ordered={ordered}"
+        );
+        assert!(
+            !app.world()
+                .resource::<ButtonInput<MouseButton>>()
+                .just_pressed(MouseButton::Back)
+        );
+        app.update();
+        assert!(!app.world().resource::<UiRuntimeResource>().inventory_open());
+    }
+}
+
 /// Draws original inventory and book fixtures with a close control on each screen.
 fn presentation(
     player: &client_state::PlayerRuntime,
     runtime: &UiRuntime,
+) -> UiPresentationRuntime {
+    presentation_with_controls(player, runtime, &[])
+}
+
+/// Extends the original screen fixture with controls used by pointer-routing tests.
+fn presentation_with_controls(
+    player: &client_state::PlayerRuntime,
+    runtime: &UiRuntime,
+    extra: &[serde_json::Value],
 ) -> UiPresentationRuntime {
     let files = [
         ("ui/_global_variables.json".to_owned(), b"{}".to_vec()),
@@ -33,7 +128,7 @@ fn presentation(
             ("crafting", "inventory_screen", "button.menu_exit"),
         ]
         .map(|(namespace, root, action)| {
-            let source = serde_json::json!({
+            let mut source = serde_json::json!({
                 "namespace": namespace,
                 (root): {
                     "type": "screen", "size": [160, 100],
@@ -46,6 +141,10 @@ fn presentation(
                     }}]
                 }
             });
+            source[root]["controls"]
+                .as_array_mut()
+                .unwrap()
+                .extend_from_slice(extra);
             (
                 format!("ui/{namespace}.json"),
                 serde_json::to_vec(&source).unwrap(),
@@ -102,6 +201,11 @@ fn control_point(presentation: &UiPresentationRuntime, action: InventoryCellHit)
             (presentation.engine_container_hit(gui) == Some(action)).then_some(gui)
         })
         .expect("fixture control is reachable");
+    window_point(presentation, gui)
+}
+
+/// Converts a GUI hit point into logical window coordinates.
+fn window_point(presentation: &UiPresentationRuntime, gui: [f32; 2]) -> Vec2 {
     let origin = presentation
         .inventory_gui_point(UiPoint::new(0.0, 0.0).unwrap(), SIZE, 1.0)
         .unwrap();
@@ -152,6 +256,53 @@ fn pointer_edge(
         None,
         0,
     );
+}
+
+#[test]
+fn fallback_recipe_hits_follow_the_controller_layout() {
+    use client_ui::ui_runtime::presentation::screens;
+
+    let mut player = client_state::PlayerRuntime(player_state::PlayerState::new(1));
+    let mut runtime = client_ui::test_support::inventory_session(&mut player);
+    runtime.toggle_inventory(&mut player, None);
+    let mut presentation = UiPresentationRuntime::with_hud(
+        ui_engine::test_support::fixture_font(),
+        client_ui::test_support::fixture_hud(),
+    )
+    .unwrap();
+    let gui_size = presentation
+        .inventory_gui_point(
+            UiPoint::new(SIZE[0] as f32, SIZE[1] as f32).unwrap(),
+            SIZE,
+            1.0,
+        )
+        .unwrap();
+    let origin = screens::panel_origin(InventoryScreen::Personal, gui_size);
+    let cell = screens::book_cell_origin(4, screens::book_origin(origin));
+    let window = window(window_point(&presentation, [cell[0] + 1.0, cell[1] + 1.0]));
+    for (layout, expected) in [
+        (2, Some(InventoryCellHit::Widget(Widget::BookRecipe(4)))),
+        (1, None),
+        (2, Some(InventoryCellHit::Widget(Widget::BookRecipe(4)))),
+    ] {
+        runtime.perform_pointer_action(
+            &mut player,
+            client_ui::ui_runtime::inventory_drag::PointerAction::Click(InventoryCellHit::Widget(
+                Widget::InventoryLayout(layout),
+            )),
+        );
+        redraw(&mut presentation, &player, &runtime);
+        assert!(presentation.engine_container_frame().is_none());
+        pointer_edge(
+            &mut player,
+            &mut runtime,
+            &window,
+            &presentation,
+            false,
+            false,
+        );
+        assert_eq!(runtime.screen_state().hover, expected);
+    }
 }
 
 #[test]
@@ -208,7 +359,7 @@ fn book_exit_retains_written_pages_before_closing() {
 fn hidden_inventory_close_control_does_not_take_a_mod_views_pointer() {
     let mut player = client_state::PlayerRuntime(player_state::PlayerState::new(1));
     let mut runtime = client_ui::test_support::inventory_session(&mut player);
-    runtime.toggle_inventory(&mut player);
+    runtime.toggle_inventory(&mut player, None);
     let mut presentation = presentation(&player, &runtime);
     let at = control_point(&presentation, InventoryCellHit::Widget(Widget::Close));
     let window = window(at);
@@ -286,7 +437,7 @@ fn ordered_close_press_survives_keyboard_dispatch_until_frame_release() {
     use bevy::input::{keyboard::KeyboardInput, mouse::MouseButtonInput};
     let mut player = client_state::PlayerRuntime(player_state::PlayerState::new(1));
     let mut runtime = client_ui::test_support::inventory_session(&mut player);
-    runtime.toggle_inventory(&mut player);
+    runtime.toggle_inventory(&mut player, None);
     let presentation = presentation(&player, &runtime);
     let at = control_point(&presentation, InventoryCellHit::Widget(Widget::Close));
     let mut app = App::new();
@@ -372,7 +523,7 @@ fn batched_tap(
 fn a_batched_touch_lifted_over_close_does_not_close() {
     let mut player = client_state::PlayerRuntime(player_state::PlayerState::new(1));
     let mut runtime = client_ui::test_support::inventory_session(&mut player);
-    runtime.toggle_inventory(&mut player);
+    runtime.toggle_inventory(&mut player, None);
     let presentation = presentation(&player, &runtime);
     let close = control_point(&presentation, InventoryCellHit::Widget(Widget::Close));
     let off_close = Vec2::new(1.0, 1.0);

@@ -5,24 +5,21 @@ impl HatRig {
     /// Samples repeating preview motion from caller-owned elapsed time, starting after any intro.
     pub fn preview_motion(&self, seconds: f64) -> Motion {
         Motion {
-            seconds: self.playback.as_ref().map_or(0.0, |clip| {
-                clip.normalize(f64::from(clip.rest_time()) + seconds.max(0.0))
-            }),
+            seconds: self.playback.as_ref().map_or(
+                if self.companion.is_some() && seconds.is_finite() {
+                    seconds.max(0.0).rem_euclid(60.0) as f32
+                } else {
+                    0.0
+                },
+                |clip| clip.normalize(f64::from(clip.rest_time()) + seconds.max(0.0)),
+            ),
             bend: 0.0,
         }
     }
 
     /// Poses the original mesh at its attachment pivot and assigns its owning preview part.
     pub fn preview_vertices(&self, motion: Motion) -> Vec<ActorVertex> {
-        let root = self.geometry.bone_pivots[self.head];
-        let poses = self.pose(
-            RenderBoneTransform {
-                rotation: Quat::IDENTITY.to_array(),
-                translation_scale: [root[0], root[1], root[2], 1.0],
-                axis_scale: crate::UNIT_AXIS_SCALE,
-            },
-            motion,
-        );
+        let poses = self.preview_pose(motion);
         self.geometry
             .vertices
             .iter()
@@ -40,6 +37,39 @@ impl HatRig {
                 }
             })
             .collect()
+    }
+
+    /// Places an authored emitter in the same mirrored frame as the preview mesh.
+    pub fn preview_emitter_transform(
+        &self,
+        index: usize,
+        motion: Motion,
+    ) -> Option<crate::ActorEmitterTransform> {
+        let poses = self.preview_pose(motion);
+        self.emitter_transform(
+            index,
+            &poses,
+            &poses,
+            [
+                [-1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, -1.0, 0.0],
+            ],
+            1.0,
+        )
+    }
+
+    /// Evaluates the shared attachment pose at its preview pivot.
+    fn preview_pose(&self, motion: Motion) -> Arc<[RenderBoneTransform]> {
+        let root = self.geometry.bone_pivots[self.head];
+        self.pose(
+            RenderBoneTransform {
+                rotation: Quat::IDENTITY.to_array(),
+                translation_scale: [root[0], root[1], root[2], 1.0],
+                axis_scale: crate::UNIT_AXIS_SCALE,
+            },
+            motion,
+        )
     }
 }
 

@@ -6,27 +6,16 @@
 use protocol::StackRequestAction;
 
 use super::cells::Cell;
-use super::gesture::{
-    StackRequestActionKind, Submission, counted_merge, counted_transfer, has_meaningful_overlay,
-};
+use super::gesture::{StackRequestActionKind, Submission, counted_merge, counted_transfer};
 use super::helpers::request_slot;
 use super::overlay::DeltaGroup;
 use super::registry::{OccupiedStackRelation, entry_capacity};
-use super::{
-    InventoryGestureError, InventoryPendingState, PLAYER_INVENTORY_SLOT_COUNT,
-    PlayerInventoryLedger,
-};
+use super::{InventoryGestureError, InventoryPendingState, PlayerInventoryLedger};
 
 impl PlayerInventoryLedger {
-    /// Enumerates the active crafting grid, if any, followed by the shared cursor.
+    /// Enumerates the active returnable inputs followed by the shared cursor.
     fn close_return_cells(&self) -> impl Iterator<Item = Cell> {
-        let has_grid =
-            self.storage.is_none() || self.window_kind() == Some(protocol::WindowKind::Workbench);
-        self.crafting_grid()
-            .slots()
-            .filter(move |_| has_grid)
-            .map(Cell::Craft)
-            .chain(std::iter::once(Cell::Cursor))
+        screen_input_cells(self.window_kind()).chain(std::iter::once(Cell::Cursor))
     }
 
     /// Build every return against one staged ledger, so an identity, pressure,
@@ -41,7 +30,10 @@ impl PlayerInventoryLedger {
             // still holds ingredients. Do not cancel that request on close.
             return Ok(self.close_return_needed());
         }
-        if self.known.iter().any(|known| !known) {
+        if self.known[..self.confirmed.player_len()]
+            .iter()
+            .any(|known| !known)
+        {
             return Err(InventoryGestureError::ResyncRequired);
         }
         let mut staged = self.clone();
@@ -52,18 +44,33 @@ impl PlayerInventoryLedger {
         Ok(true)
     }
 
-    fn return_close_cell(&mut self, source: Cell) -> Result<(), InventoryGestureError> {
+    /// Returns `source` to the player, merging first and dropping what does not fit.
+    /// Large stacks use several encodable requests; returns the last request's id.
+    pub(super) fn return_close_cell(&mut self, source: Cell) -> Result<i32, InventoryGestureError> {
+        let mut last = self.return_close_chunk(source)?;
+        while self.view().get(source).is_some() {
+            last = self.return_close_chunk(source)?;
+        }
+        Ok(last)
+    }
+
+    /// Returns at most one action's quantity so every move or drop stays encodable.
+    fn return_close_chunk(&mut self, source: Cell) -> Result<i32, InventoryGestureError> {
         let personal_generation = self.gesture_preflight(true)?;
         self.check_surfaces([source])?;
         let from = self
             .named(self.view().get(source).cloned())?
             .ok_or(InventoryGestureError::EmptyGesture)?;
         let address = self.window_address();
-        let mut remaining = from.stack.count;
+        let mut remaining = from
+            .stack
+            .count
+            .min(u16::from(protocol::MAX_STACK_REQUEST_AMOUNT));
         let mut actions = Vec::new();
         let mut groups = Vec::new();
         let (mut distinct, mut registry_bound) = (false, false);
-        let candidates: Vec<Cell> = (0..PLAYER_INVENTORY_SLOT_COUNT)
+        let candidates: Vec<Cell> = (0..self.confirmed.player_len())
+            .filter(|slot| self.known[*slot])
             .map(|slot| Cell::Inventory(slot as u8))
             .collect();
         for cell in &candidates {
@@ -73,14 +80,11 @@ impl PlayerInventoryLedger {
             let Some(into) = self.view().get(*cell) else {
                 continue;
             };
-            if self.awaiting_identity(into)
-                || has_meaningful_overlay(from.overlay.as_ref())
-                || has_meaningful_overlay(into.overlay.as_ref())
-            {
+            if self.awaiting_identity(into) {
                 continue;
             }
             let OccupiedStackRelation::Compatible { capacity } =
-                self.occupied_stack_relation(&from.stack, &into.stack)
+                self.occupied_stack_relation(&from, into)
             else {
                 continue;
             };
@@ -148,8 +152,7 @@ impl PlayerInventoryLedger {
             personal_generation,
             requires_distinct_stack_ids: distinct,
             registry_bound_merge: registry_bound,
-        })?;
-        Ok(())
+        })
     }
 
     /// A close follows every gesture still waiting for transport, so the server
@@ -171,4 +174,18 @@ impl PlayerInventoryLedger {
         tracing::warn!(target: "cinnabar::inventory_requests",
             ?error, "inventory closed without returning its inputs");
     }
+}
+
+/// Enumerates only the temporary inputs belonging to the selected screen.
+pub(super) fn screen_input_cells(kind: Option<protocol::WindowKind>) -> impl Iterator<Item = Cell> {
+    let grid = match kind {
+        None => Some(super::crafting::CraftingGrid::Personal),
+        Some(protocol::WindowKind::Workbench) => Some(super::crafting::CraftingGrid::Workbench),
+        _ => None,
+    };
+    let inputs = kind.map_or(&[][..], super::screen_actions::input_slots);
+    grid.into_iter()
+        .flat_map(super::crafting::CraftingGrid::slots)
+        .chain(inputs.iter().copied())
+        .map(Cell::Craft)
 }

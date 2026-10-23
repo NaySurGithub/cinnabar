@@ -10,11 +10,15 @@ schemas document every argument. Agents drive the client only through this endpo
   joins need `allow_remote`, since they sign in with the configured account; ask the owner first.
   The local server accepts `/give <item> [count] [data]`, `/fly`, `/speed`, and `/tp` for captures.
 - `input` sends real key and mouse events, so mods' ability keys (`Digit1`…) work; `F1` hides the HUD.
+  To test Retina rendering headlessly, pass `CINNABAR_WINDOW_SCALE_FACTOR=2` in the
+  launch environment. Capture sizes stay in physical pixels; pointer input uses
+  logical window pixels. The default scale factor is 1.
   Hotkey toggles and the camera path's hidden hand stay in memory and are never saved.
   `pointer: {x, y}` moves in logical window pixels; combine it with `press: ["MouseLeft"]` to click.
   `wheel: {y: -3}` scrolls down three lines; add `unit: "pixel"` for precise scrolling.
 - `test_cape` with `enabled: true` installs an original cape on the local player for captures;
   `false` removes it. This presentation fixture does not modify the server or saved skin.
+  `import_cape` imports and equips a PNG cape as the Dressing Room does, sending it in a world.
 - Sign-in captures launch with `headless: true`, an isolated `CINNABAR_USER_ROOT`, and
   `env: {"CINNABAR_SIGN_IN_FIXTURE": "opened"}`. `sign_in_fixture` switches between
   `waiting`, `opened`, `browser_failed`, `success`, `expired`, and `error`. These fixed states accept no account
@@ -36,7 +40,10 @@ schemas document every argument. Agents drive the client only through this endpo
   directly before sending a stimulus. These diagnostics do not grant movement authority.
 - `record_start` needs `ffmpeg` on PATH. Its default fixed clock steps game time exactly 1/fps per
   rendered frame, so it suits the local showcase server; record remote servers with
-  `fixed_clock: false`. Audio is captured to a WAV and muxed in.
+  `fixed_clock: false`. Audio is captured to a WAV and muxed in. A real-time recording never
+  waits for a lagging encoder: frames it has no room for are dropped and repeat the previous
+  frame, and `record_stop` reports them as `dropped_frames`. A fixed-clock recording instead
+  holds the game until the encoder catches up. Screenshots answer during either.
 
 ```json
 { "mcpServers": { "cinnabar": { "command": "target/debug/cinnabar-mcp", "args": ["--repo", "."] } } }
@@ -44,3 +51,35 @@ schemas document every argument. Agents drive the client only through this endpo
 
 Keep default features enabled for client MCP builds so acceptance evidence remains available.
 `make package-binaries` excludes the acceptance harness and developer control.
+
+## Join timing logs
+
+Default developer builds include the `bridge/join-profile` feature through
+`acceptance`; shipping `--no-default-features` builds omit it. `make play-build`
+builds the core with `-tags joinprofile`; packaging leaves that tag off. For a
+manual core build, use `go build -tags joinprofile` when collecting these timings.
+
+Set `CINNABAR_LOG=join_profile=debug,core=debug` before launching. Rust milestones
+and core logs share `join_profile_id`. Rust `elapsed_ms` starts when the accepted
+menu request runs, including a wait for sign-in and core readiness. Core
+`core_elapsed_ms` starts when it receives Connect; packet `dial_elapsed_ms` starts
+at that dial attempt, including automatic pre-login transfers. HTTP records carry
+`http_request_id`; background account requests can have no join ID. They log
+redacted hosts and timing fields, with no URLs, headers or bodies.
+
+The `terrain_ready` milestone uses the existing loading-screen gate and queues
+loading completion. The terminal `first_world_presented` milestone waits until
+the render world presents a frame extracted after that gate, with the loading
+screen removed. It includes rendering stalls after readiness; a skipped present
+does not complete the attempt. The timing includes completion of the submitted GPU
+work. Hidden windows render without an OS swap chain, so headless runs instead
+end at `first_world_frame_completed` after the same loading-free frame's GPU work.
+Neither endpoint claims OS display feedback. `player_spawn` is an earlier
+protocol milestone. Independent `duration_ms` sections, transport
+setup and authentication can overlap; use cumulative milestones for total join
+time. Cancellation, failure and replacement end the old attempt. Detailed frame
+and packet traces remain available for attributing work between these milestones.
+
+`devtool diag` includes both processes in `join-timeline.txt` alongside the full
+retained logs, without uploading them. Client and core sections retain their
+own monotonic origins; correlate them by ID and their recorded timestamps.

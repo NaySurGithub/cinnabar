@@ -1,4 +1,8 @@
 //! Cinnabar extension: optional resource packs can change without leaving a world.
+#[cfg(target_arch = "wasm32")]
+use super::compile_execution::join;
+#[cfg(not(target_arch = "wasm32"))]
+use rayon::join;
 
 use super::reload_environment::{
     EnvironmentBase, EnvironmentPublication, PreparedEnvironment, apply_biome_overlay,
@@ -11,10 +15,17 @@ use client_shell::ui_resources::{UiPresentationResource, UiRuntimeResource};
 use resource_pack::{PackAdmission, ValidatedPackStack};
 use std::{
     sync::{Arc, Mutex, mpsc},
-    time::{Duration, Instant},
+    time::Duration,
 };
+use web_time::Instant;
 
 use pack_runtime::PackInputs;
+
+#[cfg(test)]
+mod publication_tests;
+
+#[cfg(test)]
+mod post_join_tests;
 
 struct Prepared {
     revision: u64,
@@ -131,7 +142,8 @@ impl PackReload {
     pub(super) fn begin_session(&mut self, generation: u64, packs: &PackApplication) {
         self.generation = generation;
         self.aim_assist_textures = packs.aim_assist_textures.clone();
-        self.previous = None;
+        self.previous = Some(packs.clone());
+        self.previous_assets = None;
         self.server = match &packs.admission {
             PackAdmission::Validated(stack) => stack.clone(),
             PackAdmission::None => {
@@ -181,7 +193,7 @@ impl PackReload {
             carrier: Mutex::new(carrier_rx),
             early: None,
         });
-        std::thread::spawn(move || {
+        let work = move || {
             let start = Instant::now();
             let _zone = bevy::log::info_span!("pack_apply.prepare").entered();
             let result = ValidatedPackStack::compose(&globals, &server)
@@ -196,10 +208,11 @@ impl PackReload {
                                 .map(|old| (&old.admission, &old.dependencies)),
                         )
                     };
+                    let biomes_changed = changes.blocks || previous_assets.is_none();
                     let stack = Arc::new(stack);
                     let view = resource_pack::LayeredPackView::new(stack.clone());
                     // Environment layers and the other subscribers read the stack independently.
-                    let (environment, mut application) = rayon::join(
+                    let (environment, mut application) = join(
                         || {
                             let _zone = bevy::log::info_span!("pack_apply.environment").entered();
                             environment_base
@@ -230,7 +243,7 @@ impl PackReload {
                             .extend(environment.dependencies.clone());
                     }
                     application.item_components = items;
-                    if changes.blocks {
+                    if biomes_changed {
                         let _zone = bevy::log::info_span!("pack_apply.biome_overlay").entered();
                         let mut biome_overlay = assets::BlockOverlay::default();
                         let biome_view =
@@ -272,12 +285,11 @@ impl PackReload {
                     {
                         let _zone = bevy::log::info_span!("pack_apply.actor_artwork").entered();
                         let artwork = current_artwork.as_ref().map(|current| {
-                            application
-                                .entity_artwork
-                                .as_deref()
-                                .filter(|next| next.identity() != current.identity())
-                                .unwrap_or(current)
-                                .clone()
+                            resource_packs::entity_artwork_base(
+                                current,
+                                application.entity_artwork.as_deref(),
+                            )
+                            .clone()
                         });
                         let blocks =
                             block_items
@@ -307,7 +319,7 @@ impl PackReload {
                                 Some(resource_packs::ui_catalog::prepare(pack, catalog));
                         }
                     }
-                    if changes.blocks {
+                    if biomes_changed {
                         application.terrain_identity =
                             resource_packs::terrain_identity(&stack, &application.dependencies);
                     }
@@ -329,7 +341,11 @@ impl PackReload {
                     }
                 });
             let _ = tx.send(result);
-        });
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        std::thread::spawn(work);
+        #[cfg(target_arch = "wasm32")]
+        crate::browser::jobs::reload(work);
     }
 }
 
@@ -385,7 +401,7 @@ pub(crate) fn reload_resource_packs(
             Some(result)
         } else {
             if let (Some(gpu), Some(current)) = (gpu_reload.as_ref(), textures.as_ref()) {
-                gpu.cancel_except(current.identity());
+                gpu.cancel_except(current.binding_identity());
             }
             None
         };
@@ -414,19 +430,19 @@ pub(crate) fn reload_resource_packs(
                             return;
                         }
                         Err(error) => {
-                            gpu.cancel_except(current.identity());
+                            gpu.cancel_except(current.binding_identity());
                             reload.error = Some(error);
                             reload.applied = reload.revision;
                             return;
                         }
                     }
-                    match gpu.status(candidate.identity()) {
+                    match gpu.status(candidate.binding_identity()) {
                         None => {
                             reload.ready = Some(prepared);
                             return;
                         }
                         Some(Err(error)) => {
-                            gpu.cancel_except(current.identity());
+                            gpu.cancel_except(current.binding_identity());
                             reload.error = Some(error);
                             reload.applied = reload.revision;
                             return;
@@ -435,7 +451,7 @@ pub(crate) fn reload_resource_packs(
                     }
                 } else if let (Some(gpu), Some(current)) = (gpu_reload.as_ref(), textures.as_ref())
                 {
-                    gpu.cancel_except(current.identity());
+                    gpu.cancel_except(current.binding_identity());
                 }
                 if let Some(gpu) = gpu_reload.as_ref()
                     && reload.geometry.publish(&mut chunks, gpu)
@@ -549,7 +565,7 @@ pub(crate) fn reload_resource_packs(
             Some(Ok(_)) | None => {}
             Some(Err(error)) => {
                 if let (Some(gpu), Some(current)) = (gpu_reload.as_ref(), textures.as_ref()) {
-                    gpu.cancel_except(current.identity());
+                    gpu.cancel_except(current.binding_identity());
                 }
                 reload.error = Some(error);
                 reload.applied = reload.revision;

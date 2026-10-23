@@ -13,6 +13,8 @@ pub(super) mod cache;
 pub struct AnvilPreview {
     pub stack: NetworkItemStack,
     pub outcome: inventory::AnvilOutcome,
+    /// The name the take sends; the prediction applied the same text.
+    pub take_name: Option<std::sync::Arc<str>>,
 }
 
 /// The target and resolved name last used to prefill the editable field.
@@ -74,6 +76,41 @@ impl AnvilInput {
             repair_cost: protocol::item_repair_cost(&self.stack.extra_data),
             custom_name: self.data.custom_name.as_deref(),
         }
+    }
+}
+
+/// Preserves unchanged names and materializes an overlay pair only when it differs.
+/// An actual rename lets the item editor retire the obsolete filtered name.
+fn anvil_name_edit(
+    extra_data: &[u8],
+    overlay: Option<&inventory::inventory_ledger::StackResponseOverlay>,
+    rename: Option<Option<String>>,
+) -> protocol::ItemNbtEdit {
+    if let Some(name) = rename {
+        return protocol::ItemNbtEdit {
+            custom_name: Some(name),
+            ..Default::default()
+        };
+    }
+    let Some(overlay) = overlay else {
+        return Default::default();
+    };
+    let Some(name) = overlay.custom_name.as_deref() else {
+        return Default::default();
+    };
+    let filtered = overlay
+        .filtered_custom_name
+        .as_deref()
+        .filter(|name| !name.is_empty());
+    if protocol::item_custom_name(extra_data).as_deref() == Some(name)
+        && protocol::item_filtered_custom_name(extra_data).as_deref() == filtered
+    {
+        return Default::default();
+    }
+    protocol::ItemNbtEdit {
+        custom_name: Some(Some(name.to_owned())),
+        filtered_custom_name: Some(filtered.map(str::to_owned)),
+        ..Default::default()
     }
 }
 
@@ -141,20 +178,27 @@ impl UiRuntime {
             })
     }
 
-    /// The changed name sent with an authoritative take; empty text clears a custom name.
-    pub(super) fn anvil_rename(
+    /// The name a take of a `network_id`/`metadata` result sends, which the prediction also
+    /// applies: the name-box text, or `None` for the result's default name. The server reads a
+    /// missing name like empty text, which removes a custom name.
+    pub(super) fn anvil_take_name(
         &self,
         player_runtime: &player_state::PlayerState,
+        network_id: i32,
+        metadata: u32,
     ) -> Option<std::sync::Arc<str>> {
-        let current = self.anvil_target_name(player_runtime);
         let name = self.screen_state().anvil_name.as_str();
-        if current.as_deref() == Some(name)
-            || (name.is_empty() && self.anvil_target_custom_name(player_runtime).is_none())
-        {
-            None
-        } else {
-            Some(std::sync::Arc::from(name))
-        }
+        let default = self
+            .inventory_ledger(player_runtime)
+            .negotiated_item_entry(network_id)
+            .map(|entry| {
+                super::presentation::inventory_tooltip::default_name(
+                    self,
+                    &entry.identifier,
+                    metadata,
+                )
+            });
+        (default.as_deref() != Some(name)).then(|| std::sync::Arc::from(name))
     }
 
     /// Prefills the name box with the target's name whenever a different target is placed,
@@ -241,13 +285,38 @@ impl UiRuntime {
         let creative =
             player_runtime.facts.player_game_mode() == Some(protocol::PlayerGameMode::Creative);
         let current_name = self.anvil_target_name(player_runtime)?;
+        // A plain book enchanted from a book becomes the enchanted book, whose default name
+        // decides what the take sends.
+        let ledger = self.inventory_ledger(player_runtime);
+        let book_result = left.fact.traits.contains(assets::facts::ItemTraits::BOOK)
+            && !left
+                .fact
+                .traits
+                .contains(assets::facts::ItemTraits::ENCHANTED_BOOK)
+            && right.as_ref().is_some_and(|right| {
+                right
+                    .fact
+                    .traits
+                    .contains(assets::facts::ItemTraits::ENCHANTED_BOOK)
+            });
+        let (result_id, result_metadata) = match ledger.item_facts().enchanted_book_id() {
+            Some(book) if book_result => (book, 0),
+            _ => (left.stack.network_id, left.stack.metadata),
+        };
+        let take_name = self.anvil_take_name(player_runtime, result_id, result_metadata);
         let outcome = inventory::evaluate_anvil(
             &left.item(),
             right_item.as_ref(),
-            &self.screen_state().anvil_name,
+            take_name.as_deref().unwrap_or(""),
             &current_name,
             creative,
         )?;
+        let names = anvil_name_edit(
+            &left.stack.extra_data,
+            self.inventory_ledger(player_runtime)
+                .presented_target_overlay(InventoryTarget::Craft(ANVIL_TARGET_SLOT)),
+            outcome.custom_name.clone(),
+        );
         let extra_data = protocol::edit_item_extra(
             &left.stack.extra_data,
             &protocol::ItemNbtEdit {
@@ -257,12 +326,7 @@ impl UiRuntime {
                     .map(|damage| i32::try_from(damage).unwrap_or(i32::MAX)),
                 repair_cost: Some(outcome.repair_cost),
                 enchantments: outcome.enchantments.clone(),
-                custom_name: outcome.custom_name.clone().or_else(|| {
-                    left.data
-                        .custom_name
-                        .as_ref()
-                        .map(|name| Some(name.to_string()))
-                }),
+                ..names
             },
         )?;
         let mut stack = left.stack;
@@ -278,7 +342,11 @@ impl UiRuntime {
         stack.stack_network_id = 0;
         stack.nbt_digest = Sha256::digest(&extra_data).into();
         stack.extra_data = extra_data;
-        Some(AnvilPreview { stack, outcome })
+        Some(AnvilPreview {
+            stack,
+            outcome,
+            take_name,
+        })
     }
 
     /// The anvil output shown to the player, preferring the server's result to prediction.

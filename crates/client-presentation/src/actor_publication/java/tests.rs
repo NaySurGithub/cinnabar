@@ -51,6 +51,7 @@ pub(super) fn head_feed() -> client_world::LocalPlayerFeed {
         pitch: 5.0,
         main_hand: None,
         off_hand: None,
+        equipment_count: 0,
         held_network_ids: [0; 2],
         held_variants: Default::default(),
         main_hand_metadata: 0,
@@ -159,9 +160,9 @@ fn published_persona_layers_follow_the_sampled_local_emote_only() {
     let native_pose = native_layer.current.clone();
     let emote = actor_animation::sample_custom_emote(
         &rig,
-        actor_animation::CustomEmote::Twerk,
+        cosmetics::test_support::playback_emote(),
         0.0,
-        actor_animation::CustomEmote::Twerk.duration_seconds() / 4.0,
+        cosmetics::test_support::playback_emote().duration_seconds() / 4.0,
     )
     .unwrap();
     assert_ne!(emote.skin_layers[0].current, native_pose);

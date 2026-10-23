@@ -631,6 +631,7 @@ pub(super) fn carrier_v4_fixture() -> CompiledEntityAssetsV4 {
             item_condition: None,
             scale: assets::EntityGeometryScalar::new(1.0).unwrap(),
             scale_expressions: None,
+            held_item_scale: None,
         }]
         .into_boxed_slice(),
         rig_geometries: vec![EntityRigGeometryBinding {
@@ -707,6 +708,7 @@ pub(super) fn carrier_v4_fixture() -> CompiledEntityAssetsV4 {
             slots: Box::new([entity::EntityRenderSlot {
                 first_candidate: 0,
                 candidate_count: 1,
+                default_candidate: None,
             }]),
             candidates: Box::new([entity::EntityRenderCandidate {
                 condition: None,

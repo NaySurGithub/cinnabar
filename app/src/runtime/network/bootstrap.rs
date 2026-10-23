@@ -1,8 +1,5 @@
 use super::{NetworkLocalPlayerState, PackReload, bootstrap_timing, session::NetworkControlEvent};
-use crate::{
-    environment::{bind_session_generation, replace_session},
-    runtime::{shutdown::record_fatal_error, world::AppWorldState},
-};
+use crate::runtime::{shutdown::record_fatal_error, world::AppWorldState};
 #[cfg(feature = "acceptance")]
 use acceptance::{
     AcceptanceRun, committed_control::acceptance_surface_anchor,
@@ -12,6 +9,7 @@ use bevy::{
     log::{debug, info},
     prelude::Mut,
 };
+use client_presentation::environment::{bind_session_generation, replace_session};
 use client_presentation::local_player::{LocalPlayerFrameReset, reset_local_player_session};
 use client_runtime::{
     inventory::publish_bootstrap_inventory, pack_admission::ResourcePackAdmissionState,
@@ -31,6 +29,7 @@ pub(super) struct BootstrapResources<'a> {
     pub pack_reload: Option<Mut<'a, PackReload>>,
     pub chunk_textures: Option<Mut<'a, ChunkTextureAssets>>,
     pub block_entity_scene: Option<Mut<'a, BlockEntitySceneResource>>,
+    pub actor_artwork: Option<Mut<'a, render_scene::ActorArtworkResource>>,
     pub acknowledgements: &'a ChunkUploadAcknowledgements,
     pub publication: &'a PublicationController,
     pub display_interval: Duration,
@@ -51,6 +50,7 @@ pub(super) fn apply(
         pack_reload,
         chunk_textures,
         block_entity_scene,
+        actor_artwork,
         acknowledgements,
         publication,
         display_interval,
@@ -83,6 +83,7 @@ pub(super) fn apply(
     } = local_player;
     let NetworkControlEvent::Bootstrap {
         session_generation,
+        identity,
         world: bootstrap,
         environment,
         custom_blocks,
@@ -96,6 +97,7 @@ pub(super) fn apply(
         hardcore,
         hud_rules,
         death_rules,
+        crafting_rules,
         mut packs,
         terrain_before_spawn,
         level_identity,
@@ -166,6 +168,7 @@ pub(super) fn apply(
     replace_session(clock, weather, environment, time.elapsed_secs_f64());
     bind_session_generation(clock, weather, session_generation);
     client_runtime::session::begin_session(ui_runtime, &mut player_runtime, session_generation);
+    ui_runtime.set_chat_identity(identity.display_name.into(), identity.xuid.into());
     movement_effects.begin_session(session_generation);
     movement_speed.begin_session(session_generation, bootstrap.dimension);
     client_runtime::item_diagnostics::session_registry(item_registry.as_ref());
@@ -185,7 +188,10 @@ pub(super) fn apply(
         session_generation,
         std::mem::replace(&mut packs.admission, resource_pack::PackAdmission::None),
     );
-    ui_runtime.experiences.marker = packs.extension_marker.take();
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        ui_runtime.experiences.marker = packs.extension_marker.take();
+    }
     player_runtime.facts.publish_bootstrap_game_modes(
         player_game_mode,
         world_default_game_mode
@@ -196,6 +202,9 @@ pub(super) fn apply(
     ui_runtime.set_hardcore(hardcore);
     ui_runtime.apply_hud_rules(hud_rules);
     ui_runtime.apply_death_rules(death_rules);
+    player_runtime
+        .inventory
+        .publish_crafting_rules_bootstrap(crafting_rules);
     if replacing_session {
         debug!("replaced StartGame environment session");
     }
@@ -225,6 +234,7 @@ pub(super) fn apply(
             collisions,
             chunk_textures,
             block_entity_scene,
+            actor_artwork,
             publication,
             display_interval,
         },

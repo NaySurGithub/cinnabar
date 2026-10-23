@@ -74,6 +74,8 @@ pub struct ActorEquipmentInput {
     pub off: Option<WornItem>,
     /// Helmet, chestplate, leggings, boots.
     pub armor: [Option<WornItem>; 4],
+    /// Equipment replicated in the separate body slot.
+    pub body: Option<WornItem>,
     pub sneaking: bool,
     pub sleeping: bool,
     /// Java 1.7 grips the main hand, when that mode poses this actor.
@@ -149,6 +151,7 @@ pub struct EquipmentAnimation<'a> {
     pub delta_seconds: f32,
 }
 
+#[derive(Clone, Eq, PartialEq)]
 pub(super) struct BodyBones {
     pub(super) names: Vec<Box<str>>,
     pub(super) right_arm: Option<usize>,
@@ -169,7 +172,7 @@ pub(super) struct WornRender {
     pub texture: Box<str>,
     pub geometry: Box<str>,
     pub layer: actor_animation::RenderTextureLayer,
-    pub pose: Vec<render_model::RenderBoneTransform>,
+    pub pose: Arc<[render_model::RenderBoneTransform]>,
 }
 
 impl EquipmentAnimation<'_> {
@@ -181,6 +184,7 @@ impl EquipmentAnimation<'_> {
     ) -> actor_animation::AttachableAnimationInput<'a> {
         actor_animation::AttachableAnimationInput {
             off_hand,
+            held_item_scale: self.rig.held_item_scale,
             worn: false,
             ..self.worn_input(equipment, assets::ArmorSlot::Helmet, &[])
         }

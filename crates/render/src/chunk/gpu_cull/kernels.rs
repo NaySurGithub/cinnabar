@@ -6,8 +6,10 @@ use std::{borrow::Cow, num::NonZeroU64};
 use wgpu::util::DeviceExt;
 
 use super::model::{
-    CULL_WORKGROUP, CullPhase, CullViewUniform, FRUSTUM_ABSOLUTE_SLACK, FRUSTUM_RELATIVE_SLACK,
-    HIZ_PADDING, PHASE_COUNT, STREAM_COUNT, args_words, draw_offset_bytes, group_count,
+    CULL_WORKGROUP, CullPhase, CullViewUniform, DECISION_CANDIDATE, DECISION_CUTOUT_SHIFT,
+    DECISION_DRAWS, DECISION_HIDDEN, DECISION_LIQUID_SHIFT, DECISION_MODEL_SHIFT,
+    DECISION_SOLID_MASK, FRUSTUM_ABSOLUTE_SLACK, FRUSTUM_RELATIVE_SLACK, HIZ_PADDING, PHASE_COUNT,
+    STREAM_COUNT, args_words, draw_offset_bytes, group_count,
 };
 
 const RECORD_BYTES: u64 = std::mem::size_of::<super::model::CullRecord>() as u64;
@@ -19,6 +21,25 @@ pub fn cull_shader_source() -> String {
     let float = |value: f32| format!("{value:?}f");
     include_str!("cull.wgsl")
         .replace("CULL_WORKGROUP", &format!("{CULL_WORKGROUP}u"))
+        .replace("CULL_DECISION_DRAWS", &format!("{DECISION_DRAWS}u"))
+        .replace("CULL_DECISION_CANDIDATE", &format!("{DECISION_CANDIDATE}u"))
+        .replace("CULL_DECISION_HIDDEN", &format!("{DECISION_HIDDEN}u"))
+        .replace(
+            "CULL_DECISION_SOLID_MASK",
+            &format!("{DECISION_SOLID_MASK}u"),
+        )
+        .replace(
+            "CULL_DECISION_CUTOUT_SHIFT",
+            &format!("{DECISION_CUTOUT_SHIFT}u"),
+        )
+        .replace(
+            "CULL_DECISION_MODEL_SHIFT",
+            &format!("{DECISION_MODEL_SHIFT}u"),
+        )
+        .replace(
+            "CULL_DECISION_LIQUID_SHIFT",
+            &format!("{DECISION_LIQUID_SHIFT}u"),
+        )
         .replace("CULL_SIDE", &format!("{}i", world::SUB_CHUNK_SIDE))
         .replace("CULL_HIZ_PADDING", &float(HIZ_PADDING))
         .replace("CULL_RELATIVE_SLACK", &float(FRUSTUM_RELATIVE_SLACK))
@@ -81,7 +102,11 @@ impl CullStorage {
                 slots * 4,
                 U::STORAGE | U::COPY_DST | copy_out,
             ),
-            record_draws: buffer("terrain cull record draws", slots * 4, U::STORAGE),
+            record_draws: buffer(
+                "terrain cull record draws",
+                slots * 4,
+                U::STORAGE | U::COPY_SRC,
+            ),
             group_sums: buffer(
                 "terrain cull group sums",
                 u64::from(group_count(capacity).max(1)) * 16,
@@ -448,10 +473,11 @@ impl CullKernels {
         encoder: &mut wgpu::CommandEncoder,
         bind_group: &wgpu::BindGroup,
         slots: u32,
+        timestamp_writes: Option<wgpu::ComputePassTimestampWrites<'_>>,
     ) {
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("terrain cull"),
-            timestamp_writes: None,
+            timestamp_writes,
         });
         pass.set_bind_group(0, bind_group, &[]);
         let groups = group_count(slots);
@@ -572,15 +598,17 @@ impl CullKernels {
         }
     }
 
+    /// Builds all active Hi-Z levels in one pass with an optional timestamp pair.
     pub fn encode_pyramid(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         pyramid: &HizPyramid,
         bindings: &PyramidBindings,
+        timestamp_writes: Option<wgpu::ComputePassTimestampWrites<'_>>,
     ) {
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("terrain hi-z"),
-            timestamp_writes: None,
+            timestamp_writes,
         });
         let seed = if bindings.multisampled {
             &self.seed_multisampled

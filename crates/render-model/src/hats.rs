@@ -32,6 +32,8 @@ pub struct HatRig {
     pub pixels: SkinRgba8,
     world_pixels: Option<SkinRgba8>,
     emitters: Box<[emitters::CosmeticEmitter]>,
+    cloth: Option<cloth::ClothRig>,
+    companion: Option<companion::Rig>,
 }
 
 static RIGS: RwLock<Vec<(Item, &'static HatRig)>> = RwLock::new(Vec::new());
@@ -84,6 +86,15 @@ pub fn admit(
 }
 
 impl HatRig {
+    /// Ground-following controller declared by this catalog item, if present.
+    pub fn companion(&self) -> Option<&companion::Rig> {
+        self.companion.as_ref()
+    }
+
+    /// Whether the item declares a fabric surface needing per-actor simulation history.
+    pub fn has_cloth(&self) -> bool {
+        self.cloth.is_some()
+    }
     /// Whether an authored animation changes any attachment joints.
     pub fn bends_in_wind(&self) -> bool {
         self.wind.is_some() && self.flex.iter().any(|weight| *weight > 0.0)
@@ -92,9 +103,57 @@ impl HatRig {
     /// Attaches authored joints to the evaluated bone with catalog offsets and bounded motion.
     pub fn pose(
         &self,
-        mut attachment: RenderBoneTransform,
+        attachment: RenderBoneTransform,
         motion: Motion,
     ) -> Arc<[RenderBoneTransform]> {
+        self.pose_sample(attachment, motion, None)
+    }
+
+    /// Poses an independent companion using a controller-selected clip.
+    pub fn companion_pose(&self, state: companion::Pose) -> Arc<[RenderBoneTransform]> {
+        self.pose_sample(
+            RenderBoneTransform {
+                rotation: Quat::IDENTITY.to_array(),
+                translation_scale: [
+                    self.geometry.bone_pivots[self.head][0],
+                    self.geometry.bone_pivots[self.head][1],
+                    self.geometry.bone_pivots[self.head][2],
+                    1.0,
+                ],
+                axis_scale: crate::UNIT_AXIS_SCALE,
+            },
+            Motion::default(),
+            Some(state),
+        )
+    }
+
+    /// Evaluates hierarchy once with either attachment playback or companion playback.
+    fn pose_sample(
+        &self,
+        mut attachment: RenderBoneTransform,
+        motion: Motion,
+        selection: Option<companion::Pose>,
+    ) -> Arc<[RenderBoneTransform]> {
+        let sample = |bone| {
+            if let Some(rig) = &self.companion {
+                rig.sample(
+                    bone,
+                    selection.unwrap_or(companion::Pose {
+                        gait: companion::Gait::Idle,
+                        seconds: motion.seconds,
+                    }),
+                )
+            } else {
+                self.playback
+                    .as_ref()
+                    .map_or((Quat::IDENTITY, Vec3::ZERO), |clip| {
+                        (
+                            clip.rotation(bone, motion.seconds),
+                            clip.translation(bone, motion.seconds),
+                        )
+                    })
+            }
+        };
         let rotation = Quat::from_array(attachment.rotation);
         let scale = Vec3::from_array(
             [0, 1, 2].map(|i| attachment.axis_scale[i] * attachment.translation_scale[3]),
@@ -110,19 +169,11 @@ impl HatRig {
         for index in 0..self.parents.len() {
             let mut pose = attachment;
             if index == self.head {
-                let delta = self
-                    .playback
-                    .as_ref()
-                    .map_or(Vec3::ZERO, |clip| clip.translation(index, motion.seconds));
+                let delta = sample(index).1;
                 let position = position + rotation * (delta * scale);
                 pose.translation_scale[..3].copy_from_slice(&position.to_array());
-                pose.rotation = (rotation
-                    * self.rest_rotations[index]
-                    * self
-                        .playback
-                        .as_ref()
-                        .map_or(Quat::IDENTITY, |clip| clip.rotation(index, motion.seconds)))
-                .to_array();
+                pose.rotation =
+                    (rotation * self.rest_rotations[index] * sample(index).0).to_array();
             }
             if index != self.head {
                 let parent = self.parents[index].expect("admitted attachment parent");
@@ -137,12 +188,7 @@ impl HatRig {
                     });
                 let position = Vec3::from_slice(&parent_pose.translation_scale[..3])
                     + Quat::from_array(parent_pose.rotation)
-                        * ((offset
-                            + delta
-                            + self.playback.as_ref().map_or(Vec3::ZERO, |clip| {
-                                clip.translation(index, motion.seconds)
-                            }))
-                            * scale);
+                        * ((offset + delta + sample(index).1) * scale);
                 pose.translation_scale[..3].copy_from_slice(&position.to_array());
                 let axis = self
                     .wind
@@ -158,10 +204,7 @@ impl HatRig {
                         axis,
                         motion.bend * (self.flex[index] - self.flex[parent]),
                     )
-                    * self
-                        .playback
-                        .as_ref()
-                        .map_or(Quat::IDENTITY, |clip| clip.rotation(index, motion.seconds))
+                    * sample(index).0
                     * span_rotation)
                     .to_array();
             }
@@ -225,17 +268,49 @@ impl Motion {
                 clip.normalize(f64::from(self.seconds) + f64::from(seconds))
             }
             Some(_) => self.seconds,
-            None => 0.0,
+            None => match &rig(item).companion {
+                Some(_) if seconds.is_finite() && seconds > 0.0 => {
+                    (self.seconds + seconds).rem_euclid(60.0)
+                }
+                _ => 0.0,
+            },
         };
     }
 }
 
 #[derive(Default)]
 pub struct HatPoseCache {
+    anchor: Option<(Item, Arc<crate::ActorAttachmentBindings>, Option<usize>)>,
     key: Option<(Item, RenderBoneTransform, Motion)>,
     pose: Arc<[RenderBoneTransform]>,
 }
 impl HatPoseCache {
+    /// Rebinds an equipped anchor only when its item or retained appearance changes.
+    /// Newly admitted items use the same skeleton index without rebuilding the appearance.
+    pub fn anchor(
+        &mut self,
+        item: Item,
+        bindings: Option<&Arc<crate::ActorAttachmentBindings>>,
+        names: &[Box<str>],
+    ) -> Option<usize> {
+        let Some(bindings) = bindings else {
+            #[cfg(test)]
+            crate::actor_bindings::ANCHOR_LOOKUPS.with(|count| count.set(count.get() + 1));
+            return names
+                .iter()
+                .position(|name| name.eq_ignore_ascii_case(&item.descriptor().attachment_bone));
+        };
+        if let Some((previous, appearance, bone)) = &self.anchor
+            && *previous == item
+            && Arc::ptr_eq(appearance, bindings)
+        {
+            return *bone;
+        }
+        let bone = bindings.anchor(item);
+        self.anchor = Some((item, Arc::clone(bindings), bone));
+        bone
+    }
+
     /// Reuses immutable poses when the attachment bone and its evaluated motion are unchanged.
     pub fn pose(
         &mut self,
@@ -251,7 +326,16 @@ impl HatPoseCache {
             .playback
             .as_ref()
             .filter(|_| motion.seconds.is_finite())
-            .map_or(0.0, |clip| clip.normalize(f64::from(motion.seconds)));
+            .map_or_else(
+                || {
+                    if model.companion.is_some() && motion.seconds.is_finite() {
+                        motion.seconds.max(0.0).rem_euclid(60.0)
+                    } else {
+                        0.0
+                    }
+                },
+                |clip| clip.normalize(f64::from(motion.seconds)),
+            );
         let key = (item, head, motion);
         if self.key != Some(key) {
             self.pose = model.pose(head, motion);
@@ -270,10 +354,12 @@ mod cosmetics_animation;
 #[cfg(test)]
 mod emitter_tests;
 mod emitters;
+pub mod ground;
 pub use emitters::{
     COSMETIC_EFFECT_NAMESPACE, COSMETIC_PARTICLE_TEXTURE, COSMETIC_SPRITE_SIDE, CosmeticEmitter,
-    CosmeticSprite, MAX_COSMETIC_EMITTERS,
+    CosmeticSprite, CosmeticTrigger, MAX_COSMETIC_EMITTERS,
 };
+pub mod cloth;
 #[cfg(any(test, feature = "test-support"))]
 pub mod fixture;
 #[cfg(test)]
@@ -283,3 +369,5 @@ mod preview;
 #[cfg(test)]
 mod tests;
 pub mod thumbnail;
+
+pub mod companion;

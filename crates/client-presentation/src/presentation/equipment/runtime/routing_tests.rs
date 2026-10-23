@@ -1,8 +1,9 @@
 //! Equipment selection and fallback outcomes across mounts and catalog layers.
 
 use super::*;
+use crate::presentation::equipment::LAYER_MAIN_HAND;
 use crate::presentation::equipment::display::{
-    LAYER_CHESTPLATE, LAYER_HELMET, LAYER_MAIN_HAND, LAYER_OFF_HAND, head_block_display,
+    LAYER_CHESTPLATE, LAYER_HELMET, LAYER_OFF_HAND, head_block_display,
 };
 use assets::ArmorSlot;
 
@@ -270,7 +271,9 @@ fn equipment_routing_fallback_table() {
                             &stack,
                             &bones,
                             JavaGrip::default(),
+                            1.0,
                             &mut fallback,
+                            false,
                         );
                     } else {
                         runtime.push_attached(
@@ -285,6 +288,7 @@ fn equipment_routing_fallback_table() {
                                 5
                             }),
                             matches!(mount, BlockHelmet).then(head_block_display),
+                            1.0,
                             &mut fallback,
                         );
                     }

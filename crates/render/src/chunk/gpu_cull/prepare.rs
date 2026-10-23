@@ -29,6 +29,25 @@ const MIN_CAPACITY: u32 = 1024;
 pub(in crate::chunk) struct ChunkHiddenEntities {
     pub(super) hidden: HashSet<Entity>,
     pub(super) changed: Vec<Entity>,
+    /// Moves whenever `hidden` changes; shader-pack draw lists rebuild only then.
+    #[cfg_attr(not(feature = "shaderpacks"), allow(dead_code))]
+    revision: u64,
+}
+
+#[cfg_attr(
+    not(feature = "shaderpacks"),
+    expect(dead_code, reason = "read by shader-pack draws")
+)]
+impl ChunkHiddenEntities {
+    /// Whether the cave culler hides render entity `entity`.
+    pub(in crate::chunk) fn contains(&self, entity: Entity) -> bool {
+        self.hidden.contains(&entity)
+    }
+
+    /// Moves whenever the hidden set changes.
+    pub(in crate::chunk) fn revision(&self) -> u64 {
+        self.revision
+    }
 }
 
 pub(super) struct PreparedPyramid {
@@ -97,6 +116,17 @@ impl GpuCull {
         })
     }
 
+    /// Samples rejection feedback without changing the visibility used for drawing.
+    pub(super) fn encode_feedback(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        feedback: &super::feedback::GpuCullFeedback,
+    ) {
+        if let Some(storage) = &self.storage {
+            feedback.encode(encoder, &storage.record_draws);
+        }
+    }
+
     pub(super) fn clear_fixed_args(&self, encoder: &mut wgpu::CommandEncoder) {
         if self.submission == GpuCullSubmission::Fixed
             && let Some(args) = &self.args
@@ -121,6 +151,7 @@ pub(super) fn extract_hidden_chunks(
         };
         if changed {
             hidden.changed.push(entity);
+            hidden.revision += 1;
         }
     }
 }
@@ -138,6 +169,7 @@ pub(super) fn prepare_gpu_cull(
     mut cull: ResMut<GpuCull>,
     mut hidden: ResMut<ChunkHiddenEntities>,
     frame: Res<GpuCullFrame>,
+    mut feedback: ResMut<super::feedback::GpuCullFeedback>,
     changed: Query<
         (Entity, &GpuChunkAllocation, Option<&ChunkRenderInstance>),
         Changed<GpuChunkAllocation>,
@@ -212,6 +244,12 @@ pub(super) fn prepare_gpu_cull(
         cull.bound_pyramid = pyramid_id;
     }
     cull.prepared_view = Some(view.entity);
+    feedback.prepare(
+        &device,
+        view.entity,
+        cull.slot_count(),
+        &storage.record_draws,
+    );
 }
 
 /// Grows storage when the slot watermark passes it, then writes dirty records and bits.

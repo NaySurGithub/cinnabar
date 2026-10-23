@@ -17,6 +17,7 @@ import (
 	"github.com/hashimthearab/rust-mcbe/core/authcache"
 	"github.com/hashimthearab/rust-mcbe/core/catalog"
 	"github.com/hashimthearab/rust-mcbe/core/internal/bridgecontract"
+	"github.com/hashimthearab/rust-mcbe/core/internal/joinprofile"
 	"github.com/hashimthearab/rust-mcbe/core/internal/redact"
 	"github.com/sandertv/gophertunnel/minecraft"
 	"github.com/sandertv/gophertunnel/minecraft/p2p"
@@ -64,7 +65,9 @@ func dialTransportWithin(ctx context.Context, network minecraft.Network, address
 	bounded, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
 	started := time.Now()
+	dialDone := joinprofile.Stage(ctx, "transport_dial")
 	conn, err := network.DialContext(bounded, address)
+	dialDone()
 	if err == nil {
 		// Separates a transport stall from a login stall when a join hangs.
 		slog.Info("upstream transport connected", "target", redact.Private(address), "elapsed_ms", time.Since(started).Milliseconds())
@@ -113,14 +116,15 @@ func dialSignedOut(ctx context.Context, selected minecraft.Network, address stri
 }
 
 type resolvedUpstreamTarget struct {
-	address    string
-	network    minecraft.Network
-	clientData func(*login.ClientData) // applies a joined session's login fields
-	friend     interface{ Close() error }
-	xbox       interface{ Close() error }
-	local      interface{ Close() error }
-	offline    bool // explicit own-world offline LAN selection, never an authentication fallback
-	realm      bool // vanilla words a failed Realm join as its own
+	address         string
+	network         minecraft.Network
+	clientData      func(*login.ClientData) // applies a joined session's login fields
+	friend          interface{ Close() error }
+	xbox            interface{ Close() error }
+	local           interface{ Close() error }
+	offline         bool // explicit own-world offline login, never an authentication fallback
+	keylessFallback bool // own loopback BDS may admit an offline login when it has no service keys
+	realm           bool // vanilla words a failed Realm join as its own
 }
 
 // realmJoinError marks a failure while joining a Realm.

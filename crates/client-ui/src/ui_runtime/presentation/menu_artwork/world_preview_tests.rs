@@ -46,6 +46,26 @@ fn row(index: usize) -> (MenuAction, ui::UiRect) {
 }
 
 #[test]
+fn first_world_list_paint_requests_a_bounded_preview_batch_without_row_geometry() {
+    for count in [0, 1, FIRST_BATCH, FIRST_BATCH + 1] {
+        let mut view = catalog();
+        view.local_worlds.truncate(count);
+        let images = view_images(&view, &[]);
+        let expected: Vec<_> = view
+            .local_worlds
+            .iter()
+            .take(FIRST_BATCH)
+            .filter_map(|world| world.thumbnail.as_ref())
+            .map(|thumbnail| thumbnail.key.clone())
+            .collect();
+        assert_eq!(
+            images.into_iter().map(|(key, _)| key).collect::<Vec<_>>(),
+            expected
+        );
+    }
+}
+
+#[test]
 fn scrolling_past_the_atlas_budget_installs_the_revealed_world_preview() {
     let view = catalog();
     let mut presentation =
@@ -73,6 +93,7 @@ fn the_edited_world_gets_atlas_space_from_play_and_storage() {
     let id = format!("{last_index:016x}");
     view.local.screen = Screen::Edit;
     view.local.edited = Some(World {
+        options: Default::default(),
         id: id.clone(),
         name: "Preview".into(),
         game_mode: bridge::GameMode::Survival,
@@ -82,6 +103,7 @@ fn the_edited_world_gets_atlas_space_from_play_and_storage() {
         seed: 0,
         created_unix: 0,
         last_played_unix: 0,
+        options_unavailable: false,
         size_bytes: 0,
     });
     let mut presentation =

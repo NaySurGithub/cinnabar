@@ -221,9 +221,20 @@ pub(crate) fn prepare_cloud_records(
                 uploaded_bytes = work.uploaded_bytes
             );
             let _guard = span.enter();
-            let (mesh, waited) = prepared
-                .mesh_cache
-                .get(runtime, viewport, above, *diagnostics);
+            let Some((mesh, waited)) =
+                prepared
+                    .mesh_cache
+                    .get(runtime, viewport, above, *diagnostics)
+            else {
+                prepared.record_count = 0;
+                prepared.prepared_identity = None;
+                prepared.geometry_diagnostic = None;
+                prepared.bind_group = None;
+                prepared
+                    .mesh_cache
+                    .prefetch(runtime, viewport, *diagnostics);
+                continue;
+            };
             let records = &mesh.records;
             let bytes = bytemuck::cast_slice::<ViewportCloudQuad, u8>(records);
             if !bytes.is_empty() {
@@ -232,13 +243,19 @@ pub(crate) fn prepare_cloud_records(
                     .as_ref()
                     .is_none_or(|buffer| buffer.size() < bytes.len() as u64)
                 {
-                    prepared.record_buffer =
-                        Some(uploads.device.create_buffer(&BufferDescriptor {
+                    let Some(buffer) = crate::gpu_allocation::buffer(
+                        &uploads.device,
+                        &BufferDescriptor {
                             label: Some("retained viewport cloud quad records"),
                             size: (bytes.len() as u64).next_power_of_two(),
                             usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
                             mapped_at_creation: false,
-                        }));
+                        },
+                    ) else {
+                        // Out of memory keeps drawing the previous clouds and retries next frame.
+                        continue;
+                    };
+                    prepared.record_buffer = Some(buffer);
                     prepared.bind_group = None;
                     work.buffer_creations += 1;
                 }
@@ -490,6 +507,10 @@ fn prepare_cloud_bind_group(
     }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "a queue system's render-world inputs"
+)]
 fn queue_clouds(
     pipeline_cache: Res<PipelineCache>,
     mut pipeline: ResMut<CloudPipeline>,
@@ -504,12 +525,16 @@ fn queue_clouds(
         &bevy::render::camera::ExtractedCamera,
         &Msaa,
     )>,
+    pack: render_scene::shaderpack::ShaderPackDrawnEffects,
 ) {
     if !visibility.0 || !atmosphere.sky_kind().has_clouds() {
         return;
     }
     let draw_function = draw_functions.read().id::<DrawCloudCommands>();
     for (view_entity, main_entity, view, extracted_camera, msaa) in &views {
+        if pack.replaces(view_entity, |drawn| drawn.clouds) {
+            continue;
+        }
         let Some(prepared) = gpu.views.get(&view_entity) else {
             continue;
         };

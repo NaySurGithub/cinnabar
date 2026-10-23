@@ -23,6 +23,13 @@ pub use creative::{
     CreativeCategory, CreativeContentEvent, CreativeGroup, CreativeItem, MAX_CREATIVE_GROUPS,
     MAX_CREATIVE_ITEMS, normalize_creative_content,
 };
+mod crafting_rules;
+pub use crafting_rules::CraftingRules;
+mod options;
+pub(crate) use options::normalize_inventory_options;
+pub use options::{
+    InventoryLayout, InventoryOptions, InventoryRightTab, InventoryTab, inventory_options_packet,
+};
 mod furnace_options;
 pub(crate) use furnace_options::normalize_furnace_options;
 pub use furnace_options::{
@@ -38,9 +45,14 @@ pub use legacy::{
 mod raw_scan;
 pub mod recipes;
 mod request;
+mod trade;
 mod transaction;
 mod validation;
 mod windows;
+pub(crate) use trade::normalize_trade;
+pub use trade::{TradeEvent, TradeItem, TradeOffer};
+#[cfg(test)]
+mod trade_tests;
 pub use address::{
     ARMOR_WINDOW_ID, CONTAINER_NAME_ARMOR, CONTAINER_NAME_COMBINED_HOTBAR_AND_INVENTORY,
     CONTAINER_NAME_CRAFT_INPUT, CONTAINER_NAME_CURSOR, CONTAINER_NAME_DYNAMIC,
@@ -57,15 +69,15 @@ pub(crate) use raw_scan::validate_raw_inventory_packet;
 pub use request::mining::{MineBlockRequest, MineBlockRequestError};
 pub(crate) use transaction::normalize_transaction;
 pub use windows::{
-    MAX_GENERIC_STORAGE_SLOTS, NO_CONTAINER_WINDOW_TYPE, OpenCells, UI_SLOT_COUNT,
-    WINDOW_TYPE_ANVIL, WINDOW_TYPE_BEACON, WINDOW_TYPE_BLAST_FURNACE, WINDOW_TYPE_BREWING_STAND,
-    WINDOW_TYPE_CARTOGRAPHY, WINDOW_TYPE_CONTAINER, WINDOW_TYPE_CRAFTER, WINDOW_TYPE_DISPENSER,
-    WINDOW_TYPE_DROPPER, WINDOW_TYPE_ENCHANTMENT, WINDOW_TYPE_FURNACE, WINDOW_TYPE_GRINDSTONE,
-    WINDOW_TYPE_HOPPER, WINDOW_TYPE_HORSE, WINDOW_TYPE_LECTERN, WINDOW_TYPE_LOOM,
-    WINDOW_TYPE_SMITHING_TABLE, WINDOW_TYPE_SMOKER, WINDOW_TYPE_STONECUTTER, WINDOW_TYPE_WORKBENCH,
-    WindowKind, WindowSegment, is_chest_like_name, is_open_window_name, is_result_preview_name,
-    open_cell_request, open_name_first_cell, ui_slot_container_name, ui_slot_for_name,
-    ui_slot_request_container,
+    LEGACY_TRADE_SLOTS, MAX_GENERIC_STORAGE_SLOTS, MODERN_TRADE_SLOTS, NO_CONTAINER_WINDOW_TYPE,
+    OpenCells, UI_SLOT_COUNT, WINDOW_TYPE_ANVIL, WINDOW_TYPE_BEACON, WINDOW_TYPE_BLAST_FURNACE,
+    WINDOW_TYPE_BREWING_STAND, WINDOW_TYPE_CARTOGRAPHY, WINDOW_TYPE_CONTAINER, WINDOW_TYPE_CRAFTER,
+    WINDOW_TYPE_DISPENSER, WINDOW_TYPE_DROPPER, WINDOW_TYPE_ENCHANTMENT, WINDOW_TYPE_FURNACE,
+    WINDOW_TYPE_GRINDSTONE, WINDOW_TYPE_HOPPER, WINDOW_TYPE_HORSE, WINDOW_TYPE_LECTERN,
+    WINDOW_TYPE_LOOM, WINDOW_TYPE_SMITHING_TABLE, WINDOW_TYPE_SMOKER, WINDOW_TYPE_STONECUTTER,
+    WINDOW_TYPE_TRADE, WINDOW_TYPE_WORKBENCH, WindowKind, WindowSegment, is_chest_like_name,
+    is_open_window_name, is_result_preview_name, open_cell_request, open_name_first_cell,
+    ui_slot_container_name, ui_slot_for_name, ui_slot_request_container,
 };
 mod registry_snapshot;
 pub use recipes::{
@@ -74,10 +86,11 @@ pub use recipes::{
 pub use registry_snapshot::{RecipeRegistryError, RecipeRegistrySnapshot};
 pub use request::{
     ARMOR_SLOTS, AutoCraftIngredient, CRAFTING_INPUT_SLOTS, CREATED_OUTPUT_SLOT, CraftResult,
-    MAX_FILTER_STRINGS, MAX_STACK_REQUEST_ACTIONS, PLAYER_INVENTORY_SLOTS, StackItemDescriptor,
-    StackRequestAction, StackRequestContainer, StackRequestSlot, container_close_packet,
-    item_stack_request_batch, item_stack_request_packet, item_stack_request_packet_filtered,
-    open_inventory_packet, repeated_container_open_warning_packet,
+    MAX_FILTER_STRINGS, MAX_STACK_REQUEST_ACTIONS, MAX_STACK_REQUEST_AMOUNT,
+    PLAYER_INVENTORY_SLOTS, StackItemDescriptor, StackRequestAction, StackRequestContainer,
+    StackRequestSlot, container_close_packet, item_stack_request_batch, item_stack_request_packet,
+    item_stack_request_packet_filtered, open_inventory_packet,
+    repeated_container_open_warning_packet,
 };
 use validation::validate_item_user_data;
 pub const MAX_CONTAINER_SLOTS: usize = 4_096;
@@ -233,6 +246,8 @@ pub const MAX_ENCHANT_OPTIONS: usize = 8;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InventoryEvent {
     Recipes(recipes::RecipeUpdate),
+    RecipeUnlocks(recipes::RecipeUnlockUpdate),
+    CraftingRules(CraftingRules),
     Authority(InventoryAuthority),
     Content(InventoryContentEvent),
     Slot(InventorySlotEvent),
@@ -245,7 +260,9 @@ pub enum InventoryEvent {
     RegistryCleanup(Arc<[ContainerIdentity]>),
     Data(ContainerDataEvent),
     EnchantOptions(EnchantOptionsEvent),
+    Trade(TradeEvent),
     FurnaceOptions(FurnaceOptionsEvent),
+    Options(InventoryOptions),
     Creative(CreativeContentEvent),
 }
 
@@ -435,6 +452,16 @@ impl VerifiedNetworkItemStack {
             )),
             user_data_buffer: bytes::Bytes::copy_from_slice(&self.inner.extra_data),
         })
+    }
+
+    /// The descriptor a client inventory transaction writes for each of its items: full contents,
+    /// never a stack network id.
+    pub(crate) fn into_transaction_vendor_item(
+        self,
+    ) -> Result<ItemStackDescriptor, InventoryPacketError> {
+        let mut item = self.into_vendor_item()?;
+        item.net_id_variant = None;
+        Ok(item)
     }
 }
 

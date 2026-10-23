@@ -197,10 +197,17 @@ fn classify_event(event: &WorldEvent, context: LaneContext) -> Footprint {
             retention: true,
             ..Footprint::session(C::NONE)
         },
-        WorldEvent::Respawn(_) => Footprint {
+        WorldEvent::Respawn(respawn) => Footprint {
             retention: true,
-            ..Footprint::session(C::CONTROLS)
+            ..Footprint::session(if respawn.ready_to_spawn() {
+                C::CONTROLS.with(C::UI)
+            } else {
+                C::CONTROLS
+            })
         },
+        WorldEvent::MovePlayer(movement) if !local(movement.runtime_id) => {
+            Footprint::session(C::ACTORS)
+        }
         WorldEvent::MovePlayer(movement) if movement.mode.is_teleport() => Footprint {
             retention: true,
             ..Footprint::session(C::CONTROLS.with(C::ACTORS))
@@ -210,6 +217,18 @@ fn classify_event(event: &WorldEvent, context: LaneContext) -> Footprint {
             local_authority: true,
             ..Footprint::session(C::CONTROLS.with(C::ACTORS))
         },
+        WorldEvent::Actor(ActorEvent::Move(movement))
+            if local(movement.runtime_id)
+                && movement.dimension == context.dimension
+                && movement.player_mode.is_none()
+                && movement.controls_local_actor() =>
+        {
+            Footprint {
+                positional: true,
+                local_authority: true,
+                ..Footprint::session(C::CONTROLS.with(C::ACTORS))
+            }
+        }
         WorldEvent::PlayerMovementCorrection(correction) if correction.subject.is_player() => {
             Footprint {
                 positional: true,
@@ -298,7 +317,14 @@ fn classify_event(event: &WorldEvent, context: LaneContext) -> Footprint {
         | WorldEvent::WorldSpawn(_)
         | WorldEvent::WorldClocks(_)
         | WorldEvent::Weather(_) => Footprint::session(C::CONTROLS),
-        WorldEvent::GameRules(_) => Footprint::session(C::CONTROLS.with(C::UI)),
+        WorldEvent::GameRules(rules) => {
+            let consumers = C::CONTROLS.with(C::UI);
+            Footprint::session(if rules.crafting.is_empty() {
+                consumers
+            } else {
+                consumers.with(C::INVENTORY)
+            })
+        }
         // Positional sounds may wait in the actor store for their actor's synchronization.
         WorldEvent::Audio(AudioEvent::Level(level)) if level.fire_at_position.is_some() => {
             Footprint::session(C::AUDIO.with(C::ACTORS))
@@ -342,6 +368,9 @@ fn classify_event(event: &WorldEvent, context: LaneContext) -> Footprint {
         WorldEvent::Ui(UiEvent::PlayerGameMode { .. } | UiEvent::DefaultGameMode(_)) => {
             Footprint::session(C::UI.with(C::ACTORS))
         }
+        WorldEvent::Ui(UiEvent::Hud(protocol::HudEvent::Health { .. })) => {
+            Footprint::session(C::UI.with(C::ACTORS).with(C::CONTROLS))
+        }
         WorldEvent::Ui(UiEvent::Boss(_)) => Footprint::session(C::UI.with(C::ACTORS)),
         WorldEvent::Ui(_) | WorldEvent::Experience(_) | WorldEvent::MapData(_) => {
             Footprint::session(C::UI)
@@ -360,6 +389,13 @@ fn actor_consumers(event: &ActorEvent, context: LaneContext) -> Consumers {
     let local_runtime = |runtime_id: u64| runtime_id == context.local_runtime_id;
     match event {
         ActorEvent::Move(_) | ActorEvent::Identifiers(_) => C::ACTORS,
+        ActorEvent::Spawn(spawn)
+        | ActorEvent::PlayerSpawn { spawn, .. }
+        | ActorEvent::PaintingSpawn { spawn, .. }
+            if local_runtime(spawn.runtime_id) =>
+        {
+            C::ACTORS.with(C::CONTROLS).with(C::UI)
+        }
         ActorEvent::Metadata(update) if local_runtime(update.runtime_id) => {
             C::ACTORS.with(C::CONTROLS).with(C::UI)
         }
@@ -369,7 +405,9 @@ fn actor_consumers(event: &ActorEvent, context: LaneContext) -> Consumers {
         ActorEvent::Status(status) if local_runtime(status.runtime_id) => {
             C::ACTORS.with(C::CONTROLS).with(C::UI)
         }
-        ActorEvent::PlayerList(_) => C::ACTORS.with(C::CONTROLS).with(C::UI),
+        ActorEvent::PlayerList(_) | ActorEvent::Skin { .. } => {
+            C::ACTORS.with(C::CONTROLS).with(C::UI)
+        }
         // A pickup voices its own sound, which the audio consumer orders by sequence.
         ActorEvent::TakeItem(_) => C::ACTORS.with(C::UI).with(C::AUDIO),
         // Spawns and removals can change the local mount, which publishes a UI delta.

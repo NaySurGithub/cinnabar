@@ -42,6 +42,7 @@ fn complete_large_menu_final_button_sends_its_original_wire_index() {
                 &mut runtime,
                 &frame,
                 EngineInput {
+                    touch: false,
                     cursor: Some(cursor),
                     keys: &[],
                     pointer: PointerButtons {
@@ -59,10 +60,14 @@ fn complete_large_menu_final_button_sends_its_original_wire_index() {
         }
         let mut sent = Vec::new();
         assert!(
-            super::super::flush_form_response(&mut runtime, |packet| {
-                sent.push(packet);
-                Ok(())
-            })
+            super::super::flush_form_response(
+                &mut runtime,
+                |_| false,
+                |packet| {
+                    sent.push(packet);
+                    Ok(())
+                }
+            )
             .unwrap()
         );
         assert_eq!(
@@ -126,6 +131,103 @@ fn review_escape_dispatches_the_vanilla_form_screen_cancel() {
         ScreenEvent::Button(button) if mapped_action(&runtime.server_forms().active().unwrap().model, button) == Some(LocalFormAction::Dismiss)
             && button.down && button.interacted
     )), "{events:?}");
+}
+
+#[test]
+fn a_toggle_mapped_to_submit_answers_with_its_changed_value_on_release() {
+    toggle_submit(false);
+    toggle_submit(true);
+}
+
+/// Touch toggles defer changes until release, while mouse toggles retain their press behavior.
+fn toggle_submit(touch: bool) {
+    let mut player = player_state::PlayerState::new(1);
+    let mut runtime = crate::ui_runtime::presentation::forms::compatibility_tests::replay(
+        &mut player,
+        r#"{"type":"custom_form","content":[{"type":"toggle","text":"Open editor","default":false}]}"#,
+        false,
+    );
+    let mut presentation = mini_engine_presentation();
+    presentation.set_server_ui_pack(&ServerUiPack {
+        ui_layers: vec![vec![("ui/server_form.json".into(), br#"{
+            "namespace":"server_form",
+            "main_screen_content": {"controls":[{"server_form_factory": {
+                "type":"factory","control_ids":{"custom_form":"@server_form.main_custom_form_screen"}
+            }}]},
+            "main_custom_form_screen": {"type":"panel","size":[100,100],"controls":[{"trigger": {
+                "type":"toggle","size":[40,20],"collection_index":0,
+                "toggle_name":"custom_toggle","toggle_collection_name":"custom_form",
+                "button_mappings":[{"from_button_id":"button.menu_select","to_button_id":"button.submit_custom_form","mapping_type":"pressed"}]
+            }}]}
+        }"#.to_vec())]], ..Default::default()
+    });
+    presentation
+        .build(
+            &player,
+            &runtime,
+            0,
+            [1280, 720],
+            ui::DpiScale::new(1.0).unwrap(),
+        )
+        .unwrap();
+    let identity = runtime.server_forms().active().unwrap().identity;
+    let frame = presentation.form_engine_frame(identity).unwrap().clone();
+    let hit = frame
+        .hits
+        .iter()
+        .find(|hit| hit.kind == HitKind::Toggle)
+        .unwrap();
+    let cursor = UiPoint::new(
+        frame.origin[0] + (hit.rect.x + 1.0) as f32 * frame.scale,
+        frame.origin[1] + (hit.rect.y + 1.0) as f32 * frame.scale,
+    )
+    .unwrap();
+    for down in [true, false] {
+        drive(
+            &mut runtime,
+            &frame,
+            EngineInput {
+                touch,
+                cursor: Some(cursor),
+                keys: &[],
+                pointer: PointerButtons {
+                    pressed: down,
+                    released: !down,
+                    held: down,
+                },
+                pointer_edges: vec![down],
+                wheel: Vec::new(),
+                typed: Vec::new(),
+                now: if down { 0.0 } else { 0.01 },
+                animator: None,
+            },
+        );
+        if down && touch {
+            assert_eq!(
+                runtime.server_forms().engine().values,
+                [FormValue::Toggle(false)]
+            );
+        }
+    }
+    let mut sent = Vec::new();
+    assert!(
+        super::super::flush_form_response(
+            &mut runtime,
+            |_| true,
+            |packet| {
+                sent.push(packet);
+                Ok(())
+            }
+        )
+        .unwrap()
+    );
+    assert_eq!(
+        sent,
+        vec![protocol::custom_form_submit_response(
+            identity.form_id,
+            &[protocol::CustomFormValue::Toggle(true)]
+        )]
+    );
 }
 
 #[test]
@@ -247,6 +349,7 @@ fn review_pointer_release_then_press_keeps_the_second_capture() {
         &mut runtime,
         &frame,
         EngineInput {
+            touch: false,
             cursor: Some(UiPoint::new(gui[0], gui[1]).unwrap()),
             keys: &[],
             pointer: PointerButtons {
@@ -297,6 +400,7 @@ fn review_ui_release_applies_the_final_control_drag_position() {
             &mut runtime,
             &frame,
             EngineInput {
+                touch: false,
                 cursor: Some(cursor),
                 keys: &[],
                 pointer: PointerButtons {
@@ -353,6 +457,7 @@ fn review_ui_release_applies_the_final_scrollbar_position() {
         &mut runtime,
         &frame,
         EngineInput {
+            touch: false,
             cursor: Some(
                 UiPoint::new(frame.origin[0], frame.origin[1] + 30.0 * frame.scale).unwrap(),
             ),
@@ -653,4 +758,81 @@ fn unchecked_dropdown_options_leave_toggle_answers_unchanged() {
             protocol::CustomFormValue::Dropdown(1)
         ]
     );
+}
+
+#[test]
+fn a_completed_form_swipe_preserves_fling_and_overscroll_motion() {
+    for (offset, delta) in [(150.0, -5.0), (0.0, 5.0)] {
+        let mut player = player_state::PlayerState::new(1);
+        let mut runtime = pack_harness::action_form(&mut player, "Scrollable", &["Action"]);
+        let metrics = json_ui::ScrollMetrics {
+            offset,
+            content: 500.0,
+            viewport: 100.0,
+            gesture: true,
+            touch_mode: true,
+            ..Default::default()
+        };
+        let frame = EngineFrame {
+            hits: [].into(),
+            report: json_ui::LayoutReport {
+                scrolls: [("list".into(), metrics.clone())].into(),
+                ..Default::default()
+            },
+            cancel_target: None,
+            origin: [0.0, 0.0],
+            scale: 1.0,
+            panel: None,
+            edit_texts: Vec::new(),
+            top: Vec::new(),
+        };
+        let point = [50.0, 50.0 + delta * 20.0];
+        let engine = runtime.server_forms_mut().engine_mut();
+        engine.view.scroll.insert("list".into(), offset);
+        engine.view.begin_scroll_touch("list", &metrics);
+        for _ in 0..20 {
+            engine
+                .view
+                .scroll_touch_moved("list", &metrics, [0.0, delta]);
+            engine.view.step_scrolls(&frame.report, 1.0 / 60.0);
+        }
+        engine.scroll_touch = Some(("list".into(), point));
+        engine.view.pressed = Some("action".into());
+        drive(
+            &mut runtime,
+            &frame,
+            EngineInput {
+                touch: true,
+                cursor: Some(UiPoint::new(point[0] as f32, point[1] as f32).unwrap()),
+                keys: &[],
+                pointer: PointerButtons {
+                    released: true,
+                    ..Default::default()
+                },
+                pointer_edges: vec![false],
+                wheel: Vec::new(),
+                typed: Vec::new(),
+                now: 0.0,
+                animator: None,
+            },
+        );
+        assert!(runtime.server_forms().active().is_some());
+        let engine = runtime.server_forms_mut().engine_mut();
+        let motion = engine.view.scroll_state["list"].motion.as_ref().unwrap();
+        assert!(!motion.touching);
+        assert!(engine.scroll_clock.is_some());
+        assert!(engine.scroll_touch.is_none() && engine.view.pressed.is_none());
+        let released_offset = engine.view.scroll_offset("list");
+        if offset == 0.0 {
+            assert!(
+                released_offset < 0.0,
+                "overscroll must remain spring-driven"
+            );
+        }
+        engine.view.step_scrolls(&frame.report, 1.0 / 60.0);
+        assert_ne!(engine.view.scroll_offset("list"), released_offset);
+        engine.cancel_pointer_input();
+        assert!(engine.view.scroll_state["list"].motion.is_none());
+        assert!(engine.scroll_clock.is_none());
+    }
 }

@@ -26,11 +26,19 @@ pub(super) fn draw(
     match section {
         SettingSection::Accessibility => accessibility(content),
         SettingSection::Video => video(content),
+        SettingSection::Shaders => super::renderer::shaders(content),
         SettingSection::Sound => audio(content),
         SettingSection::KeyboardAndMouse => keyboard(content),
         SettingSection::ControllerAndSwitch => controller(content),
         SettingSection::General => general(content),
+        SettingSection::Updates => super::updates::draw(content),
         SettingSection::Creator => creator(content),
+        SettingSection::Chat => chat(content),
+        SettingSection::Discord => discord(content),
+        SettingSection::Server => content.heading(
+            section.title(),
+            "Settings supplied by the connected server appear here when available.",
+        ),
         _ => Ok(()),
     }
 }
@@ -48,11 +56,6 @@ fn accessibility(content: &mut Content<'_, '_>) -> Result<(), PaintError> {
         "menu.accessibility.tab.title",
         "menu.accessibility.tab.description",
     )?;
-    content.heading(
-        "menu.accessibility.tab.tts.title",
-        "menu.accessibility.tab.tts.description",
-    )?;
-    options(content, SettingPanel::AccessibilityTts)?;
     content.heading(
         "menu.accessibility.tab.gameplay.title",
         "menu.accessibility.tab.gameplay.description",
@@ -73,7 +76,7 @@ fn accessibility(content: &mut Content<'_, '_>) -> Result<(), PaintError> {
 fn video(content: &mut Content<'_, '_>) -> Result<(), PaintError> {
     content.heading("menu.video.tab.title", "menu.video.tab.description")?;
     super::presets::draw(content)?;
-    content.option(SettingId::GraphicsApi)?;
+    options(content, SettingPanel::VideoBackend)?;
     content.heading(
         "menu.video.group.general",
         "menu.video.group.general.description",
@@ -83,6 +86,7 @@ fn video(content: &mut Content<'_, '_>) -> Result<(), PaintError> {
         "menu.video.group.performance",
         "menu.video.group.performance.description",
     )?;
+    super::renderer::draw(content)?;
     options(content, SettingPanel::VideoPerformance)?;
     let graphics = if content.view.settings_options.value(SettingId::GraphicsMode) == 0 {
         "options.graphicsModeOptions.simple"
@@ -162,7 +166,10 @@ fn draw_macros(content: &mut Content<'_, '_>) -> Result<(), PaintError> {
 }
 
 /// One macro slot: its title with the bound key, then the command box beneath.
-fn draw_macro_slot(content: &mut Content<'_, '_>, slot: usize) -> Result<(), PaintError> {
+pub(super) fn draw_macro_slot(
+    content: &mut Content<'_, '_>,
+    slot: usize,
+) -> Result<(), PaintError> {
     draw_macro_binding(content, slot)?;
     draw_macro_command(content, slot)
 }
@@ -172,6 +179,7 @@ fn draw_macro_binding(content: &mut Content<'_, '_>, slot: usize) -> Result<(), 
     let control = content.view.settings_options.macro_control(slot);
     let capturing = content
         .view
+        .settings
         .key_remap
         .is_some_and(|index| macro_row(usize::from(index)) == Some(slot));
     let title = content.word(&macro_title(slot));
@@ -376,14 +384,15 @@ fn bindings(content: &mut Content<'_, '_>, gamepad: bool) -> Result<(), PaintErr
     Ok(())
 }
 
-fn binding(
+/// Draws one binding with its existing capture and reset actions.
+pub(super) fn binding(
     content: &mut Content<'_, '_>,
     defaults: &SettingsOptions,
     index: usize,
     key: &str,
 ) -> Result<(), PaintError> {
     let action = MenuAction::SettingsKey(index as u16);
-    let capturing = content.view.key_remap == Some(index as u16);
+    let capturing = content.view.settings.key_remap == Some(index as u16);
     let control = content.view.settings_options.key_control(index);
     let changed = control != defaults.key_control(index);
     let title = content.word(key);
@@ -439,7 +448,7 @@ fn binding(
         "...".to_owned()
     } else if index >= GAMEPAD_OFFSET {
         control
-            .map(gamepad_name)
+            .map(key_name)
             .unwrap_or_else(|| content.word("controllerLayoutScreen.unassigned"))
     } else {
         let mut value = control
@@ -475,27 +484,6 @@ fn binding(
     Ok(())
 }
 
-fn gamepad_name(control: semantic_input::PhysicalControl) -> String {
-    use semantic_input::PhysicalControl;
-    match control {
-        PhysicalControl::GamepadButton(0) => "A".to_owned(),
-        PhysicalControl::GamepadButton(1) => "B".to_owned(),
-        PhysicalControl::GamepadButton(2) => "Y".to_owned(),
-        PhysicalControl::GamepadButton(3) => "X".to_owned(),
-        PhysicalControl::GamepadButton(4) => "LB".to_owned(),
-        PhysicalControl::GamepadButton(5) => "RB".to_owned(),
-        PhysicalControl::GamepadButton(8) => "LS".to_owned(),
-        PhysicalControl::GamepadButton(9) => "RS".to_owned(),
-        PhysicalControl::GamepadButton(11) => "D-pad Up".to_owned(),
-        PhysicalControl::GamepadButton(12) => "D-pad Down".to_owned(),
-        PhysicalControl::GamepadButton(13) => "D-pad Left".to_owned(),
-        PhysicalControl::GamepadButton(14) => "D-pad Right".to_owned(),
-        PhysicalControl::GamepadAxis { axis: 4, .. } => "LT".to_owned(),
-        PhysicalControl::GamepadAxis { axis: 5, .. } => "RT".to_owned(),
-        _ => key_name(control),
-    }
-}
-
 fn general(content: &mut Content<'_, '_>) -> Result<(), PaintError> {
     content.heading("menu.general.tab.title", "menu.general.tab.description")?;
     options(content, SettingPanel::General)?;
@@ -509,30 +497,10 @@ fn general(content: &mut Content<'_, '_>) -> Result<(), PaintError> {
         "menu.general.tab.network.description",
     )?;
     options(content, SettingPanel::GeneralNetwork)?;
-    if content.view.updates.active {
-        options(content, SettingPanel::GeneralUpdates)?;
-    }
-    if content.view.updates.active && !content.view.over_world {
-        if let Some(message) = &content.view.updates.message {
-            content.heading(message, "")?;
-        }
-        if content.view.updates.switch_available {
-            super::services::action_row(
-                content,
-                "Change channel now",
-                "Download this channel's older build for manual installation.",
-                "Switch now",
-                Some(MenuAction::Update(
-                    launcher::menu::updates::Action::SwitchNow,
-                )),
-            )?;
-        }
-    }
     content.heading(
         "menu.general.tab.miscellaneous.title",
         "menu.general.tab.miscellaneous.description",
     )?;
-    options(content, SettingPanel::GeneralMisc)?;
     super::services::action_row(
         content,
         "Import from Minecraft",
@@ -584,36 +552,33 @@ fn general(content: &mut Content<'_, '_>) -> Result<(), PaintError> {
 }
 
 fn creator(content: &mut Content<'_, '_>) -> Result<(), PaintError> {
-    content.heading("menu.creator.tab.title", "menu.creator.tab.description")?;
-    options(content, SettingPanel::CreatorCoordinates)?;
-    for (title, panel) in [
-        (
-            "menu.creator.group.contentLog",
-            SettingPanel::CreatorContentLog,
-        ),
-        (
-            "menu.creator.group.scriptDebugger",
-            SettingPanel::CreatorDebugger,
-        ),
-        (
-            "menu.creator.group.scriptDiagnostic",
-            SettingPanel::CreatorDiagnostic,
-        ),
-        (
-            "menu.creator.group.scriptWatchdog",
-            SettingPanel::CreatorWatchdog,
-        ),
-        ("menu.creator.group.deviceInfo", SettingPanel::CreatorDevice),
-        ("menu.creator.group.editor", SettingPanel::CreatorEditor),
-        (
-            "menu.creator.group.textFiltering",
-            SettingPanel::CreatorFiltering,
-        ),
-    ] {
-        content.heading(title, "")?;
-        options(content, panel)?;
-    }
-    Ok(())
+    // Vanilla's tab description lists content-log and script tools the client does not have.
+    content.heading("menu.creator.tab.title", "")?;
+    options(content, SettingPanel::CreatorCoordinates)
+}
+
+/// Exposes the existing chat preferences and their shared reset route in the launcher.
+fn chat(content: &mut Content<'_, '_>) -> Result<(), PaintError> {
+    content.heading(
+        SettingSection::Chat.title(),
+        "options.chat.title.description",
+    )?;
+    options(content, SettingPanel::Chat)?;
+    reset(content, SettingsGroup::Chat, "chat.settings.reset")
+}
+
+fn discord(content: &mut Content<'_, '_>) -> Result<(), PaintError> {
+    content.heading(
+        SettingSection::Discord.title(),
+        "discord.settings.description",
+    )?;
+    options(content, SettingPanel::Discord)?;
+    content.heading(
+        "discord.settings.details.title",
+        "discord.settings.details.description",
+    )?;
+    options(content, SettingPanel::DiscordDetails)?;
+    reset(content, SettingsGroup::Discord, "discord.settings.reset")
 }
 
 pub(super) fn fallback(key: &str) -> &str {
@@ -621,7 +586,7 @@ pub(super) fn fallback(key: &str) -> &str {
         "options.renderClouds" => "Render Clouds",
         "options.cinnabar.advanced" => "Advanced",
         "options.framerateLimit.description" => {
-            "Choose an FPS limit or Unlimited. VSync and Variable Refresh Rate may still limit the frame rate."
+            "In game, the default is Unlimited when plugged in and display refresh on battery. Choose Unlimited explicitly to keep it on battery. Menus stay within display refresh; VSync and Variable Refresh Rate may lower the rate."
         }
         "options.showExactServerPing" => "Show exact server ping",
         "options.oreuiDarkMode" => "Dark Mode",
@@ -635,11 +600,80 @@ pub(super) fn fallback(key: &str) -> &str {
             "Controls"
         }
         "hbui.Settings.category.social" | "options.social" => "Social",
+        "options.chat.title" | "chat.settings.title" => "Chat",
+        "options.chat.title.description" => "Chat appearance, opacity, size and colors",
+        "chat.settings.reset" => "Reset Chat Settings",
+        "chat.settings.reset.description" => "Restore all chat options to default values",
+        "chat.settings.reset.buttonLabel" => "Reset",
+        "chat.settings.muteAll" => "Mute All Chat",
+        "chat.settings.muteAll.description" => "Hide all incoming chat messages",
+        "chat.settings.muteEmotes" => "Mute Emotes",
+        "chat.settings.muteEmotes.description" => {
+            "Saved preference; emote chat filtering is not available yet"
+        }
+        "chat.settings.tts" => "Text to Speech for Chat",
+        "chat.settings.tts.description" => "Saved preference; chat narration is not available yet",
+        "chat.settings.fontSize" => "Font Size",
+        "chat.settings.fontSize.description" => "Adjust the scale of chat text",
+        "chat.settings.lineSpacing" => "Line Spacing",
+        "chat.settings.lineSpacing.description" => "Set the spacing between lines in chat",
+        "chat.settings.chatColor" => "Chat Color",
+        "chat.settings.chatColor.description" => "Default color for chat text",
+        "chat.settings.mentionsColor" => "Mentions Color",
+        "chat.settings.mentionsColor.description" => {
+            "Saved preference; mention highlighting is not available yet"
+        }
+        "options.chatBackgroundOpacity" => "Chat Background Opacity",
+        "options.chatBackgroundOpacity.description" => {
+            "Adjust the opacity of the chat background box"
+        }
+        "options.notificationDuration.Chat" => "Chat Notification Duration",
+        "options.notificationDuration.Chat.description" => {
+            "How long chat notifications remain visible on the HUD"
+        }
+        "Discord" | "discord.settings.title" => "Discord",
+        "discord.settings.description" => {
+            "Control what Cinnabar shares with the Discord desktop app"
+        }
+        "discord.settings.enabled" => "Discord Rich Presence",
+        "discord.settings.enabled.description" => {
+            "Publish your current Cinnabar activity to the Discord desktop app"
+        }
+        "discord.settings.details.title" => "Activity details",
+        "discord.settings.details.description" => {
+            "Choose which optional information the Discord activity card can show"
+        }
+        "discord.settings.serverDetails" => "Show server and world details",
+        "discord.settings.serverDetails.description" => {
+            "Display the server address or local world name in the activity card"
+        }
+        "discord.settings.partySize" => "Show party size",
+        "discord.settings.partySize.description" => {
+            "Display the current and maximum player count when available"
+        }
+        "discord.settings.allowJoins" => "Allow Discord joins",
+        "discord.settings.allowJoins.description" => {
+            "Let Discord friends join through the activity card and send join requests"
+        }
+        "discord.settings.timestamp" => "Show elapsed time",
+        "discord.settings.timestamp.description" => {
+            "Show how long you have been in the current activity"
+        }
+        "discord.settings.reset" => "Reset Discord Settings",
+        "discord.settings.reset.description" => "Restore all Discord options to default values",
+        "discord.settings.reset.buttonLabel" => "Reset",
+        "color.white" => "White",
+        "color.green" => "Green",
+        "color.aqua" => "Aqua",
+        "color.red" => "Red",
+        "color.light_purple" => "Light Purple",
+        "color.yellow" => "Yellow",
+        "color.gold" => "Gold",
+        "Chat Position" => "Chat Position",
+        "Chat Position.description" => "Position the chat HUD at the bottom or top of the screen",
         "hbui.Settings.category.general" => "General",
         "menu.accessibility.tab.title" | "options.accessibility" => "Accessibility",
         "menu.accessibility.tab.description" => "Minecraft is for everyone, including you",
-        "menu.accessibility.tab.tts.title" => "Text to Speech",
-        "menu.accessibility.tab.tts.description" => "Adjust how you hear on-screen text",
         "menu.accessibility.tab.gameplay.title" => "Gameplay",
         "menu.accessibility.tab.gameplay.description" => {
             "Change accessibility options for in-game visuals and camera movements"
@@ -680,14 +714,6 @@ pub(super) fn fallback(key: &str) -> &str {
         "menu.general.tab.tutorial.title" => "Tutorial",
         "menu.general.tab.tutorial.description" => "Help learning the game",
         "menu.creator.tab.title" | "options.creator" => "Creator",
-        "menu.creator.tab.description" => "Adjust logs, debuggers, diagnostics, and more",
-        "menu.creator.group.contentLog" => "Content log settings",
-        "menu.creator.group.scriptDebugger" => "Script debugger settings",
-        "menu.creator.group.scriptDiagnostic" => "Script diagnostics settings",
-        "menu.creator.group.scriptWatchdog" => "Script watchdog settings",
-        "menu.creator.group.deviceInfo" => "Device info settings",
-        "menu.creator.group.editor" => "Editor settings",
-        "menu.creator.group.textFiltering" => "Text Filtering",
         "menu.video.tab.title" | "options.video" => "Video",
         "menu.video.tab.description" => "Adjust graphics and visual quality",
         "menu.video.group.general" => "General",
@@ -712,14 +738,11 @@ pub(super) fn fallback(key: &str) -> &str {
         "menu.account.gamertag.title" => "Gamertag",
         "menu.account.changeGamertag.title" => "Change Gamertag",
         "menu.account.manageAccount.title" => "Manage Account",
-        "menu.account.privacyAndSafety.title" => "Privacy & online safety",
-        "menu.account.realmMembershipInvites.title" => "Manage Realms membership invites",
         "menu.account.signOutOfMicrosoft.title" => "Sign out of your Microsoft account",
         "menu.account.signIn.title" => "Sign in for free",
-        "menu.account.changeGamertag.buttonLabel"
-        | "menu.account.manageAccount.buttonLabel"
-        | "menu.account.privacyAndSafety.buttonLabel" => "Open",
-        "menu.account.realmMembershipInvites.buttonLabel" => "Manage",
+        "menu.account.changeGamertag.buttonLabel" | "menu.account.manageAccount.buttonLabel" => {
+            "Open"
+        }
         "menu.account.signOutOfMicrosoft.buttonLabel" => "Sign Out",
         "menu.account.signIn.buttonLabel" => "Sign In",
         "menu.account.clearSignInData.buttonLabel" => "Clear data",
@@ -743,7 +766,16 @@ pub(super) fn fallback(key: &str) -> &str {
         "options.cinnabar.resourcePacksFolder.description" => {
             "Where your imported resource packs are stored"
         }
+        "options.cinnabar.shaderPacksFolder" => "Shader packs folder",
+        "options.cinnabar.shaderPacksFolder.description" => {
+            "Add Java shader packs here, or drop them onto this window"
+        }
         "options.cinnabar.openFolder.buttonLabel" => "Open folder",
+        "options.cinnabar.shaderOptions" => "Shader pack settings",
+        "options.cinnabar.shaderOptions.description" => {
+            "The selected pack's own options. Applying them reloads the pack."
+        }
+        "options.cinnabar.shaderOptions.buttonLabel" => "Shader options…",
         "options.dev_clearAllCache" => "Clear All Cache",
         "options.dev_clearDownloadeCache.name" => "Clear download cache",
         "options.dev_deleteLocalScreenshots" => "Delete Local Screenshots",
@@ -756,10 +788,6 @@ pub(super) fn fallback(key: &str) -> &str {
         "hudScreen.controlCustomization.tooltip.notouch" => {
             "Use a touch device to customize controls"
         }
-        "menu.party.tab.title" | "options.party" => "Party",
-        "options.partyInviteReceivedFilter" => "Receive party invites from",
-        "options.partyPrivacy" => "Default party privacy",
-        "options.partyInviteSendPrivileges" => "Who can send party invites in your party",
         "options.globalResources" | "menu.globalpacks" | "options.resourcepacks" => {
             "Global Resources"
         }

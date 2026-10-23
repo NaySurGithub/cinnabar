@@ -259,6 +259,14 @@ fn chat_membership_tracks_future_timestamps_settings_and_both_clock_directions()
     fixture.settings.set(SettingId::HideChat.index(), 0);
     fixture.settings.set(SettingId::ChatColor.index(), 2);
     assert!(fixture.check(&mut cache).chat);
+    fixture.settings.set(SettingId::ChatFontSize.index(), 15);
+    fixture.settings.set(SettingId::ChatLineSpacing.index(), 2);
+    assert!(fixture.check(&mut cache).chat);
+    assert_eq!(
+        cache.model.chat_text,
+        ui_screens::settings_chat::chat_text(&fixture.settings)
+    );
+    assert_ne!(cache.model.chat_text, json_ui::ChatText::default());
     fixture.runtime.chat_focused = true;
     fixture.check(&mut cache);
     assert!(!cache.model.chat_visible);
@@ -424,16 +432,16 @@ fn offhand_preview_and_mod_visibility_remain_live() {
     let mut fixture = Fixture::default();
     let mut cache = SemanticHud::default();
     fixture.check(&mut cache);
+    let event = protocol::InventoryEvent::Content(protocol::InventoryContentEvent {
+        container: protocol::ContainerIdentity::window(protocol::OFFHAND_WINDOW_ID),
+        slots: vec![stack(2)].into(),
+        storage_item: protocol::NetworkItemStack::empty(),
+    });
     fixture
         .runtime
-        .gameplay_hud
-        .apply_inventory(&protocol::InventoryEvent::Content(
-            protocol::InventoryContentEvent {
-                container: protocol::ContainerIdentity::window(protocol::OFFHAND_WINDOW_ID),
-                slots: vec![stack(2)].into(),
-                storage_item: protocol::NetworkItemStack::empty(),
-            },
-        ));
+        .enqueue_inventory_event(&mut fixture.player, 1, 1, event)
+        .unwrap();
+    fixture.runtime.drain_pending_inventory(&mut fixture.player);
     fixture.frame.offhand_icon = Some(IconRef {
         page: 5,
         uv: [0, 0, 16, 16],
@@ -491,6 +499,47 @@ fn offhand_preview_and_mod_visibility_remain_live() {
     assert!(!cache.model.effects_visible);
 }
 
+/// Vanilla ignores the local player's own offhand MobEquipment. An echo carrying an empty or
+/// older stack must not blank or replace the offhand frame while the inventory holds the item.
+#[test]
+fn stale_local_offhand_echo_keeps_the_inventory_offhand() {
+    let mut fixture = Fixture::default();
+    let mut cache = SemanticHud::default();
+    let event = protocol::InventoryEvent::Content(protocol::InventoryContentEvent {
+        container: protocol::ContainerIdentity::window(protocol::OFFHAND_WINDOW_ID),
+        slots: vec![stack(1)].into(),
+        storage_item: protocol::NetworkItemStack::empty(),
+    });
+    fixture
+        .runtime
+        .enqueue_inventory_event(&mut fixture.player, 1, 1, event)
+        .unwrap();
+    fixture.runtime.drain_pending_inventory(&mut fixture.player);
+    fixture.frame.offhand_icon = Some(IconRef {
+        page: 5,
+        uv: [0, 0, 16, 16],
+        glint: false,
+    });
+    fixture.check(&mut cache);
+    assert_eq!(cache.model.offhand.as_ref().map(|slot| slot.count), Some(1));
+    for (sequence, echoed) in [(2, protocol::NetworkItemStack::empty()), (3, stack(3))] {
+        fixture.runtime.retain_local_selected_equipment(
+            &mut fixture.player,
+            sequence,
+            protocol::EquipmentEvent {
+                actor_runtime_id: 1,
+                stack: echoed,
+                inventory_slot: 0,
+                selected_slot: 0,
+                window_id: protocol::OFFHAND_WINDOW_ID as u8,
+                handedness: Some(protocol::ActorHandedness::Left),
+            },
+        );
+        fixture.check(&mut cache);
+        assert_eq!(cache.model.offhand.as_ref().map(|slot| slot.count), Some(1));
+    }
+}
+
 #[test]
 fn chat_translation_and_duration_refresh_without_rebuilding_hotbar() {
     let mut fixture = Fixture::default();
@@ -528,6 +577,37 @@ fn chat_translation_and_duration_refresh_without_rebuilding_hotbar() {
     }
     fixture.check(&mut cache);
     assert_eq!(cache.model.chat.len(), MAX_CHAT_LINES);
+}
+
+/// Server packs can consume title bindings beyond the native visible label and after its expiry.
+#[test]
+fn title_controller_inputs_survive_native_title_expiry_without_truncation() {
+    let mut fixture = Fixture::default();
+    let text = "x".repeat(ui_screens::text::MAX_PRESENTED_TEXT_BYTES + 1);
+    fixture
+        .runtime
+        .hud
+        .set_title(Arc::from(text.as_str()), 1, 0);
+    fixture
+        .runtime
+        .hud
+        .set_subtitle(Arc::from("retained subtitle"), 2, 0);
+    fixture
+        .runtime
+        .hud
+        .set_actionbar(Arc::from(text.as_str()), 3, 0);
+    let mut cache = SemanticHud::default();
+    fixture.check(&mut cache);
+    assert_eq!(cache.model.title.as_ref().unwrap().title, text);
+    assert_eq!(cache.model.actionbar.as_ref().unwrap().text, text);
+    fixture.frame.now_millis = 60_000;
+    fixture.check(&mut cache);
+    assert!(cache.model.title.is_none());
+    assert_eq!(cache.model.title_text.as_deref(), Some(text.as_str()));
+    assert_eq!(
+        cache.model.subtitle_text.as_deref(),
+        Some("retained subtitle")
+    );
 }
 
 #[test]

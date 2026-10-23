@@ -71,7 +71,7 @@ pub struct MenuInput<'a> {
 /// Settings geometry input reads between frames.
 #[derive(Default)]
 pub struct MenuGeometry {
-    pub slider_tracks: Vec<(u16, UiRect, Option<UiRect>)>,
+    pub slider_tracks: Vec<(MenuAction, UiRect, Option<UiRect>)>,
     pub focus_targets: Vec<SettingsFocusTarget>,
     pub focus_landmarks: Vec<SettingsFocusLandmark>,
 }
@@ -229,8 +229,8 @@ impl Screen for OreUiScreen {
         canvas.focus_targets.clear();
         canvas.focus_landmarks.clear();
         self.transitions.begin_frame(
-            view.settings_control_activation,
-            view.settings_control_activation_navigation,
+            view.settings.control_activation,
+            view.settings.control_activation_navigation,
             seconds,
         );
         canvas.transitions = Some(&mut self.transitions);
@@ -336,7 +336,14 @@ impl Screen for OreUiScreen {
                     focus = Some(focus_actions(&canvas));
                 }
                 MenuScreen::Settings => {
-                    let section = SettingSection::from_index(view.settings_section)
+                    if self.settings_state.query != view.settings_query {
+                        scrolls.scroll_to_start(settings::SEARCH_SCROLL_KEY);
+                        canvas
+                            .offsets
+                            .insert(settings::SEARCH_SCROLL_KEY.to_owned(), 0.0);
+                        self.settings_state.query.clone_from(&view.settings_query);
+                    }
+                    let section = SettingSection::from_index(view.settings.section)
                         .unwrap_or(SettingSection::Accessibility);
                     canvas
                         .transitions
@@ -351,6 +358,7 @@ impl Screen for OreUiScreen {
                             size,
                             translate,
                             artwork.get(&view.feeds.profile.picture_path).copied(),
+                            &mut self.settings_state,
                         )?;
                         let adjusted = scroll_focus::reveal(&mut canvas, scrolls, view);
                         if !adjusted || attempt == 1 {

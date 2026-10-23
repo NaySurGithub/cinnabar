@@ -55,7 +55,7 @@ impl Vocabulary {
         }
         domains.insert(
             "item_tag".into(),
-            include_str!("../../../protocol/data/item_tags_dragonfly.tsv")
+            include_str!("../../../protocol/data/item_tags_native.tsv")
                 .lines()
                 .filter(|row| !row.starts_with('#') && !row.is_empty())
                 .map(|row| row.split_once('\t').unwrap().0.to_owned())
@@ -220,6 +220,7 @@ fn walk(refs: &mut BTreeSet<Reference>, file: &str, value: &Value, path: &str, d
                     "VanillaItem" if file == "registry-policy.json" => "retail_item",
                     "VanillaEntity" if file == "registry-policy.json" => "actor",
                     "state_property" | "state_properties" | "state_values" => "property",
+                    "blocks" if file == "block-properties-v2193.json" => "block",
                     "identifier" if file.starts_with("block-item-routes-") => "item",
                     "entity_rules" | "entity_compatibility" if file == "registry-policy.json" => {
                         "actor"
@@ -512,6 +513,10 @@ fn references(root: &Path) -> BTreeSet<Reference> {
                     if file.starts_with("block-light-registry-")
                         || file.starts_with("block-physics-")
                         || file.starts_with("vanilla-fallback-") => {}
+                // Generated from the pinned GeyserMC mappings: Java ids, which are outside these
+                // vocabularies, paired with Geyser's Bedrock ids, which include non-retail items
+                // (command blocks, filled maps, `minecraft:air`) and item frames as entities.
+                "bin" if file.starts_with("java-mapping-") => {}
                 "sha256" => {}
                 _ => panic!("unclassified asset data file {}", path.display()),
             }

@@ -10,11 +10,14 @@ use std::mem::size_of;
 mod artwork;
 mod bones;
 mod dissolve;
+pub(crate) mod masks;
 pub(crate) mod motion;
 pub(crate) mod phase;
 pub(crate) mod pipeline;
 #[cfg(feature = "publication-test-support")]
 pub(crate) mod publication_test_support;
+#[cfg(feature = "shaderpacks")]
+pub(crate) mod shaderpack_source;
 mod skins;
 use crate::gpu_allocation;
 use artwork::{GpuArtwork, draw_spans};
@@ -71,6 +74,19 @@ use {
 };
 
 const ACTOR_SHADER_HANDLE: Handle<Shader> = uuid_handle!("09d34708-6fd4-4c65-b27e-ce22f172cc73");
+const ACTOR_RIG_SHADER_HANDLE: Handle<Shader> =
+    uuid_handle!("5b1f0c6e-2f4e-4c55-9a43-7c1d2e8b9f30");
+
+/// Registers `render::actor_rig`, the rig skinning the actor and hand passes share.
+pub(crate) fn load_rig_shader(app: &mut App) {
+    load_internal_asset!(
+        app,
+        ACTOR_RIG_SHADER_HANDLE,
+        "actor_rig.wesl",
+        crate::shader_safety::from_wesl
+    );
+}
+
 #[cfg(test)]
 const ACTOR_SHADER_SOURCE: &str = include_str!("actor.wesl");
 
@@ -113,6 +129,7 @@ fn install_actor_render(app: &mut App) {
         .resource::<render_scene::ActorPipelineReadiness>()
         .clone();
     app.add_plugins(ExtractResourcePlugin::<ActorRenderFrame>::default());
+    load_rig_shader(app);
     load_internal_asset!(
         app,
         ACTOR_SHADER_HANDLE,
@@ -156,6 +173,7 @@ fn install_actor_render(app: &mut App) {
                 .in_set(RenderSystems::Queue)
                 .before(queue_actors),
         );
+    masks::install(app.sub_app_mut(RenderApp));
 }
 
 #[derive(Resource)]
@@ -166,6 +184,8 @@ pub(crate) struct ActorGpu {
     color_mask_material: Buffer,
     multitexture_material: Buffer,
     spans: Vec<crate::actor::gpu::ActorDrawSpan>,
+    mask_spans: Vec<crate::actor::gpu::ActorDrawSpan>,
+    main_manifest: std::sync::Arc<[render_model::ActorDrawManifestEntry]>,
     sorted: dissolve::SortedDraws,
     instances: std::sync::Arc<[ActorGpuInstance]>,
     executed_instances: std::sync::atomic::AtomicU32,
@@ -263,6 +283,8 @@ fn create_actor_gpu(render_device: &RenderDevice, render_queue: &RenderQueue) ->
             BufferUsages::UNIFORM,
         )?,
         spans: Vec::new(),
+        mask_spans: Vec::new(),
+        main_manifest: std::sync::Arc::from([]),
         sorted: dissolve::SortedDraws::default(),
         instances: std::sync::Arc::from([]),
         executed_instances: std::sync::atomic::AtomicU32::new(0),
@@ -332,9 +354,13 @@ fn prepare_actor_resources(
     witness: Res<ActorRuntimeWitness>,
     gate: Res<ActorPresentationGate>,
     tracker: Res<ActorDrawTracker>,
+    raw_views: Option<Res<crate::actor::gpu::ArtworkRawViews>>,
 ) {
     // Preparation can replace any part of the queued identity, even before queue runs.
     gpu.queued_draw = None;
+    let raw_views = crate::actor::gpu::ArtworkRawViews::current(raw_views);
+    gpu.artwork.set_raw_views(raw_views);
+    gpu.skins.set_raw_views(raw_views);
     if gpu.skins.failed(&frame.skins) {
         gpu.instance_count = 0;
         gate.clear();
@@ -342,9 +368,12 @@ fn prepare_actor_resources(
         return;
     }
     let rig = &frame.rig;
-    let artwork_valid = gpu
-        .artwork
-        .prepare(&frame.artwork, &uploads.device, &uploads.queue);
+    let artwork_valid = gpu.artwork.prepare_demanded(
+        &frame.artwork,
+        &frame.instance_pages,
+        &uploads.device,
+        &uploads.queue,
+    );
     gpu.artwork_current = artwork_valid;
     if gpu.artwork_identity != frame.artwork.identity() {
         gate.clear();
@@ -475,13 +504,32 @@ fn prepare_actor_resources(
             drop(_span);
             gpu.instance_count = rig.instances.len() as u32;
             gpu.maximum_vertex_count = rig.maximum_vertex_count;
-            gpu.manifest = prepared.manifest;
             draw_spans(
                 &mut gpu.spans,
                 &frame.instance_pages,
                 &prepared.instances,
                 &rig.geometry_spans,
+                prepared.manifest.iter().map(|entry| entry.identity.layer),
             );
+            gpu.mask_spans.clear();
+            if frame.mask_only_runtime_ids.is_empty() {
+                gpu.main_manifest = std::sync::Arc::clone(&prepared.manifest);
+            } else {
+                gpu.mask_spans = gpu.spans.clone();
+                gpu.spans = artwork::visible_spans(
+                    &gpu.spans,
+                    &prepared.manifest,
+                    &frame.mask_only_runtime_ids,
+                    frame.main_pass_instance_count,
+                );
+                let main_count = gpu
+                    .spans
+                    .last()
+                    .map_or(0, |span| (span.first + span.count) as usize);
+                // Coverage-only submissions follow the contiguous visible prefix at publication.
+                gpu.main_manifest = std::sync::Arc::from(&prepared.manifest[..main_count]);
+            }
+            gpu.manifest = prepared.manifest;
             gpu.instances = prepared.instances;
             let ActorGpu {
                 sorted,
@@ -496,6 +544,8 @@ fn prepare_actor_resources(
             gpu.maximum_vertex_count = 0;
             gpu.manifest = std::sync::Arc::from([]);
             gpu.spans.clear();
+            gpu.mask_spans.clear();
+            gpu.main_manifest = std::sync::Arc::from([]);
             gpu.sorted.prepare(&[], &[]);
             gpu.instances = std::sync::Arc::from([]);
             gate.clear();
@@ -581,12 +631,14 @@ pub(crate) fn prepare_actor_bind_group(
         .uniforms
         .buffer()
         .expect("a dynamic view binding always owns a GPU buffer");
+    let view_changed = gpu.view_buffer_id != Some(view_buffer.id());
     if gpu.bind_group.is_some()
-        && gpu.view_buffer_id == Some(view_buffer.id())
+        && !view_changed
         && gpu
             .artwork
             .pages
             .iter()
+            .flatten()
             .all(|page| page.bind_group.is_some())
     {
         return;
@@ -597,6 +649,8 @@ pub(crate) fn prepare_actor_bind_group(
                 .artwork
                 .pages
                 .iter()
+                .flatten()
+                .filter(|page| view_changed || page.bind_group.is_none())
                 .map(|page| {
                     render_device.create_bind_group(
                         "neutral actor page bind group",
@@ -747,7 +801,14 @@ pub(crate) fn prepare_actor_bind_group(
         return;
     };
     gpu.bind_group = Some(player_group);
-    for (page, group) in gpu.artwork.pages.iter_mut().zip(generic_groups) {
+    for (page, group) in gpu
+        .artwork
+        .pages
+        .iter_mut()
+        .flatten()
+        .filter(|page| view_changed || page.bind_group.is_none())
+        .zip(generic_groups)
+    {
         page.bind_group = Some(group);
     }
     gpu.view_buffer_id = Some(view_buffer.id());
@@ -784,14 +845,14 @@ fn submit_actor_presented_frame(
         reserved: true,
         acknowledged: false,
     });
-    let present_returned_at = std::time::Instant::now();
+    let present_returned_at = web_time::Instant::now();
     let callback_gate = gate.clone();
     let callback_witness = witness.clone();
     crate::device_poll::on_frame_complete(&render_queue, move || {
         #[cfg(feature = "tracy")]
         let _span = bevy::log::info_span!("actor.completion_callback").entered();
         let acknowledged =
-            callback_gate.publish_reserved(token, present_returned_at, std::time::Instant::now());
+            callback_gate.publish_reserved(token, present_returned_at, web_time::Instant::now());
         callback_witness.observe_submit(ActorSubmitWitness {
             drawn_frame: true,
             exact: true,

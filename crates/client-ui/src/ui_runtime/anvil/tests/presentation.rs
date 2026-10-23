@@ -52,8 +52,8 @@ pub(super) fn correct_target(
 }
 
 #[test]
-fn response_corrections_drive_repair_cost_and_name_without_replacing_nbt() {
-    for (damage, material_used) in [(-1, 3), (0, 0), (100, 1), (800, 3)] {
+fn response_corrections_drive_repair_cost_name_and_retained_nbt() {
+    for (damage, material_used) in [(-1, 0), (0, 0), (100, 1), (800, 3)] {
         let (mut runtime, mut player) = anvil();
         runtime.sync_anvil_name(&player);
         correct_target(&mut runtime, &mut player, damage, "Server blade");
@@ -64,9 +64,9 @@ fn response_corrections_drive_repair_cost_and_name_without_replacing_nbt() {
             .target_stack(InventoryTarget::Craft(ANVIL_TARGET_SLOT))
             .unwrap();
         assert_eq!(
-            protocol::item_stack_damage(target),
-            Some(1000),
-            "NBT remains stale"
+            protocol::item_extra_damage_value(&target.extra_data),
+            Some(damage),
+            "the response rewrites the retained damage tag"
         );
         let preview = runtime.anvil_preview(&player);
         if material_used == 0 {
@@ -677,36 +677,27 @@ fn enchanting_a_plain_book_predicts_the_negotiated_enchanted_book_kind() {
         assert_eq!(ledger.cursor_stack().unwrap().count, 1);
         assert_eq!(ledger.pending_request_count(), 1);
         use protocol::{
-            CraftResult, StackRequestAction as Action, StackRequestContainer as Container,
-            StackRequestSlot,
+            StackRequestAction as Action, StackRequestContainer as Container, StackRequestSlot,
         };
         let (packet, requests) = ledger.pending_batch().unwrap().unwrap();
         assert_eq!(requests, 1);
         let request_id = ledger.pending_request_id().unwrap();
+        // The prefilled book name is not the enchanted book's default name, so it is sent.
+        let typed = runtime.screen_state().anvil_name.clone();
         let expected = protocol::item_stack_request_packet_filtered(
             request_id,
             &[
                 Action::CraftRecipeOptional {
                     recipe_network_id: 0,
-                    filtered_string_index: -1,
-                },
-                Action::CraftResultsDeprecated {
-                    results: Arc::from([CraftResult {
-                        identifier: Arc::from("minecraft:enchanted_book"),
-                        aux: 0,
-                        count: 1,
-                        block_runtime_id: 0,
-                        user_data: Arc::clone(&preview.stack.extra_data),
-                    }]),
-                    crafts: 1,
-                },
-                Action::Consume {
-                    amount: u8::try_from(count).unwrap(),
-                    source: target,
+                    filtered_string_index: 0,
                 },
                 Action::Consume {
                     amount: 1,
                     source: material,
+                },
+                Action::Consume {
+                    amount: u8::try_from(count).unwrap(),
+                    source: target,
                 },
                 Action::Take {
                     amount: 1,
@@ -722,13 +713,10 @@ fn enchanting_a_plain_book_predicts_the_negotiated_enchanted_book_kind() {
                     },
                 },
             ],
-            &[],
+            &[typed],
         )
         .unwrap();
-        assert_eq!(
-            packet, expected,
-            "the result declaration and take both carry a single book"
-        );
+        assert_eq!(packet, expected, "the take carries a single book");
     }
 }
 
@@ -831,7 +819,10 @@ fn too_expensive_predictions_keep_costs_but_publish_no_result_or_hover() {
         authoritative.clone(),
     );
     assert_eq!(runtime.anvil_output(&player), Some(authoritative.clone()));
-    assert!(hovered_stack(&player, &runtime).is_some());
+    assert_eq!(
+        hovered_stack(&player, &runtime),
+        Some((authoritative, None))
+    );
 }
 
 /// Opens an anvil with a registered component weapon and a sharpness book.

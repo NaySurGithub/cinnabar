@@ -40,7 +40,7 @@ impl std::ops::DerefMut for BlockUseRuntime {
 /// One frame's eye ray; vanilla builds from the picks of the frames before each tick.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FramePick {
-    /// Movement authority when the pick was taken; a correction or reanchor retires it.
+    /// Position authority when the pick was taken; any correction or reanchor retires it.
     authority: (SessionGeneration, PositionAuthorityGeneration),
     pub session_generation: SessionGeneration,
     pub actor_session_id: u64,
@@ -64,13 +64,11 @@ impl BlockUseRuntime {
         });
     }
 
-    /// The retained pick, if it was taken under `authority`.
-    pub fn pick(
-        &self,
-        authority: (SessionGeneration, PositionAuthorityGeneration),
-    ) -> Option<FramePick> {
+    /// The retained pick, unless any reanchor (a replayed correction included) moved the
+    /// player since it was taken.
+    pub fn pick(&self, movement: &gameplay::movement::MovementTicker) -> Option<FramePick> {
         self.previous_pick
-            .filter(|previous| previous.authority == authority)
+            .filter(|previous| previous.authority == movement.position_authority_identity())
     }
 }
 
@@ -80,18 +78,16 @@ pub fn retain_block_use_pick(
     movement: Res<MovementTicker>,
     mut runtime: ResMut<BlockUseRuntime>,
 ) {
-    runtime.retain_pick(&origin, movement.interaction_authority_identity());
+    runtime.retain_pick(&origin, movement.position_authority_identity());
 }
-/// The selected stack, unless its own slot awaits a gesture answer or the hotbar change is unsent.
-/// Requests on other cells never hold a use back: vanilla acts on the predicted held item.
+/// Freezes player backing unless its local mutation or hotbar change still awaits transport.
 pub fn verified_use_selection(
     player_runtime: &client_state::PlayerRuntime,
     ui: &UiRuntime,
 ) -> Option<FrozenMiningSelection> {
     let ledger = ui.inventory_ledger(player_runtime);
     let selection = verified_selection(player_runtime)?;
-    if ledger.slot_gesture_pending(selection.slot)
-        || ledger.resync_required()
+    if ledger.slot_backing_transport_pending(selection.slot)
         || player_runtime
             .inventory
             .pending_hotbar_selection()
@@ -103,36 +99,37 @@ pub fn verified_use_selection(
 }
 
 #[cfg(test)]
+mod pick_tests;
+#[cfg(test)]
 mod tests;
 
-/// Adapts the published world to gameplay's switch prediction.
+/// Resolves switch prediction through the caller's observed palette view.
 pub fn predicted_toggle(
     collisions: &PhysicsCollisionRegistries,
     stream: &chunk_pipeline::WorldStream,
+    world: &PaletteWorld<'_>,
+    position: [i32; 3],
     clicked: u32,
-) -> Option<u32> {
+) -> Option<([i32; 3], u32)> {
     gameplay::block_use::predicted_toggle(
         collisions,
-        &crate::movement::world_view::GameplayWorldView(stream),
+        stream.network_id_mode(),
+        world,
+        position,
         clicked,
     )
 }
-/// Adapts the published world to gameplay's placement prediction.
+/// Resolves placement through the caller's palette view, preserving its query observation.
 pub fn predicted_placement(
     collisions: &PhysicsCollisionRegistries,
     stream: &chunk_pipeline::WorldStream,
+    world: &PaletteWorld<'_>,
     item_block: i32,
     observed: &FrozenBlockObservation,
     surroundings: &UseSurroundings,
     view: LocalViewPose,
 ) -> Option<gameplay::block_use::PredictedPlacement> {
     let mode = stream.network_id_mode();
-    let world = PaletteWorld::new(
-        stream.collision_store(),
-        collisions.registry(mode),
-        stream.current_dimension(),
-        Default::default(),
-    );
     let range = stream
         .authority()
         .dimension_range(stream.current_dimension())?;
@@ -141,7 +138,7 @@ pub fn predicted_placement(
         collisions,
         mode,
         held_block_store_id(stream, item_block)?,
-        &world,
+        world,
         &gameplay::block_use::PlacementContext {
             clicked: observed.target.position,
             input: gameplay::placement_state::PlacementInput {

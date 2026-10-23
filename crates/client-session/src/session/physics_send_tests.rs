@@ -159,7 +159,11 @@ async fn guarded_then_ordinary_trace_follows_successful_socket_fifo() {
     let traces_for_worker = Arc::clone(&traces);
     let (control_event_tx, mut controls) = mpsc::channel(CONTROL_EVENT_CAPACITY);
     let (shutdown, shutdown_rx) = watch::channel(false);
-    commands.try_send(NetworkCommand::FlushFrame).unwrap();
+    commands
+        .try_send(NetworkCommand::FlushFrame {
+            cache_opportunity: false,
+        })
+        .unwrap();
     let worker = tokio::spawn(run_network_pump_with_trace(
         RecordingSendSession {
             sent: Arc::clone(&sent),
@@ -238,11 +242,14 @@ async fn revoked_mining_is_removed_before_write_without_suppressing_its_movement
             chat: None,
             physics: Some(identity),
             physics_reanchor: None,
-            interaction: Some(protocol::InteractionPacketGuard::new(
-                0,
-                mining_authority_rx,
-                movement,
-            )),
+            interaction: Some(
+                protocol::InteractionPacketGuard::new(0, mining_authority_rx, movement)
+                    .with_preceding_packet(protocol::creative_destroy_block_packet(
+                        42,
+                        [0, 1, -3],
+                        3,
+                    )),
+            ),
         })
         .unwrap();
     mining_authority.send_replace(1);
@@ -251,7 +258,11 @@ async fn revoked_mining_is_removed_before_write_without_suppressing_its_movement
     let traces_for_worker = Arc::clone(&traces);
     let (control_event_tx, mut controls) = mpsc::channel(CONTROL_EVENT_CAPACITY);
     let (shutdown, shutdown_rx) = watch::channel(false);
-    commands.try_send(NetworkCommand::FlushFrame).unwrap();
+    commands
+        .try_send(NetworkCommand::FlushFrame {
+            cache_opportunity: false,
+        })
+        .unwrap();
     let worker = tokio::spawn(run_network_pump_with_trace(
         RecordingSendSession {
             sent: Arc::clone(&sent),
@@ -293,27 +304,32 @@ async fn current_mining_command_reaches_the_write_byte_exact() {
     };
     let combined = protocol::request_sub_chunk_column(0, 7, 8, -4, 1).unwrap();
     let expected = protocol::encode(&combined).unwrap().to_vec();
+    let creative = protocol::encode(&protocol::creative_destroy_block_packet(42, [0, 1, -3], 3))
+        .unwrap()
+        .to_vec();
     let (_mining_authority, mining_authority_rx) = watch::channel(0);
     let (world_event_tx, _world_events) = mpsc::channel(WORLD_EVENT_CAPACITY);
-    let (commands, command_rx) = mpsc::channel(COMMAND_CAPACITY);
-    commands
-        .try_send(NetworkCommand::Send {
-            packet: combined,
-            sub_chunk: None,
-            chat: None,
-            physics: Some(identity),
-            physics_reanchor: None,
-            interaction: Some(protocol::InteractionPacketGuard::new(
-                0,
-                mining_authority_rx,
-                test_packet(),
-            )),
-        })
+    let (mut handle, _) = NetworkHandle::stub();
+    let (commands, command_rx) = super::super::frame_flush::command_channel(1);
+    handle.commands = commands;
+    handle
+        .send_physics_packet(
+            identity,
+            combined,
+            Some(
+                protocol::InteractionPacketGuard::new(0, mining_authority_rx, test_packet())
+                    .with_preceding_packet(protocol::creative_destroy_block_packet(
+                        42,
+                        [0, 1, -3],
+                        3,
+                    )),
+            ),
+        )
         .unwrap();
+    handle.flush_frame();
     let sent = Arc::new(Mutex::new(Vec::new()));
     let (control_event_tx, mut controls) = mpsc::channel(CONTROL_EVENT_CAPACITY);
     let (shutdown, shutdown_rx) = watch::channel(false);
-    commands.try_send(NetworkCommand::FlushFrame).unwrap();
     let worker = tokio::spawn(run_network_pump(
         RecordingSendSession {
             sent: Arc::clone(&sent),
@@ -330,7 +346,7 @@ async fn current_mining_command_reaches_the_write_byte_exact() {
         Ok(Some(NetworkControlEvent::PhysicsPacketSent { identity: observed }))
             if observed == identity
     ));
-    assert_eq!(sent.lock().unwrap().as_slice(), [expected]);
+    assert_eq!(sent.lock().unwrap().as_slice(), [creative, expected]);
     shutdown.send_replace(true);
     worker.await.unwrap();
 }
@@ -354,18 +370,25 @@ async fn reanchor_cancels_an_admitted_but_unstarted_physics_send_before_socket_w
             chat: None,
             physics: Some(identity),
             physics_reanchor: Some(reanchor_rx),
-            interaction: Some(protocol::InteractionPacketGuard::new(
-                0,
-                mining_authority_rx,
-                test_packet(),
-            )),
+            interaction: Some(
+                protocol::InteractionPacketGuard::new(0, mining_authority_rx, test_packet())
+                    .with_preceding_packet(protocol::creative_destroy_block_packet(
+                        42,
+                        [0, 1, -3],
+                        3,
+                    )),
+            ),
         })
         .unwrap();
     reanchor.send_replace(PositionAuthorityGeneration::new(1));
     let sends = Arc::new(AtomicUsize::new(0));
     let (control_event_tx, mut controls) = mpsc::channel(CONTROL_EVENT_CAPACITY);
     let (shutdown, shutdown_rx) = watch::channel(false);
-    commands.try_send(NetworkCommand::FlushFrame).unwrap();
+    commands
+        .try_send(NetworkCommand::FlushFrame {
+            cache_opportunity: false,
+        })
+        .unwrap();
     let worker = tokio::spawn(run_network_pump(
         CountingSendSession {
             sends: Arc::clone(&sends),
@@ -411,7 +434,11 @@ async fn physics_send_ack_is_emitted_only_after_successful_socket_write() {
         .unwrap();
     let (control_event_tx, mut controls) = mpsc::channel(CONTROL_EVENT_CAPACITY);
     let (shutdown, shutdown_rx) = watch::channel(false);
-    commands.try_send(NetworkCommand::FlushFrame).unwrap();
+    commands
+        .try_send(NetworkCommand::FlushFrame {
+            cache_opportunity: false,
+        })
+        .unwrap();
     let worker = tokio::spawn(run_network_pump(
         ReadyInboundSession {
             inbound: None,
@@ -536,7 +563,11 @@ async fn failed_physics_socket_write_never_emits_success_ack() {
     let traces = Arc::new(Mutex::new(Vec::new()));
     let traces_for_worker = Arc::clone(&traces);
 
-    commands.try_send(NetworkCommand::FlushFrame).unwrap();
+    commands
+        .try_send(NetworkCommand::FlushFrame {
+            cache_opportunity: false,
+        })
+        .unwrap();
     run_network_pump_with_trace(
         FailingSendSession,
         NetworkSequencer::new(SessionGeneration::new(7), 0, 42),
@@ -588,7 +619,11 @@ async fn cancelled_pending_physics_socket_write_never_emits_success_ack() {
     let (control_event_tx, mut controls) = mpsc::channel(CONTROL_EVENT_CAPACITY);
     let (shutdown, shutdown_rx) = watch::channel(false);
     let (started_tx, started_rx) = oneshot::channel();
-    commands.try_send(NetworkCommand::FlushFrame).unwrap();
+    commands
+        .try_send(NetworkCommand::FlushFrame {
+            cache_opportunity: false,
+        })
+        .unwrap();
     let worker = tokio::spawn(run_network_pump(
         PendingSendSession {
             started: Some(started_tx),
@@ -637,7 +672,11 @@ async fn reanchor_during_an_in_flight_physics_send_preserves_the_socket_result()
     let (shutdown, shutdown_rx) = watch::channel(false);
     let (started_tx, started_rx) = oneshot::channel();
     let (complete_tx, complete_rx) = oneshot::channel();
-    commands.try_send(NetworkCommand::FlushFrame).unwrap();
+    commands
+        .try_send(NetworkCommand::FlushFrame {
+            cache_opportunity: false,
+        })
+        .unwrap();
     let worker = tokio::spawn(run_network_pump(
         PendingSendSession {
             started: Some(started_tx),

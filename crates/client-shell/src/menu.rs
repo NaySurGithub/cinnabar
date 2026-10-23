@@ -32,16 +32,19 @@ mod minecraft_import;
 mod navigation;
 mod presence_targets;
 mod reconnect;
+mod renderer;
 pub mod screen_focus;
 #[cfg(test)]
 mod server_input_tests;
 mod services;
+mod shader_options;
 pub use services::sync_cinnabar_players;
 pub mod settings_options;
 mod settings_paths;
 pub mod settings_storage;
 pub mod settings_support;
 mod settings_values;
+mod shader_pack_status;
 #[cfg(feature = "developer-control")]
 mod sign_in_fixture;
 pub mod video_settings;
@@ -56,8 +59,9 @@ use ui::RenderMode;
 use {auth::AuthSupervisor, launcher::menu::auth::AuthState};
 
 use core_process::{auth_cache_path, core_executable};
+pub use input::clipboard::MenuClipboard;
 pub(crate) use input::context::observe_keyboard_labels;
-pub use input::{HOTKEY_OPTIONS, MenuClipboard, drive_menu_input};
+pub use input::{HOTKEY_OPTIONS, drive_menu_input, drive_window_ime};
 use launcher::menu::view::{CatalogFile, MenuFeeds};
 
 use launcher::menu::view::{
@@ -95,12 +99,16 @@ pub struct MenuRuntime {
     hovered: Option<MenuAction>,
     pressed: Option<MenuAction>,
     pointer_down: bool,
+    touch_available: bool,
+    touch_editor_open: bool,
     server_tab: MenuServerTab,
     profile_tab: launcher::menu::ProfileTab,
     dialog: Option<MenuDialog>,
     field: Option<MenuField>,
     /// Bumped by every field edit and caret move, restarting the caret blink.
     caret_revision: u64,
+    /// Explicit editor activations request the keyboard again after platform dismissal.
+    field_activation: u64,
     /// Screens opened on the way here; back returns to the one below.
     history: json_ui::ScreenNav<MenuScreen>,
     navigation_focus: navigation::NavigationFocus,
@@ -112,6 +120,8 @@ pub struct MenuRuntime {
     address: ui::ChatEditor,
     port: ui::ChatEditor,
     skin_name: ui::ChatEditor,
+    friend_query: ui::ChatEditor,
+    settings_query: ui::ChatEditor,
     /// Command macro command boxes; edits write through to persisted settings.
     macro_commands: [ui::ChatEditor; launcher::menu::settings_options::COMMAND_MACRO_COUNT],
     message: Option<String>,
@@ -122,12 +132,22 @@ pub struct MenuRuntime {
     fullscreen: bool,
     fullscreen_change: Option<bool>,
     video_settings_writer: Option<launcher_host::video_settings::writer::Writer>,
-    settings_focus: Vec<MenuAction>,
-    settings_focus_geometry: focus::SettingsFocusGeometry,
     last_saved_video_settings: launcher_host::video_settings::SavedVideoSettings,
     failed_video_settings_save: Option<launcher_host::video_settings::SavedVideoSettings>,
     render_mode: RenderMode,
     render_mode_request: Option<RenderMode>,
+    /// Discovered shader-pack names synced by the app; renderer choices index it.
+    shader_packs: std::sync::Arc<[String]>,
+    /// Revision that rejects picker actions captured before the list changed.
+    shader_packs_revision: u64,
+    /// The applied pack name, retaining a pending menu choice until taken.
+    shader_pack: Option<String>,
+    shader_pack_request: Option<String>,
+    shader_pack_status: shader_pack_status::ShaderPackStatusUi,
+    /// Set by [`MenuRuntime::request_shader_pack_reload`] until the app takes it.
+    shader_pack_reload: bool,
+    shader_pack_removing: Option<std::sync::Arc<str>>,
+    shader_pack_remove_request: Option<String>,
     vsync_override: Option<bool>,
     display_name: String,
     launcher: bool,
@@ -158,10 +178,10 @@ pub struct MenuRuntime {
     skin_outbound: Option<(u64, protocol::Packet)>,
     skin_packet_pending: Option<protocol::Packet>,
     editing: Option<usize>,
-    settings_section: u8,
     disconnect_message: Option<String>,
     /// Death screen shown for the current death; cleared once alive again.
     death_shown: bool,
+    death_lifecycle: Option<(u64, u64)>,
     death_loading: bool,
     death_presentation: launcher::menu::death::DeathPresentation,
     death_retry_remaining: Option<std::time::Duration>,
@@ -190,12 +210,13 @@ pub struct MenuRuntime {
     /// Mods-tab work for the mod runtime; disclosure toggles apply in place.
     pub mod_actions: Vec<launcher::mods::Action>,
     pub mods: std::sync::Arc<launcher::mods::Snapshot>,
+    shader_options: shader_options::ShaderOptions,
     minecraft_import: std::sync::Arc<launcher::minecraft_import::Snapshot>,
     minecraft_import_requests: Vec<launcher_host::minecraft_import::Request>,
+    settings: launcher::menu::view::SettingsInteraction,
+    settings_input: focus::SettingsInput,
     settings_options: std::sync::Arc<launcher::menu::settings_options::SettingsOptions>,
     storage: std::sync::Arc<launcher::menu::settings_storage::StorageView>,
-    settings_dropdown: Option<u16>,
-    settings_scale_picker: bool,
     settings_dirty: bool,
     settings_writer: Option<launcher::menu::settings_options::persistence::writer::Writer>,
     /// Worker startup failures wait until this deadline before another attempt.
@@ -208,16 +229,7 @@ pub struct MenuRuntime {
     language_choices: std::sync::Arc<[(String, String)]>,
     language_pending: bool,
     language_asset_path: PathBuf,
-    settings_slider_drag: Option<u16>,
-    settings_slider_pointer: Option<launcher::menu::view::SettingsSliderPointer>,
-    settings_slider_hovered: Option<u16>,
-    settings_slider_selected: Option<u16>,
-    settings_control_activation: Option<(MenuAction, u64)>,
-    settings_control_activation_navigation: bool,
-    settings_input_revision: u64,
     input_mode: input::MenuInputMode,
-    key_remap: Option<u16>,
-    settings_advanced_graphics: bool,
     /// The current or pending session is a local world, and whether it was live last frame.
     local_world_joined: bool,
     local_world_active: bool,
@@ -286,6 +298,11 @@ impl MenuRuntime {
         self.screen
     }
 
+    /// Returns the selected settings section without building a presentation snapshot.
+    pub fn settings_section(&self) -> Option<launcher::menu::settings_sections::SettingSection> {
+        launcher::menu::settings_sections::SettingSection::from_index(self.settings.section)
+    }
+
     pub fn player_skin(&self) -> &crate::player_skin::LocalPlayerSkin {
         &self.player_skin
     }
@@ -315,9 +332,9 @@ impl MenuRuntime {
         self.visible = visible;
         if !visible {
             self.field = None;
-            self.settings_slider_selected = None;
-            self.settings_slider_pointer = None;
-            self.settings_slider_hovered = None;
+            self.settings.slider_selected = None;
+            self.settings.slider_pointer = None;
+            self.settings.slider_hovered = None;
             self.dialog = None;
         }
     }
@@ -330,18 +347,6 @@ impl MenuRuntime {
     /// A local world the player chose to open, for the local-worlds module.
     pub fn take_local_world_request(&mut self) -> Option<usize> {
         self.local_world_requested.take()
-    }
-
-    pub fn open_pause(&mut self) {
-        if self.visible || self.is_connecting() {
-            return;
-        }
-        self.navigation_focus = navigation::NavigationFocus::default();
-        self.history.reset(MenuScreen::Pause);
-        self.screen = MenuScreen::Pause;
-        self.focused = 0;
-        self.message = None;
-        self.visible = true;
     }
 
     /// The queued join, once the saved account's check has settled (bounded) and any
@@ -364,38 +369,6 @@ impl MenuRuntime {
             return None;
         }
         self.intents.join.take()
-    }
-
-    /// The session is live: the menu gives way to the world.
-    pub fn show_world(&mut self) {
-        self.reset_death();
-        self.visible = false;
-        self.navigation_focus = navigation::NavigationFocus::default();
-        self.history.reset(MenuScreen::Home);
-        self.screen = MenuScreen::Home;
-        self.message = None;
-        self.field = None;
-    }
-
-    pub fn show_connecting(&mut self) {
-        self.reset_death();
-        self.visible = true;
-        self.navigation_focus = navigation::NavigationFocus::default();
-        self.history.reset(MenuScreen::Home);
-        self.history.push(MenuScreen::Play);
-        self.screen = MenuScreen::Play;
-        self.message = Some("Connecting…".to_owned());
-    }
-
-    pub fn show_home(&mut self) {
-        self.reset_death();
-        self.visible = true;
-        self.navigation_focus = navigation::NavigationFocus::default();
-        self.history.reset(MenuScreen::Home);
-        self.screen = MenuScreen::Home;
-        self.focused = 0;
-        self.field = None;
-        self.dialog = None;
     }
 
     /// A cancelled join drops any queued join and returns to the play screen.
@@ -475,9 +448,7 @@ impl MenuRuntime {
 
     fn activate_control_input(&mut self, action: MenuAction, navigation: bool) {
         if self.screen == MenuScreen::Settings {
-            self.settings_input_revision = self.settings_input_revision.wrapping_add(1);
-            self.settings_control_activation = Some((action, self.settings_input_revision));
-            self.settings_control_activation_navigation = navigation;
+            self.settings.record_activation(action, navigation);
         }
         self.activate(action);
     }
@@ -709,7 +680,8 @@ impl MenuRuntime {
             MenuAction::AddName
             | MenuAction::AddAddress
             | MenuAction::AddPort
-            | MenuAction::EditSkinName => {}
+            | MenuAction::EditSkinName
+            | MenuAction::SearchFriends => {}
             MenuAction::AddSave => {
                 // Saving pops the form back to the tab that opened it.
                 if self.save_draft() {
@@ -722,6 +694,15 @@ impl MenuRuntime {
                 }
             }
             MenuAction::AddBack => self.go_back(),
+            MenuAction::SelectRenderer(choice) => self.select_renderer(choice),
+            MenuAction::ReloadShaders => self.activate_shader_reload(),
+            MenuAction::RemoveShaderPackDialog(index, revision) => {
+                self.remove_shader_pack_dialog(index, revision)
+            }
+            MenuAction::ConfirmRemoveShaderPack(index, revision) => {
+                self.confirm_remove_shader_pack(index, revision)
+            }
+            MenuAction::SettingsShaders => self.activate_shaders_tab(),
             MenuAction::ToggleRenderMode => {
                 if render_model::ENHANCED_RENDERING_ENABLED {
                     self.render_mode = self.render_mode.toggled();
@@ -755,10 +736,16 @@ impl MenuRuntime {
             }
             MenuAction::SettingsStorage(action) => self.activate_storage(action),
             MenuAction::SettingsSupport(action) => self.activate_support(action),
+            MenuAction::SettingsSection(section) => self.activate_settings_section(section),
+            MenuAction::SettingsSearchSection(section) => {
+                self.focus_pointer(MenuAction::SettingsSection(section));
+                self.activate_settings_section(section);
+            }
             action @ (MenuAction::SettingsScale(_)
+            | MenuAction::SearchSettings
+            | MenuAction::ClearSettingsSearch
             | MenuAction::SettingsScalePicker
             | MenuAction::SettingsFullscreen(_)
-            | MenuAction::SettingsSection(_)
             | MenuAction::SettingsOption(..)
             | MenuAction::SettingsVideoPreset(_)
             | MenuAction::SettingsLanguage(_)
@@ -771,7 +758,8 @@ impl MenuRuntime {
             | MenuAction::SettingsResetKey(_)
             | MenuAction::SettingsMacroCommand(_)
             | MenuAction::SettingsResetChat
-            | MenuAction::SettingsAdvancedGraphics) => self.activate_settings(action),
+            | MenuAction::SettingsAdvancedGraphics
+            | MenuAction::EditTouchControls) => self.activate_settings(action),
             MenuAction::Respawn => {
                 if self.death_controls_ready() {
                     self.request_respawn();
@@ -788,6 +776,25 @@ impl MenuRuntime {
             MenuAction::ToggleReadMore(section) => self.feeds.toggle_read_more(section),
             MenuAction::OpenLiveEvent => self.open_live_event(),
             MenuAction::GlobalResources(action) => self.global_resource_actions.push(action),
+            MenuAction::Mods(launcher::mods::Action::ViewUpdates) => {
+                if !self.over_world() {
+                    self.settings.section = launcher::menu::settings_sections::SettingSection::Mods
+                        .definition()
+                        .index;
+                    self.enter(MenuScreen::Settings);
+                }
+            }
+            MenuAction::Mods(launcher::mods::Action::OpenUpdate(id)) => {
+                if let Some(update) = self
+                    .mods
+                    .library
+                    .updates
+                    .iter()
+                    .find(|update| update.id == id)
+                {
+                    launcher_host::desktop::open_url(&update.release_url);
+                }
+            }
             MenuAction::Mods(action) => {
                 if let Some(work) = std::sync::Arc::make_mut(&mut self.mods).apply(action) {
                     self.mod_actions.push(work);
@@ -803,6 +810,7 @@ impl MenuRuntime {
             MenuAction::ServerTrust(trusted) => self.answer_server_trust(trusted),
             MenuAction::Invite(action) => self.activate_invite(action),
             MenuAction::JoinRequest(accept) => self.answer_join_request(accept),
+            MenuAction::ShaderOptions(action) => self.activate_shader_options(action),
         }
     }
 
@@ -917,6 +925,7 @@ impl MenuRuntime {
             self.message = Some("That server has no address.".to_owned());
             return;
         }
+        bridge::join_profile::JoinProfile::begin();
         self.remember_session_origin();
         self.stop_catalog();
         self.hold_join_for_sign_in();
@@ -930,6 +939,16 @@ impl MenuRuntime {
         });
         self.disconnect_message = None;
         self.show_connecting();
+    }
+
+    /// Supplies one authorized test join's private cache without changing the selected account.
+    #[cfg(feature = "developer-control")]
+    pub fn use_auth_cache_for_pending_join(&mut self, auth_cache: PathBuf) {
+        if let Some(join) = self.intents.join.as_mut() {
+            join.auth_cache = Some(auth_cache.clone());
+            let address = join.address.clone();
+            self.remember_retry_target(&address, Some(&auth_cache), false);
+        }
     }
 }
 

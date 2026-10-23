@@ -171,6 +171,11 @@ impl UiPresentationRuntime {
         });
     }
 
+    /// Chooses between server-pack hand models and their ordinary item sprites in previews.
+    pub fn set_player_preview_custom_item_models(&mut self, enabled: bool) {
+        self.player_preview_gear.show_custom_item_models = enabled;
+    }
+
     /// Dresses armor and held items using session attachables first, then the base catalog.
     /// Without an actor context, only unrestricted ordinary definitions are admitted.
     pub fn set_player_preview_gear(
@@ -194,6 +199,7 @@ impl UiPresentationRuntime {
     ) {
         let pack = self.gui_models.pack_equipment.source.clone();
         let base = self.equipment_catalog.clone();
+        let show_custom_item_models = self.player_preview_gear.show_custom_item_models;
         self.gui_models.wearing_elytra = false;
         let selected: [_; 4] = std::array::from_fn(|slot| {
             let (identifier, _, enchanted) = armor[slot]?;
@@ -210,12 +216,12 @@ impl UiPresentationRuntime {
         });
         let resolved: [_; 4] = std::array::from_fn(|slot| {
             let (_, dye, _) = armor[slot]?;
-            worn_armor(
-                selected[slot].as_ref()?.binding,
-                pack.as_deref(),
-                base.as_deref(),
-                dye,
-            )
+            let selection = selected[slot].as_ref()?;
+            worn_armor(selection.binding, pack.as_deref(), base.as_deref(), dye).or_else(|| {
+                selection
+                    .startup
+                    .and_then(|binding| worn_armor(binding, None, base.as_deref(), dye))
+            })
         });
         self.prepare_preview_hands(
             &hands,
@@ -272,6 +278,7 @@ impl UiPresentationRuntime {
             armor_glint: [false; 4],
             held,
             hands: hands.map(|hand| hand.map(|(hand, _)| hand)),
+            show_custom_item_models,
         };
     }
 
@@ -510,20 +517,21 @@ impl PlayerPreviewPose {
         else {
             return Self::default();
         };
-        let sneaking = matches!(
-            actor.metadata.get(&0),
-            Some(protocol::ActorMetadataValue::Flags(flags)) if flags & (1_u64 << 1) != 0
-        );
-        Self::new(actor.body_yaw, actor.head_yaw, actor.pitch, sneaking)
+        Self::new(
+            actor.body_yaw,
+            actor.head_yaw,
+            actor.pitch,
+            actor.is_sneaking(),
+        )
     }
 }
 
 #[derive(Clone, Copy)]
-struct ProjectedVertex {
+pub(super) struct ProjectedVertex {
     screen: [f32; 2],
     depth: f32,
     uv: [f32; 2],
-    world: [f32; 3],
+    pub(super) world: [f32; 3],
 }
 
 /// Renders a nearest-neighbour, orthographic 3-D biped preview from a
@@ -591,7 +599,7 @@ pub(super) fn render_body_with_cape(
 }
 
 /// A posed, viewer-facing biped.
-struct Rig {
+pub(super) struct Rig {
     parts: [Option<glam::Affine3A>; 6],
     body: f32,
     head_yaw: f32,
@@ -604,7 +612,12 @@ struct Rig {
 }
 
 impl Rig {
-    fn new(pose: PlayerPreviewPose, view: PreviewView, bob: f32, holding: [bool; 2]) -> Self {
+    pub(super) fn new(
+        pose: PlayerPreviewPose,
+        view: PreviewView,
+        bob: f32,
+        holding: [bool; 2],
+    ) -> Self {
         let [body, head_yaw, head_pitch, model_pitch] = view.angles();
         // A vanilla paper doll sets variable.is_paperdoll=1. The vanilla player
         // controller's paperdoll branch excludes holding, sneak and idle bob.
@@ -630,7 +643,7 @@ impl Rig {
         }
     }
 
-    fn project(&self, vertex: ActorVertex) -> ProjectedVertex {
+    pub(super) fn project(&self, vertex: ActorVertex) -> ProjectedVertex {
         let mut local = vertex.position;
         if let Some(Some(transform)) = self.parts.get(vertex.part as usize) {
             local = transform

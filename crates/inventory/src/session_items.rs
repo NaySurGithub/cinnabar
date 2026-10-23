@@ -31,6 +31,7 @@ struct SessionItemRecord {
     fact: ItemFact,
     retail_id: Option<i32>,
     armour_row: Option<u8>,
+    banner: bool,
 }
 
 impl SessionItemFacts {
@@ -107,6 +108,27 @@ impl SessionItemFacts {
         self.record(network_id)?.armour_row
     }
 
+    /// Identifies the admitted banner item independently of tags and stack-specific Type data.
+    pub(crate) fn is_banner(&self, network_id: i32) -> bool {
+        self.record(network_id).is_some_and(|record| record.banner)
+    }
+
+    /// Whether the item is vanilla humanoid armour with durability, the items the client keys in
+    /// its UI by stored damage. The pinned armour table lists exactly the vanilla items registered as
+    /// humanoid armour; component items never are.
+    pub fn humanoid_armour(&self, network_id: i32) -> bool {
+        self.record(network_id).is_some_and(|record| {
+            record.retail_id.is_some()
+                && matches!(record.fact.armour, ItemArmour::Wearable { .. })
+                && matches!(record.fact.durability, ItemDurability::Maximum { maximum } if maximum > 0)
+        })
+    }
+
+    /// The stack's vanilla `#item_id_aux` UI key, with armour keyed by its stored damage.
+    pub fn id_aux(&self, stack: &protocol::NetworkItemStack) -> i32 {
+        protocol::item_id_aux(stack, self.humanoid_armour(stack.network_id))
+    }
+
     /// Returns the negotiated output identity for enchanting a plain book.
     pub fn enchanted_book_id(&self) -> Option<i32> {
         self.enchanted_book_id
@@ -127,10 +149,12 @@ fn resolve(
             fact: ItemFact::default(),
             retail_id: None,
             armour_row: None,
+            banner: false,
         };
     }
     let component_item =
         entry.component_based || matches!(entry.version, ItemRegistryVersion::DataDriven);
+    let banner = entry.identifier.as_ref() == assets::facts::BANNER_IDENTIFIER;
     let pinned_fact = pinned.by_identifier(&entry.identifier);
     let retail_id = if component_item {
         None
@@ -174,6 +198,7 @@ fn resolve(
             fact,
             retail_id,
             armour_row,
+            banner,
         };
     };
     if component_item {
@@ -203,12 +228,8 @@ fn resolve(
             });
     }
     if components.durability_declared {
-        fact.durability = components
-            .max_durability
-            .filter(|maximum| *maximum > 0)
-            .map_or(ItemDurability::Unresolved, |maximum| {
-                ItemDurability::Maximum { maximum }
-            });
+        fact.durability =
+            ItemDurability::from_declared_maximum(components.max_durability, component_item);
     }
     if components.fuel_declared {
         fact.fuel = components
@@ -239,6 +260,7 @@ fn resolve(
         fact,
         retail_id,
         armour_row,
+        banner,
     }
 }
 

@@ -3,7 +3,7 @@
 //! are visited top to bottom (inside the topmost modal panel), each fires its
 //! first eligible mapping for the button, and a consuming mapping stops the walk.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde_json::Value;
 
@@ -48,6 +48,8 @@ pub struct Dispatch {
 pub struct Dispatcher {
     /// Last button state per (control key, mapping index).
     last: HashMap<(String, usize), bool>,
+    /// Controls pressed by the current touch gesture, grouped by input button.
+    touch_down: HashMap<String, HashSet<(String, usize)>>,
     /// Press count, time and position per (control key, button): `PressStats`.
     presses: HashMap<(String, String), (u32, f64, [f64; 2])>,
     /// Controls the pointer hovers, top first.
@@ -72,6 +74,9 @@ impl Dispatcher {
         view: &mut ViewState,
         input: ButtonInput<'_>,
     ) -> Dispatch {
+        if input.mode == InputMode::Touch && input.down {
+            self.finish_touch(input.id);
+        }
         let mut out = Dispatch::default();
         for region in reachable(regions).rev() {
             // `from_button_id: "any"` hands every button to the controller unmapped.
@@ -95,8 +100,22 @@ impl Dispatcher {
             };
             let previous = self.last.insert((region.key.clone(), index), input.down);
             // Interaction edge: the press, or the release on touch.
-            let edge = input.mode != InputMode::Touch;
-            let interacted = previous != Some(edge) && input.down == edge;
+            let interacted = if input.mode == InputMode::Touch {
+                let key = (region.key.clone(), index);
+                if input.down {
+                    self.touch_down
+                        .entry(input.id.to_owned())
+                        .or_default()
+                        .insert(key);
+                    false
+                } else {
+                    self.touch_down
+                        .get(input.id)
+                        .is_some_and(|pressed| pressed.contains(&key))
+                }
+            } else {
+                input.down && previous != Some(true)
+            };
             let fired = event(
                 region,
                 &mapping.to,
@@ -130,6 +149,7 @@ impl Dispatcher {
             }
         }
         if !input.down {
+            self.finish_touch(input.id);
             if self.track_button.as_deref() == Some(input.id) {
                 self.track = None;
                 self.track_button = None;
@@ -440,6 +460,15 @@ impl Dispatcher {
         }
     }
 
+    /// Expires a gesture even when another control consumed its release or its layout disappeared.
+    fn finish_touch(&mut self, id: &str) {
+        if let Some(pressed) = self.touch_down.remove(id) {
+            for key in pressed {
+                self.last.remove(&key);
+            }
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn deliver(
         &mut self,
@@ -451,7 +480,7 @@ impl Dispatcher {
         input: &ButtonInput<'_>,
         out: &mut Dispatch,
     ) {
-        if region.kind == HitKind::Button && region.enabled {
+        if (region.kind == HitKind::Button || region.widget.toggle.is_some()) && region.enabled {
             if input.down {
                 view.pressed = Some(region.key.clone());
             } else if view.is_pressed(&region.key) {
@@ -934,7 +963,13 @@ fn collection_index(region: &HitRegion, collection: Option<&str>) -> Option<usiz
         .find(|(found, _)| found == name)
     {
         Some((_, index)) => Some(*index),
-        None if region.collection.is_none() => region.collection_index,
+        None if region
+            .collection
+            .as_deref()
+            .is_none_or(|collection| collection == name) =>
+        {
+            region.collection_index
+        }
         None => None,
     }
 }

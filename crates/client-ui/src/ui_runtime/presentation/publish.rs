@@ -20,7 +20,9 @@ pub fn capture_hud_frame(
     now_millis: u64,
     icon_frames: ItemIconFrames,
 ) -> (Option<IconRef>, Option<IconRef>) {
+    presentation.capture_local_player_identity(stream, runtime.session_id());
     runtime.sync_anvil_name(player_runtime);
+    observe_storage_block(runtime, player_runtime, stream);
     // Inventory capture precedes lectern opening and screen selection. Selected-item
     // and sleep observations run after item capture, immediately before publication.
     let armor = observations::armor(
@@ -167,28 +169,54 @@ pub fn hovered_stack(
             ),
             Hit::Storage(slot) => (ledger.storage_stack(slot), None),
             Hit::Craft(slot) => (
-                ledger.target_stack(inventory::inventory_ledger::InventoryTarget::Craft(slot)),
+                ledger
+                    .target_stack(inventory::inventory_ledger::InventoryTarget::Craft(slot))
+                    .or_else(|| ledger.crafting_ghost_stack(slot)),
                 None,
             ),
             Hit::Armor(row) => (
                 ledger.target_stack(inventory::inventory_ledger::InventoryTarget::Armor(row)),
                 None,
             ),
-            Hit::Offhand => (
-                ledger.target_stack(inventory::inventory_ledger::InventoryTarget::Offhand),
-                None,
-            ),
+            Hit::Offhand => (runtime.local_offhand_stack(player_runtime), None),
+            Hit::CraftOutput
+                if matches!(
+                    ledger.window_kind(),
+                    None | Some(protocol::WindowKind::Workbench)
+                ) =>
+            {
+                return ui_screens::inventory_capture::crafting_output(
+                    ledger,
+                    player_runtime.inventory.crafting_match(),
+                )
+                .map(|(stack, _)| (stack, None));
+            }
             Hit::CraftOutput if ledger.window_kind() == Some(protocol::WindowKind::Anvil) => {
                 return runtime
                     .anvil_output(player_runtime)
                     .map(|stack| (stack, None));
             }
+            Hit::CraftOutput if ledger.window_kind() == Some(protocol::WindowKind::Grindstone) => {
+                return runtime
+                    .grindstone_output(player_runtime)
+                    .map(|stack| (stack, None));
+            }
+            Hit::CraftOutput
+                if matches!(
+                    ledger.window_kind(),
+                    Some(protocol::WindowKind::Trade { .. })
+                ) =>
+            {
+                (ledger.trade_output(), None)
+            }
             Hit::CraftOutput => (ledger.created_output_stack(), None),
             Hit::CreativeGrid(index) => {
                 let position = runtime.screen_state().creative_row * super::screens::GRID_COLUMNS
                     + usize::from(index);
-                let entries =
-                    crate::ui_runtime::inventory_actions::visible_creative_entries(ledger, runtime);
+                let entries = crate::ui_runtime::inventory_actions::visible_creative_entries(
+                    player_runtime,
+                    runtime,
+                );
                 (entries.get(position).map(|item| &item.stack), None)
             }
             Hit::Widget(ui_screens::container_actions::Widget::BookRecipe(index)) => {
@@ -197,17 +225,25 @@ pub fn hovered_stack(
                 let output = runtime
                     .book_recipes(player_runtime, skip, 1)
                     .first()
-                    .map(protocol::RecipeHandle::output);
+                    .map(|entry| entry.recipe.output());
                 return output.map(|output| {
                     let stack = protocol::NetworkItemStack {
                         network_id: output.network_id,
                         metadata: u32::from(output.aux),
                         count: u16::from(output.count),
-                        block_runtime_id: i32::try_from(output.block_runtime_id).unwrap_or(0),
+                        block_runtime_id: i32::from_ne_bytes(output.block_runtime_id.to_ne_bytes()),
                         ..protocol::NetworkItemStack::empty()
                     };
                     (stack, None)
                 });
+            }
+            Hit::Widget(ui_screens::container_actions::Widget::TradeOffer {
+                tier,
+                row,
+                item: Some(column),
+            }) => {
+                let trade = ledger.trading()?;
+                (trade.preview(trade.row_index(tier, row)?, column), None)
             }
             Hit::RecipeBook(index) => {
                 return super::forms::recipe_book_hover(player_runtime, runtime, index);
@@ -216,4 +252,28 @@ pub fn hovered_stack(
         };
         stack.map(|stack| (stack.clone(), name))
     })
+}
+
+/// Retains the block entity id under the open window, allocating only when it changes.
+fn observe_storage_block(
+    runtime: &mut UiRuntime,
+    player_runtime: &player_state::PlayerState,
+    stream: Option<&chunk_pipeline::WorldStream>,
+) {
+    let position = runtime.inventory_ledger(player_runtime).window_position();
+    let block = position
+        .zip(stream)
+        .and_then(|(position, stream)| stream.block_entity_compound(position));
+    let (Some(position), Some(id)) = (position, block.as_deref().and_then(|nbt| nbt.string("id")))
+    else {
+        runtime.storage_block = None;
+        return;
+    };
+    if runtime
+        .storage_block
+        .as_ref()
+        .is_none_or(|(retained, old)| *retained != position || **old != *id)
+    {
+        runtime.storage_block = Some((position, std::sync::Arc::from(id)));
+    }
 }

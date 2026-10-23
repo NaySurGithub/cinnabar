@@ -77,7 +77,7 @@ fn hud_local_emote_moves_vertices_and_equipment_without_replacing_geometry_or_na
         .unwrap()
         .vertices
         .as_ptr();
-    let emote = actor_animation::CustomEmote::Twerk;
+    let emote = cosmetics::test_support::playback_emote();
     presentation.capture_hud_player_with_emote(Some(&stream), false, Some((emote, 0.0)));
     let first = presentation.gui_models.live_player.vertices.clone();
     assert_ne!(first, rest);
@@ -403,4 +403,28 @@ fn hud_wings_follow_shared_time_without_moving_the_equipped_hat() {
         first[&hat],
         presentation.gui_models.live_player.hat_vertices[&hat]
     );
+}
+
+#[test]
+fn hud_cosmetic_emitters_share_the_player_frame_and_clear_with_its_owner() {
+    let catalog = player_catalog_geometry(br#"{"format_version":"1.12.0","minecraft:geometry":[{
+        "description":{"identifier":"geometry.test_player","texture_width":64,"texture_height":64},
+        "bones":[{"name":"head","pivot":[0,24,0],"cubes":[{"origin":[-4,24,-4],"size":[8,8,8],"uv":[0,0]}]}]}]}"#.to_vec());
+    let stream = player_stream(Arc::clone(&catalog), catalog);
+    let mut presentation =
+        UiPresentationRuntime::new(ui_engine::test_support::fixture_font()).unwrap();
+    let item = render_model::hats::fixture::glowing_crown();
+    presentation.set_preview_cosmetics(&[item]);
+    presentation.capture_hud_player(Some(&stream), false);
+    let first = presentation.gui_models.live_player.emitters[0].2;
+    assert_eq!(presentation.gui_models.live_player.emitters.len(), 1);
+    presentation.capture_hud_player(Some(&stream), true);
+    let swimming = presentation.gui_models.live_player.emitters[0].2;
+    let expected = super::super::super::player_preview::HUD_SWIM_OFFSET
+        / super::super::super::player_preview::PLAYER_MODEL_SCALE;
+    assert!((swimming.position[1] - first.position[1] - expected).abs() < 1e-5);
+    assert_eq!(swimming.basis, first.basis);
+    presentation.capture_hud_player(None, false);
+    assert!(presentation.gui_models.live_player.emitters.is_empty());
+    assert!(presentation.gui_models.live_player.emitter_owner.is_none());
 }

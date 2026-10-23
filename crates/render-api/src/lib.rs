@@ -6,14 +6,20 @@
 mod actor_lighting;
 pub mod far_terrain;
 mod frame_rate_limit;
+mod hurt_camera;
 mod legacy_combat;
 mod pose_generation;
 pub mod primitive_shapes;
 mod publication;
+mod vsync;
 pub use pose_generation::PoseGeneration;
 mod skin;
+pub mod sprite_mask;
+pub mod sub_chunk_requests;
 mod ui_backdrop;
 mod ui_coverage_paint;
+pub mod ui_repeat;
+pub mod ui_shadow;
 mod vrr;
 
 pub use ui_backdrop::{UI_BACKDROP_MAX_BLUR_PIXELS, UI_BACKDROP_MAX_FACTOR, UiBackdropPaint};
@@ -23,6 +29,7 @@ pub use actor_lighting::{
     ACTOR_LIGHT_DIRECTIONAL, ACTOR_LIGHT_WORLD, ACTOR_SHADE_COEFFICIENTS, fancy_actor_shade,
 };
 pub use frame_rate_limit::FrameRateLimit;
+pub use hurt_camera::{HurtCameraStyle, MAX_HURT_CAMERA_INTENSITY};
 pub use legacy_combat::{BEDROCK_112, Bedrock112Rules, CombatVisuals, DEFAULT_COMBAT_VISUALS};
 pub use publication::{
     PublicationAllowance, PublicationPermit, PublicationPermitStage, PublicationServiceConfig,
@@ -35,9 +42,12 @@ pub use skin::{
     StandardSkin, expand_legacy_skin_rgba8,
 };
 pub use vrr::VrrPreference;
+pub use vsync::VsyncMode;
 
 /// Largest render distance the client offers and requests; the server grant still bounds streaming.
 pub const MAX_VIEW_RADIUS_CHUNKS: i32 = 255;
+/// Hidden terrain is culled unless the player disables the optimization.
+pub const DEFAULT_CHUNK_OCCLUSION_CULLING: bool = true;
 /// Retention radius before the server grants one, so an unbounded maximum never pins old terrain.
 pub const UNGRANTED_VIEW_RADIUS_CHUNKS: i32 = 16;
 
@@ -46,3 +56,6 @@ pub const CAMERA_NEAR_PLANE_BLOCKS: f32 = 0.025;
 
 /// Separation that keeps block selection and destroy overlays in front of their surfaces.
 pub const BLOCK_OVERLAY_FACE_OFFSET: f32 = 0.002;
+
+/// Vertex style bit selecting linear filtering for UI sprites.
+pub const UI_STYLE_BILINEAR: u8 = 1 << 3;

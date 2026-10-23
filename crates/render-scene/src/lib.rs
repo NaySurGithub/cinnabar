@@ -6,6 +6,7 @@ pub mod block_entity;
 pub mod chunk;
 pub mod cloud_config;
 pub mod cloud_visibility;
+pub mod device_memory;
 pub mod dropped_item;
 pub mod enhanced;
 pub mod entity_shadow;
@@ -33,8 +34,10 @@ pub mod runtime_profile_uploads;
 pub mod screen_fire;
 pub mod screen_overlay;
 pub mod screen_overlay_portal;
+pub mod shaderpack;
 pub mod skybox;
 pub mod startup_presentation;
+pub mod terrain_culling;
 pub mod terrain_publication;
 pub mod ui;
 pub mod ui_glint;
@@ -83,9 +86,10 @@ pub use chunk::schedule::ChunkRenderApplySet;
 pub use chunk::texture_reload::{ChunkTexturePreparation, ChunkTextureReload};
 pub use chunk::textures::{
     AnimationFrameSample, ChunkAnimationClock, ChunkTextureAssetIdentity, ChunkTextureAssets,
-    TextureArrayLimits, TextureLimitError, TextureMipUploadPlan, TexturePageBinding,
-    TextureUploadPlanError, diagnostic_texture_page, greedy_texture_uv, plan_texture_mip_uploads,
-    plan_texture_page_bindings, select_animation_frames, texture_asset_needs_rebuild,
+    ChunkTextureBindingIdentity, EnhancedTextureAssets, TextureArrayLimits, TextureLimitError,
+    TextureMipUploadPlan, TexturePageBinding, TextureUploadPlanError, diagnostic_texture_page,
+    greedy_texture_uv, plan_texture_mip_uploads, plan_texture_page_bindings,
+    select_animation_frames, texture_asset_needs_rebuild,
 };
 pub use chunk::transparent_witness::{
     TransparentWitnessEvent, TransparentWitnessEvidence, TransparentWitnessIncompleteEvent,
@@ -132,6 +136,7 @@ pub use screen_overlay::{
     ScreenOverlayScene, ScreenOverlayTextures,
 };
 pub use skybox::SkyboxSettings;
+pub use terrain_culling::ChunkOcclusionCulling;
 pub use ui::{UiRenderSceneResource, UiRenderStatsResource};
 pub use ui_glint::{UiGlintSettings, UiItemGlintTexture};
 pub use viewmodel::{

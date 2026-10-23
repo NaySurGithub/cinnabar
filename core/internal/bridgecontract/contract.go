@@ -31,10 +31,20 @@ const (
 	RelayVersion = 2
 	// RelayControlBytes: Largest relay Hello or control JSON payload in bytes.
 	RelayControlBytes = 4096
-	// RelayPlayMessageBytes: Largest WebSocket play message and upload burst in bytes.
+	// RelayPlayMessageBytes: Largest WebSocket play message in bytes.
 	RelayPlayMessageBytes = 8388608
+	// QueuedFrames: Maximum queued reliable frames or browser receive chunks.
+	QueuedFrames = 16
+	// RelayQueuedFrameBytes: Ordinary browser frame queue budget; a larger bridge frame is admitted alone.
+	RelayQueuedFrameBytes = 8388608
+	// RelayUploadBurstBytes: Upload rate limiter burst, independent of message and queue limits.
+	RelayUploadBurstBytes = 8388608
+	// RelayBidirectionalStreams: Concurrent browser streams for control, active play and retiring play.
+	RelayBidirectionalStreams = 3
 	// RelayKeepAliveSeconds: Interval between control keepalives.
 	RelayKeepAliveSeconds = 30
+	// RelayControlRefillMillis: Time to replenish one relay control request; busy sign-out retries wait at least this long.
+	RelayControlRefillMillis = 1000
 	// RelayTransportPath: WebTransport Extended CONNECT route.
 	RelayTransportPath = "/v2/transport"
 	// RelayControlPath: WebSocket control route.
@@ -164,7 +174,7 @@ const (
 	// MethodCinnabarLookup: Control method for a Cinnabar player lookup.
 	MethodCinnabarLookup = "cinnabar_lookup.v1"
 	// CinnabarAPIBaseURL: Cinnabar API origin; the package workflow reads it from this manifest.
-	CinnabarAPIBaseURL = "https://cinnabar-api.cinnabar-api.workers.dev"
+	CinnabarAPIBaseURL = "https://api.cinnabar.gg"
 	// CinnabarAPIMaxLookupXUIDs: Most XUIDs in one Cinnabar player lookup.
 	CinnabarAPIMaxLookupXUIDs = 128
 	// CinnabarAPICacheTTLMS: Fallback lifetime of a Cinnabar lookup answer.
@@ -239,6 +249,16 @@ const (
 	DisconnectKeyInvalidName = "disconnectionScreen.invalidName"
 	// DisconnectKeyDeviceClock: Core disconnect message: The sign-in token was rejected because this device's clock is behind.
 	DisconnectKeyDeviceClock = "cinnabar.disconnect.deviceClock"
+	// DisconnectKeyLocalWorldOffline: Core disconnect message: The local Bedrock Dedicated Server world cannot be reached without a network connection.
+	DisconnectKeyLocalWorldOffline = "cinnabar.disconnect.localWorldOffline"
+	// RelayRefusalResume: A safe relay refusal code; unrecognized codes use the generic refusal. ResumeRefused.
+	RelayRefusalResume = "resume_refused"
+	// RelayRefusalAdmission: A safe relay refusal code; unrecognized codes use the generic refusal. AdmissionRefused.
+	RelayRefusalAdmission = "admission_refused"
+	// RelayRefusalSessionBusy: A safe relay refusal code; unrecognized codes use the generic refusal. SessionBusy.
+	RelayRefusalSessionBusy = "session_busy"
+	// RelayRefusalUnknown: A safe relay refusal code; unrecognized codes use the generic refusal. Refused.
+	RelayRefusalUnknown = "refused"
 	// GameModeSurvival: Game mode a world starts players in. Survival.
 	GameModeSurvival = "survival"
 	// GameModeCreative: Game mode a world starts players in. Creative.
@@ -325,6 +345,8 @@ const (
 	AuthSignedIn = "signed_in"
 	// AuthFailed: Sign-in state of the core. Failed.
 	AuthFailed = "failed"
+	// ConnectStageIdle: Join progress stage reported by the core. Idle.
+	ConnectStageIdle = ""
 	// ConnectStageRealm: Join progress stage reported by the core. Realm.
 	ConnectStageRealm = "realm"
 	// ConnectStagePacks: Join progress stage reported by the core. Packs.
@@ -401,6 +423,10 @@ type CinnabarPlayerUpdates struct {
 	Emotes []CinnabarRemoteEmote `json:"emotes"`
 	// Loadouts: Nearby authenticated loadouts.
 	Loadouts []CinnabarRemoteLoadout `json:"loadouts"`
+	// OwnershipXUID: Verified local account identity, empty while disconnected.
+	OwnershipXUID string `json:"ownership_xuid"`
+	// OwnedCosmetics: Paid grants supplied by the account API database.
+	OwnedCosmetics []string `json:"owned_cosmetics"`
 }
 
 // InboxCategories: Inbox category names in display order.
@@ -410,4 +436,4 @@ var InboxCategories = [...]string{"News", "Realms", "Invites", "Feedback"}
 var MessageEventTypes = [...]string{"Impression", "DeleteAllRead", "ReadAll", "Delete", "Click", "Dismiss", "ControlImpression"}
 
 // CoreDisconnectKeys: Every lang key the core sends as a whole disconnect message.
-var CoreDisconnectKeys = [...]string{"disconnectionScreen.cantConnect", "disconnectionScreen.cantConnectToRealm", "disconnectionScreen.resourcePack", "disconnectionScreen.outdatedClient", "disconnectionScreen.outdatedServer", "disconnectionScreen.invalidSkin", "disconnectionScreen.invalidName", "cinnabar.disconnect.deviceClock"}
+var CoreDisconnectKeys = [...]string{"disconnectionScreen.cantConnect", "disconnectionScreen.cantConnectToRealm", "disconnectionScreen.resourcePack", "disconnectionScreen.outdatedClient", "disconnectionScreen.outdatedServer", "disconnectionScreen.invalidSkin", "disconnectionScreen.invalidName", "cinnabar.disconnect.deviceClock", "cinnabar.disconnect.localWorldOffline"}

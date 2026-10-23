@@ -1,8 +1,10 @@
 use super::{
+    brewing::BrewingMix,
     budget::{Credits, MAX_UPDATE_BYTES},
     crafting::RecipeOutput,
     grammar,
-    model::{Batch, Ingredient, MAX_INGREDIENTS, Recipe, RecipeUpdate, Record},
+    identity::{RecipeIdentity, RecipeUnlockingContext},
+    model::{Batch, Ingredient, MAX_INGREDIENTS, Output, Recipe, RecipeUpdate, Record},
     reader::{Reader, Refusal},
     screen::{
         BrewingRecipe, MAX_SCREEN_RECIPES, MultiRecipe, ScreenIngredient, ScreenRecipe,
@@ -27,16 +29,23 @@ pub(super) fn decode_with_credits(
         let mut screen_names = 0usize;
         let mut multi_count = 0usize;
         let mut brewing_count = 0usize;
-        let (clear, total) = grammar::walk(
+        let mut screen_brewing_count = 0usize;
+        let mut recipe_count = 0usize;
+        let mut identities_count = 0usize;
+        let mut extra_outputs = 0usize;
+        let (clear, _) = grammar::walk(
             &mut reader,
-            |_, candidate| {
-                retained_names += candidate.map_or(0, |candidate| {
+            |_, candidate, identity| {
+                recipe_count += 1;
+                identities_count += usize::from(identity.is_some());
+                retained_names += candidate.as_ref().map_or(0, |candidate| {
                     candidate
                         .ingredients
                         .iter()
                         .filter(|item| item.count > 0)
                         .count()
                 });
+                extra_outputs += candidate.map_or(0, |candidate| candidate.extra.len());
                 Ok(())
             },
             |item| {
@@ -46,11 +55,17 @@ pub(super) fn decode_with_credits(
                         screen_names += record.len;
                     }
                     grammar::ScreenItem::Multi { .. } => multi_count += 1,
-                    grammar::ScreenItem::Brewing(_) if brewing_count < MAX_SCREEN_RECIPES => {
-                        brewing_count += 1;
+                    grammar::ScreenItem::Brewing(_)
+                        if screen_brewing_count < MAX_SCREEN_RECIPES =>
+                    {
+                        screen_brewing_count += 1;
                     }
                     _ => {}
                 }
+                Ok(())
+            },
+            |_| {
+                brewing_count += 1;
                 Ok(())
             },
         )?;
@@ -60,13 +75,20 @@ pub(super) fn decode_with_credits(
         let retained_names = retained_names
             .checked_add(screen_names)
             .ok_or(Refusal::Policy)?;
-        let charge = total
+        let charge = recipe_count
             .checked_mul(size_of::<Record>())
             .and_then(|n| n.checked_add(retained_names.checked_mul(128)?))
+            .and_then(|n| n.checked_add(extra_outputs.checked_mul(size_of::<Output>() + 16)?))
             .and_then(|n| n.checked_add(screen_names.checked_mul(size_of::<ScreenIngredient>())?))
             .and_then(|n| n.checked_add(screen_count.checked_mul(size_of::<ScreenRecipe>())?))
             .and_then(|n| n.checked_add(multi_count.checked_mul(size_of::<MultiRecipe>())?))
-            .and_then(|n| n.checked_add(brewing_count.checked_mul(size_of::<BrewingRecipe>())?))
+            .and_then(|n| n.checked_add(brewing_count.checked_mul(size_of::<BrewingMix>())?))
+            .and_then(|n| {
+                n.checked_add(screen_brewing_count.checked_mul(size_of::<BrewingRecipe>())?)
+            })
+            .and_then(|n| {
+                n.checked_add(identities_count.checked_mul(size_of::<RecipeIdentity>() + 64)?)
+            })
             .and_then(|n| n.checked_add(reader.string_bytes()))
             .and_then(|n| n.checked_add(512))
             .ok_or(Refusal::Policy)?;
@@ -76,9 +98,17 @@ pub(super) fn decode_with_credits(
         let permit = credits.reserve(charge).ok_or(Refusal::Policy)?;
         let mut records = Vec::new();
         records
-            .try_reserve_exact(total)
+            .try_reserve_exact(recipe_count)
             .map_err(|_| Refusal::Policy)?;
         let mut reader = Reader::new(body)?;
+        let mut brewing = Vec::new();
+        brewing
+            .try_reserve_exact(brewing_count)
+            .map_err(|_| Refusal::Policy)?;
+        let mut identities = Vec::new();
+        identities
+            .try_reserve_exact(identities_count)
+            .map_err(|_| Refusal::Policy)?;
         let mut screens = ScreenRecipes::default();
         screens
             .recipes
@@ -90,11 +120,23 @@ pub(super) fn decode_with_credits(
             .map_err(|_| Refusal::Policy)?;
         screens
             .brewing
-            .try_reserve_exact(brewing_count)
+            .try_reserve_exact(screen_brewing_count)
             .map_err(|_| Refusal::Policy)?;
         grammar::walk(
             &mut reader,
-            |id, candidate| {
+            |id, candidate, identity| {
+                let identity_index = if let Some(identity) = identity {
+                    let index = identities.len();
+                    identities.push(RecipeIdentity {
+                        name: owned_text(identity.name)?,
+                        tag: owned_text(identity.tag)?,
+                        context: RecipeUnlockingContext::from_index(identity.context),
+                        network_id: id,
+                    });
+                    Some(index)
+                } else {
+                    None
+                };
                 let recipe = if let Some(candidate) = candidate {
                     let mut ingredients: [Option<Ingredient>; MAX_INGREDIENTS] =
                         std::array::from_fn(|_| None);
@@ -121,11 +163,16 @@ pub(super) fn decode_with_credits(
                         priority: candidate.priority,
                         ingredients,
                         output: candidate.output,
+                        extra_outputs: candidate.extra.read()?.into_boxed_slice(),
                     })
                 } else {
                     None
                 };
-                records.push(Record { id, recipe });
+                records.push(Record {
+                    id,
+                    recipe,
+                    identity_index,
+                });
                 Ok(())
             },
             |item| {
@@ -169,6 +216,10 @@ pub(super) fn decode_with_credits(
                 }
                 Ok(())
             },
+            |mix| {
+                brewing.push(mix);
+                Ok(())
+            },
         )?;
         records.sort_unstable_by_key(|record| record.id);
         // Ambiguous duplicates are tombstones, independent of arrival order.
@@ -210,7 +261,9 @@ pub(super) fn decode_with_credits(
         Ok(RecipeUpdate {
             batch: Some(Arc::new(Batch {
                 records,
+                identities,
                 screen: screens,
+                brewing,
                 clear,
                 _permit: permit,
             })),
@@ -221,6 +274,15 @@ pub(super) fn decode_with_credits(
         Err(Refusal::Policy) => Ok(RecipeUpdate::unavailable()),
         Err(Refusal::Wire) => Err(super::super::InventoryPacketError::MalformedWire),
     }
+}
+
+/// Copies text only after the complete decoded batch has reserved its allocation credit.
+fn owned_text(value: &str) -> Result<String, Refusal> {
+    let mut text = String::new();
+    text.try_reserve_exact(value.len())
+        .map_err(|_| Refusal::Policy)?;
+    text.push_str(value);
+    Ok(text)
 }
 
 #[cfg(test)]

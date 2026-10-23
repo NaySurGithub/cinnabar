@@ -74,6 +74,8 @@ struct Queues {
     shutdown: bool,
     #[cfg(target_arch = "wasm32")]
     observed_at: Moment,
+    #[cfg(any(test, target_arch = "wasm32"))]
+    foreground_turn: bool,
 }
 
 impl Queues {
@@ -86,6 +88,19 @@ impl Queues {
             Lane::Summary => &mut self.summary,
         };
         queue.push_back((queued_at, job));
+    }
+
+    /// Alternates worker eligibility so overdue light cannot occupy every browser turn.
+    #[cfg(any(test, target_arch = "wasm32"))]
+    fn take_cooperative(&mut self, now: Moment) -> Option<Job> {
+        let background = !self.foreground_turn;
+        let job = self
+            .take(background, now)
+            .or_else(|| (!background).then(|| self.take(true, now)).flatten());
+        if job.is_some() {
+            self.foreground_turn = !self.foreground_turn;
+        }
+        job
     }
 
     /// Next job for a worker at time `now`; the clock is a parameter so ageing is testable.
@@ -181,11 +196,31 @@ pub fn world_worker_threads(cores: usize) -> usize {
     PoolSize::for_cores(cores).threads()
 }
 
+/// Diagnostic cap on the logical processors every thread pool sizes itself for.
+const CORES_ENV: &str = "CINNABAR_CPU_CORES";
+
+/// Logical processors the client's pools are sized for: the machine's count, or fewer when
+/// [`CORES_ENV`] asks for a smaller machine.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn logical_cores() -> usize {
+    let available = std::thread::available_parallelism().map_or(1, usize::from);
+    capped_cores(available, std::env::var(CORES_ENV).ok().as_deref())
+}
+
+/// Applies a positive integer cap below `available`; anything else keeps `available`.
+#[cfg(any(test, not(target_arch = "wasm32")))]
+fn capped_cores(available: usize, requested: Option<&str>) -> usize {
+    requested
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .filter(|&cores| cores > 0)
+        .map_or(available, |cores| cores.min(available))
+}
+
 /// Runs pre-stream work on a temporary normal-priority pool sized like the world pool.
 /// Falls back to the caller pool if worker threads cannot start.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn on_idle_world_cores<T: Send>(work: impl FnOnce() -> T + Send) -> T {
-    let cores = std::thread::available_parallelism().map_or(1, usize::from);
+    let cores = logical_cores();
     match rayon::ThreadPoolBuilder::new()
         .num_threads(world_worker_threads(cores))
         .thread_name(|index| format!("world-borrowed-{index}"))
@@ -198,13 +233,20 @@ pub fn on_idle_world_cores<T: Send>(work: impl FnOnce() -> T + Send) -> T {
 
 pub(super) static WORKERS: LazyLock<WorldPool> = LazyLock::new(|| {
     #[cfg(not(target_arch = "wasm32"))]
-    let cores = std::thread::available_parallelism().map_or(1, usize::from);
+    let cores = logical_cores();
     #[cfg(target_arch = "wasm32")]
     let cores = 1;
     WorldPool::new(PoolSize::for_cores(cores))
 });
 
 impl WorldPool {
+    /// Submits detached allocations to the executor driven by the browser host.
+    #[cfg(any(test, target_arch = "wasm32"))]
+    fn retire(&self, job: impl FnOnce() + Send + 'static) {
+        // Decode ageing also prevents a mesh backlog from retaining evicted allocations.
+        self.spawn(Lane::Decode, job);
+    }
+
     /// Creates the queues and starts native threads; the browser driver retains the same jobs.
     fn new(size: PoolSize) -> Self {
         let shared = Arc::new(Shared::default());
@@ -252,6 +294,14 @@ impl WorldPool {
             jobs: Vec::new(),
         }
     }
+}
+
+/// Releases detached world allocations through the host's background executor.
+pub(super) fn retire(job: impl FnOnce() + Send + 'static) {
+    #[cfg(not(target_arch = "wasm32"))]
+    rayon::spawn(job);
+    #[cfg(target_arch = "wasm32")]
+    WORKERS.retire(job);
 }
 
 /// Prepared jobs retain independent priority after their shared publication.
@@ -323,10 +373,10 @@ pub(crate) fn observe(now: Moment) {
     queues.observed_at = queues.observed_at.max(now);
 }
 
-/// Takes and runs one job with the same urgent and ageing rules as a background worker.
+/// Runs one cooperative turn using native foreground and background eligibility.
 #[cfg(any(test, target_arch = "wasm32"))]
 fn run_one(shared: &Shared, now: Moment, scratch: &mut world::LightSolverScratch) -> bool {
-    let Some(job) = shared.lock().take(true, now) else {
+    let Some(job) = shared.lock().take_cooperative(now) else {
         return false;
     };
     // Matches native workers: a panic cannot silently lose job permits.

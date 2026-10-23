@@ -103,6 +103,8 @@ pub struct OreUiScreen {
     pub dark_mode: bool,
     extra_large_ui: bool,
     pub transitions: Transitions,
+    /// Search scrolling and shader-option help retained between settings frames.
+    settings_state: settings::State,
     /// The last menu paint's leftovers for its adapter.
     paint: Option<menu_screen::MenuPaint>,
 }

@@ -4,7 +4,7 @@ use bevy::prelude::{App, Local, MessageReader, Res, ResMut, Time, Update};
 use client_audio::audio::{
     AudioSettings,
     local::LocalMotion,
-    systems::{AmbientState, IngestState, UiSoundCue},
+    systems::{IngestState, UiSoundCue, ambience::AmbientState},
 };
 use client_audio::audio_ingress::SequencedAudioEvent;
 use render_scene::{ParticleSimulation, RuntimeStage, RuntimeStageProfiler};
@@ -23,28 +23,27 @@ use {
 /// systems the executor runs between them are never attributed to audio.
 pub(crate) fn configure(app: &mut App) {
     super::synchronized::configure(app);
+    let systems = (
+        ingest_audio_events,
+        drive_inventory_audio,
+        drive_local_motion,
+        drive_ambience,
+        super::weather::drive_rain_audio.after(crate::environment::update_atmosphere_frame),
+        drive_weather_and_particles,
+        // Local break and place cues play in the frame that predicts them.
+        drive_block_cues
+            .after(crate::melee::produce_attacks)
+            .after(crate::block_use::produce_block_use),
+        drive_consume_audio,
+        drive_actor_audio,
+        pump_audio.after(client_state::ClientFrameSet::Camera),
+    )
+        .chain()
+        .after(crate::named_audio::drain_live_named_audio);
+    #[cfg(not(target_arch = "wasm32"))]
+    let systems = systems.after(crate::ui_runtime::drive_world_inventory_keys);
     app.add_plugins(client_audio::ClientAudioPlugin)
-        .add_systems(
-            Update,
-            (
-                ingest_audio_events,
-                drive_inventory_audio,
-                drive_local_motion,
-                drive_ambience,
-                super::weather::drive_rain_audio.after(crate::environment::update_atmosphere_frame),
-                drive_weather_and_particles,
-                // Local break and place cues play in the frame that predicts them.
-                drive_block_cues
-                    .after(crate::melee::produce_attacks)
-                    .after(crate::block_use::produce_block_use),
-                drive_consume_audio,
-                drive_actor_audio,
-                pump_audio.after(client_state::ClientFrameSet::Camera),
-            )
-                .chain()
-                .after(crate::ui_runtime::drive_world_inventory_keys)
-                .after(crate::named_audio::drain_live_named_audio),
-        );
+        .add_systems(Update, systems);
 }
 
 pub(crate) fn drive_inventory_audio(
@@ -139,7 +138,7 @@ pub(crate) fn drive_ambience(
     let _timer = profiler
         .as_deref()
         .map(|profiler| profiler.time(RuntimeStage::Audio));
-    client_audio::audio::systems::drive_ambience(
+    client_audio::audio::systems::ambience::drive_ambience(
         time,
         client_audio::observations::WorldObservation {
             stream: world.stream.as_ref(),

@@ -18,8 +18,22 @@ impl EquipmentRuntime {
         bones: &BodyBones,
         source: Option<&pack::BindingSource>,
         (equipment, animation): (&ActorEquipmentInput, Option<EquipmentAnimation<'_>>),
+        scale: f32,
         layers: &mut Vec<EquipmentPresentation>,
     ) {
+        if !self.show_custom_item_models && source.is_some_and(|source| source.from_pack) {
+            if let Some(grip) = equipment.java.filter(|_| layer == LAYER_MAIN_HAND) {
+                self.push_java_held(body, item, bones, grip, scale, layers, true);
+            } else {
+                let hand = if layer == LAYER_OFF_HAND {
+                    bones.left_item
+                } else {
+                    bones.right_item
+                };
+                self.push_icon_attached(body, item, layer, hand, scale, layers);
+            }
+            return;
+        }
         if let Some(source) = source {
             let binding = &source.catalog.bindings()[source.index];
             let authored = layer != LAYER_MAIN_HAND
@@ -46,25 +60,64 @@ impl EquipmentRuntime {
             } else {
                 bones.right_item
             };
-            if self.push_attachable(body, item, layer, hand, source, layers) {
+            if self.push_attachable(body, item, layer, hand, source, scale, layers) {
                 return;
             }
         }
         if let Some(grip) = equipment.java.filter(|_| layer == LAYER_MAIN_HAND) {
-            self.push_java_held(body, item, bones, grip, layers);
+            self.push_java_held(body, item, bones, grip, scale, layers, false);
         } else {
             let hand = if layer == LAYER_OFF_HAND {
                 bones.left_item
             } else {
                 bones.right_item
             };
-            self.push_attached(body, item, layer, hand, None, layers);
+            self.push_attached(body, item, layer, hand, None, scale, layers);
         }
+    }
+
+    /// Draws a pack item's ordinary icon on an item bone, bypassing authored geometry.
+    pub(super) fn push_icon_attached(
+        &mut self,
+        body: &ActorRigSubmission,
+        item: &WornItem,
+        layer: u8,
+        bone: Option<usize>,
+        scale: f32,
+        layers: &mut Vec<EquipmentPresentation>,
+    ) {
+        let Some(hand) = bone else {
+            return;
+        };
+        let Some((mesh, location, span)) = self.held_icon_mesh(item) else {
+            return;
+        };
+        let mut display = held_sprite_display(item.grip.upright().unwrap_or(false));
+        display.scale *= scale;
+        let (Some(previous), Some(current)) = (
+            body.input.previous_bones.get(hand),
+            body.input.current_bones.get(hand),
+        ) else {
+            return;
+        };
+        let (Some(previous), Some(current)) = (
+            attach_to_bone(*previous, display),
+            attach_to_bone(*current, display),
+        ) else {
+            return;
+        };
+        let poses = self.poses.share(body, layer, [&[previous], &[current]]);
+        layers.push(held_glint(
+            layer_presentation(body, layer, mesh, poses, location, 0),
+            item,
+            span,
+        ));
     }
 
     /// A held item whose attachable ships its own single-bone geometry and a literal
     /// third-person placement (trident, shield). `false` when the item is not one, or its
     /// placement is Molang-driven (then the sprite/cube path draws it).
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn push_attachable(
         &mut self,
         body: &ActorRigSubmission,
@@ -72,6 +125,7 @@ impl EquipmentRuntime {
         layer: u8,
         hand: Option<usize>,
         source: &pack::BindingSource,
+        scale: f32,
         layers: &mut Vec<EquipmentPresentation>,
     ) -> bool {
         let Some(hand) = hand else {
@@ -89,16 +143,14 @@ impl EquipmentRuntime {
             return false;
         };
         let channels = match self.effective_category(&item.identifier, binding.category) {
-            EquipmentCategory::Held => {
-                binding
-                    .third_person
-                    .literal()
-                    .map(|transform| BoneChannels {
-                        translation: transform.translation.map(|value| value.get()),
-                        rotation: transform.rotation.map(|value| value.get()),
-                        scale: transform.scale.map(|value| value.get()),
-                    })
-            }
+            EquipmentCategory::Held | EquipmentCategory::ArmorAndHeld { .. } => binding
+                .third_person
+                .literal()
+                .map(|transform| BoneChannels {
+                    translation: transform.translation.map(|value| value.get()),
+                    rotation: transform.rotation.map(|value| value.get()),
+                    scale: transform.scale.map(|value| value.get()),
+                }),
             EquipmentCategory::Shield => {
                 let slot = if off_hand { "off_hand" } else { "main_hand" };
                 binding
@@ -137,8 +189,18 @@ impl EquipmentRuntime {
             return false;
         };
         let (Some(previous), Some(current)) = (
-            attachable::attach(*previous, *pivot, channels, *has_binding_expression),
-            attachable::attach(*current, *pivot, channels, *has_binding_expression),
+            attachable::attach(
+                scaled_parent(*previous, scale),
+                *pivot,
+                channels,
+                *has_binding_expression,
+            ),
+            attachable::attach(
+                scaled_parent(*current, scale),
+                *pivot,
+                channels,
+                *has_binding_expression,
+            ),
         ) else {
             return false;
         };
@@ -190,13 +252,7 @@ impl EquipmentRuntime {
                     HeldKind::Block(_) if !icon_fallback => return None,
                     _ => {}
                 }
-                let index = self.held_icon_index(item)?;
-                let placement = self.placements.get(index).copied().flatten()?;
-                let location = self
-                    .atlas_locations
-                    .get(placement.layer)
-                    .copied()
-                    .flatten()?;
+                let (index, placement, location) = self.held_icon_parts(item)?;
                 (index, MeshKey::Sprite(index), placement, location)
             }
         };
@@ -206,7 +262,36 @@ impl EquipmentRuntime {
         Some((mesh, location, block, span))
     }
 
+    /// Resolves an ordinary icon even when the item also has a block or custom model route.
+    pub(super) fn held_icon_mesh(
+        &mut self,
+        item: &WornItem,
+    ) -> Option<(EntityRigId, ActorArtworkLocation, [f32; 2])> {
+        if let Some((index, placement, location)) =
+            self.session_sprite(&item.identifier, item.metadata)
+        {
+            let mesh = self.mesh_for(MeshKey::Session(index), index, placement)?;
+            return Some((mesh, location, glint_span(placement.uv_rect(), false)));
+        }
+        let (index, placement, location) = self.held_icon_parts(item)?;
+        let mesh = self.mesh_for(MeshKey::Sprite(index), index, placement)?;
+        Some((mesh, location, glint_span(placement.uv_rect(), false)))
+    }
+
+    /// Resolves an item's startup sprite and its admitted atlas placement together.
+    fn held_icon_parts(&self, item: &WornItem) -> Option<(usize, Placement, ActorArtworkLocation)> {
+        let index = self.held_icon_index(item)?;
+        let placement = self.placements.get(index).copied().flatten()?;
+        let location = self
+            .atlas_locations
+            .get(placement.layer)
+            .copied()
+            .flatten()?;
+        Some((index, placement, location))
+    }
+
     /// A held or worn sprite/cube on `bone`, placed by `display` or the kind's held placement.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn push_attached(
         &mut self,
         body: &ActorRigSubmission,
@@ -214,6 +299,7 @@ impl EquipmentRuntime {
         layer: u8,
         bone: Option<usize>,
         override_display: Option<ItemDisplay>,
+        scale: f32,
         layers: &mut Vec<EquipmentPresentation>,
     ) {
         let Some(hand) = bone else {
@@ -223,13 +309,14 @@ impl EquipmentRuntime {
         else {
             return;
         };
-        let display = override_display.unwrap_or_else(|| {
+        let mut display = override_display.unwrap_or_else(|| {
             if block {
                 held_block_display()
             } else {
                 held_sprite_display(item.grip.upright().unwrap_or(false))
             }
         });
+        display.scale *= scale;
         let (Some(previous), Some(current)) = (
             body.input.previous_bones.get(hand),
             body.input.current_bones.get(hand),
@@ -275,7 +362,12 @@ impl EquipmentRuntime {
         let binding = &catalog.bindings()[index];
         // A custom item's `minecraft:wearable` slot names where its attachable is worn.
         let category = self.effective_category(&item.identifier, binding.category);
-        if category != (EquipmentCategory::Armor { slot }) {
+        if !matches!(
+            category,
+            EquipmentCategory::Armor { slot: admitted }
+                | EquipmentCategory::ArmorAndHeld { slot: admitted }
+                if admitted == slot
+        ) {
             return;
         }
         let selected = match animation.map(|animation| {
@@ -337,7 +429,12 @@ impl EquipmentRuntime {
             .or_else(|| {
                 if from_pack
                     || selected.is_some()
-                    || binding.category != (EquipmentCategory::Armor { slot })
+                    || !matches!(
+                        binding.category,
+                        EquipmentCategory::Armor { slot: admitted }
+                            | EquipmentCategory::ArmorAndHeld { slot: admitted }
+                            if admitted == slot
+                    )
                     || binding.geometry.resolution != EntityDependencyResolution::External
                 {
                     return None;
@@ -476,9 +573,9 @@ impl EquipmentRuntime {
         let input = animation.worn_input(equipment, slot, &variables);
         let (assets, runtime) = if from_pack {
             let pack = self.pack.as_mut().ok_or(())?;
-            (&pack.assets, &mut pack.attachables)
+            (Arc::clone(&pack.assets), &mut pack.attachables)
         } else {
-            (&self.assets, &mut self.attachables)
+            (Arc::clone(&self.assets), &mut self.attachables)
         };
         let evaluated = runtime
             .evaluate(attachable_identifier, animation.owner, animation.rig, input)
@@ -502,37 +599,63 @@ impl EquipmentRuntime {
         } else {
             &layer.pose
         };
-        let pose = local
-            .iter()
-            .enumerate()
-            .map(|(index, local)| {
-                if layer.hidden_bones.contains(&(index as u32))
-                    || (geometry_index == evaluated.geometry
-                        && evaluated.bone_names.get(index).is_some_and(|name| {
-                            bones
-                                .names
-                                .iter()
-                                .any(|owner| owner.eq_ignore_ascii_case(name))
-                        }))
-                {
-                    return Some(hidden_bone());
-                }
-                let root = evaluated.bone_parent(geometry_index, index)?;
-                if root == actor_animation::AttachableBoneParent::BindingExpression {
-                    return None;
-                }
-                let parent = modern::parent_for_root(
-                    &body.input.previous_bones,
-                    &body.input.current_bones,
+        let pose = self
+            .attachment_poses
+            .sample(
+                body,
+                (true, input.worn_slot),
+                self.poses.frame,
+                placement_cache::Inputs {
+                    assets: &assets,
                     bones,
-                    input,
-                    root,
-                    evaluated.axis_scale.map(|axis| axis * evaluated.scale),
-                )?;
-                modern::compose_parent(parent, *local)
-            })
-            .map(|pose| pose.unwrap_or_else(hidden_bone))
-            .collect();
+                    owner_names: animation.rig.bone_names,
+                    geometry: (geometry_index, evaluated.geometry),
+                    local,
+                    paired: false,
+                    hidden: &layer.hidden_bones,
+                    scale: evaluated.axis_scale.map(|axis| axis * evaluated.scale),
+                    alpha: placement_cache::alpha(
+                        body,
+                        &evaluated,
+                        geometry_index,
+                        local.len(),
+                        input.frame_alpha,
+                    ),
+                },
+                |_, index| {
+                    let local = &local[index];
+                    if layer.hidden_bones.contains(&(index as u32))
+                        || (geometry_index == evaluated.geometry
+                            && evaluated.bone_names.get(index).is_some_and(|name| {
+                                bones
+                                    .names
+                                    .iter()
+                                    .any(|owner| owner.eq_ignore_ascii_case(name))
+                            }))
+                    {
+                        return Some(hidden_bone());
+                    }
+                    let Some(root) = evaluated.bone_parent(geometry_index, index) else {
+                        return Some(hidden_bone());
+                    };
+                    if root == actor_animation::AttachableBoneParent::BindingExpression {
+                        return Some(hidden_bone());
+                    }
+                    let Some(parent) = modern::parent_for_root(
+                        &body.input.previous_bones,
+                        &body.input.current_bones,
+                        bones,
+                        input,
+                        root,
+                        evaluated.axis_scale.map(|axis| axis * evaluated.scale),
+                    ) else {
+                        return Some(hidden_bone());
+                    };
+                    Some(modern::compose_parent(parent, *local).unwrap_or_else(hidden_bone))
+                },
+            )
+            .ok_or(())?[0]
+            .clone();
         let path = &assets.sources().get(layer.source as usize).ok_or(())?.path;
         let texture = path
             .strip_suffix(".png")
@@ -571,6 +694,12 @@ impl EquipmentRuntime {
         let poses = self.poses.share(body, layer, [&[*previous], &[*current]]);
         layers.push(layer_presentation(body, layer, rig, poses, location, 0));
     }
+}
+
+/// Scales a held model about its parent origin without moving the owner's hand.
+fn scaled_parent(mut parent: RenderBoneTransform, scale: f32) -> RenderBoneTransform {
+    parent.translation_scale[3] *= scale;
+    parent
 }
 
 /// Returns one sprite's UV span, or one face's span within a block's six-face sheet.

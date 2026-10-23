@@ -32,6 +32,7 @@ mod chunk;
 
 mod cloud_render;
 mod device_poll;
+pub mod device_settings;
 
 mod enhanced;
 mod entity_shadow_render;
@@ -44,13 +45,18 @@ mod gpu_timing;
 pub use gpu_timing::{DetailedGpuTiming, GpuTimingPlugin};
 
 mod dropped_item_render;
+mod frame_boundary;
 mod hand_rig_render;
+pub use device_poll::FrameSubmissions;
+pub use frame_boundary::{FrameEnd, FrameStart};
+#[cfg(not(target_arch = "wasm32"))]
 mod input_pacing;
-pub use input_pacing::{FrameEnd, FramePacing, FrameStart, InputPacingPlugin};
+#[cfg(not(target_arch = "wasm32"))]
+pub use input_pacing::{FramePacing, InputPacingPlugin};
 
 mod lightning_render;
 mod media;
-pub use media::MediaTexture;
+pub use media::{MediaTexture, MediaUpload};
 mod media_screen;
 
 mod material_shader;
@@ -89,9 +95,21 @@ mod scene_target;
 mod queue_writes;
 mod screen_overlay_render;
 mod shader_safety;
+#[cfg(feature = "shaderpacks")]
+pub use self::shaderpack::atlas::{ShaderpackAtlas, ShaderpackAtlasPlugin};
+#[cfg(feature = "shaderpacks")]
+pub use self::shaderpack::geometry::{
+    BlockEntityIdFn, CONSTANT_VERTEX_BUFFER, DEFAULT_GEOMETRY_BUDGET_BYTES,
+    DRAW_ORIGIN_VERTEX_BUFFER, FRAME_EXPANSION_FACES, GEOMETRY_VERTEX_BUFFER, GeometryCategory,
+    IRIS_VERTEX_STRIDE, LIGHTMAP_TEXTURE_MATRIX, ShaderpackBlockIds, ShaderpackGeometry,
+    ShaderpackGeometryPlugin, ShaderpackGeometrySettings, TerrainLayout, UNASSIGNED_BLOCK_ID,
+    VertexLayoutError, vertex_buffer_layouts,
+};
 #[cfg(test)]
 #[path = "../tests/it/support/shader_source.rs"]
 mod shader_source;
+mod shaderpack;
+pub use self::shaderpack::ShaderPackRenderPlugin;
 mod surface_capabilities;
 mod surface_lifecycle;
 mod transparent_phase;
@@ -122,7 +140,7 @@ pub use actor_render::equipment_test_support::{
 };
 #[cfg(feature = "publication-test-support")]
 pub use actor_render::publication_test_support::{
-    PublicationActorPreparation, publication_actor_preparation,
+    ActorArtworkBenchmark, PublicationActorPreparation, publication_actor_preparation,
 };
 
 pub use atmosphere_render::AtmospherePlugin;
@@ -169,3 +187,6 @@ mod runtime_profile_trace;
 
 #[cfg(feature = "publication-test-support")]
 pub use actor_render::publication_test_support::{PreparedActorDraw, prepare_actor_test_frame};
+
+#[cfg(target_arch = "wasm32")]
+pub mod browser_jobs;

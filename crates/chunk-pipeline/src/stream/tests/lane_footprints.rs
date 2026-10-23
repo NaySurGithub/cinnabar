@@ -406,6 +406,7 @@ fn samples() -> Vec<WorldEvent> {
             weather_cycle: Some(true),
             hud: Default::default(),
             death: Default::default(),
+            crafting: Default::default(),
         }),
         WorldEvent::Weather(WeatherUpdateEvent {
             channel: WeatherChannel::Rain,
@@ -438,6 +439,7 @@ fn samples() -> Vec<WorldEvent> {
             head_yaw: None,
             on_ground: None,
             teleported: false,
+            force_local_move: false,
             player_mode: None,
             source_tick: None,
             interpolation: Default::default(),

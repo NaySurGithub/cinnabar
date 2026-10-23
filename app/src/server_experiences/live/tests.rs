@@ -1,4 +1,6 @@
 use super::*;
+
+mod shift;
 use mod_host::helper::{CallFailure, FailureKind};
 use server_experience::screen::GuiSize;
 use server_experience::{
@@ -90,6 +92,7 @@ fn fixture(count: usize) -> Live<FakeWorker> {
         origins: BTreeSet::new(),
         memory_bytes: 0,
         gpu_bytes: 0,
+        personal_mods: Default::default(),
     };
     let packages = (0..count)
         .map(|i| PackageOffer {
@@ -169,6 +172,7 @@ fn fixture(count: usize) -> Live<FakeWorker> {
                     stopped: None,
                     callback: "init",
                     items_sent: None,
+                    shift: Some(false),
                 },
             )
         })
@@ -889,8 +893,7 @@ fn scroll_ranges_coalesce_for_declared_views_only() {
     assert!(!live.scroll_changed("bundle0.pick", range(54.0)));
 }
 
-/// A secondary press (a right click) reaches the open bundle as its own event, only for a
-/// declared action, as primary presses do.
+/// A secondary press reaches only declared actions.
 #[test]
 fn secondary_presses_reach_only_declared_actions() {
     let mut live = opened();

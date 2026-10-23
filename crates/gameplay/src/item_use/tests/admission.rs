@@ -73,12 +73,7 @@ fn a_throw_never_queues_its_swing_without_its_transaction() {
     assert!(protocol::is_legacy_request_id(first_id));
     assert_eq!(
         summary(&transaction(&sent[1])),
-        (
-            first_id,
-            1,
-            vec![16, 15, 16],
-            vec![Some(41), Some(first_id), Some(41)]
-        )
+        (first_id, 1, vec![16, 15, 16], vec![None; 3])
     );
     assert!(
         !runtime.has_work(false),
@@ -102,11 +97,41 @@ fn a_throw_never_queues_its_swing_without_its_transaction() {
         |packets| {
             let (id, _, sizes, ids) = summary(&transaction(packets.last().unwrap()));
             assert!(id < first_id && protocol::is_legacy_request_id(id));
-            assert_eq!((sizes[0], ids[0]), (15, Some(first_id)));
+            assert_eq!((sizes[0], ids[0]), (15, None));
             ready.send_inventory_packets(packets)
         },
     );
     assert_eq!(runtime.predicted.as_ref().unwrap().stack.count(), 14);
+}
+
+#[test]
+fn a_fishing_rod_use_queues_its_swing_before_the_transaction() {
+    let (ready, _open) = AdmissionQueue::with_command_capacity(2);
+    let mut runtime = ItemUseRuntime::default();
+    let mut swings = SwingTracker::default();
+    let rod = item_frame(100, false, stack(4, MENU_ITEM, 1), "minecraft:fishing_rod");
+    let mut sent = Vec::new();
+
+    runtime.observe_press(true);
+    assert!(!step_and_send(
+        &mut runtime,
+        &mut swings,
+        &rod,
+        7,
+        6,
+        |packets| {
+            sent = packets.iter().map(wire).collect();
+            ready.send_inventory_packets(packets)
+        },
+    ));
+
+    assert_eq!(ready.pending_command_count(), 2);
+    assert_eq!(format!("{:?}", sent[0].kind()), "AnimatePacket");
+    assert_eq!(
+        format!("{:?}", sent[1].kind()),
+        "InventoryTransactionPacket"
+    );
+    assert!(runtime.take_inventory_change().is_none());
 }
 
 #[test]
@@ -278,8 +303,8 @@ fn a_release_can_be_admitted_while_its_deferred_restart_waits_for_verification()
         &ready
     ));
     assert_eq!(runtime.active.as_ref().unwrap().started_tick, 113);
-    assert!(!runtime.latched_press);
-    assert!(runtime.deferred_selection.is_none());
+    assert!(!runtime.pending.latched_press);
+    assert!(runtime.pending.deferred_selection.is_none());
 }
 
 #[test]
@@ -389,7 +414,7 @@ fn a_new_session_cancels_a_deferred_click() {
     );
     runtime.synchronize(2);
     assert!(!runtime.has_work(false));
-    assert!(runtime.deferred_selection.is_none());
+    assert!(runtime.pending.deferred_selection.is_none());
     assert!(!runtime.release_pending);
 }
 
@@ -783,4 +808,40 @@ fn a_use_and_release_between_ticks_send_without_waiting_for_a_tick() {
         0,
         "the next tick reports the start"
     );
+}
+
+#[test]
+fn ordered_pending_input_is_not_consumed_by_accepted_use_maintenance() {
+    let mut runtime = ItemUseRuntime::default();
+    let mut pending = PendingUseInput::new(true);
+    let mut swings = SwingTracker::default();
+    let press = item_frame(100, true, stack(4, SNOWBALL, 16), "minecraft:snowball");
+    runtime.swap_pending_input(&mut pending);
+    step_and_send(&mut runtime, &mut swings, &press, 7, 6, |_| {
+        Err(BatchSendError::Full)
+    });
+    runtime.swap_pending_input(&mut pending);
+    let maintenance = UseFrame {
+        held: false,
+        press_consumed: true,
+        ..press.clone()
+    };
+    step_and_send(&mut runtime, &mut swings, &maintenance, 7, 6, |_| {
+        panic!("no new press belongs to maintenance")
+    });
+    runtime.swap_pending_input(&mut pending);
+    let mut sent = Vec::new();
+    step_and_send(&mut runtime, &mut swings, &press, 7, 6, |packets| {
+        sent = packets;
+        Ok(())
+    });
+    runtime.swap_pending_input(&mut pending);
+    assert_eq!(
+        sent.iter()
+            .filter_map(observe_transaction)
+            .filter(|tx| tx.item_use().is_some())
+            .count(),
+        1
+    );
+    assert!(!runtime.has_work(false));
 }

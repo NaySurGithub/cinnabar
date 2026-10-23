@@ -40,7 +40,7 @@ pub(super) fn lookup_icon(
 }
 
 /// One server item icon in straight-alpha RGBA8.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SessionIcon {
     pub identifier: Arc<str>,
     pub metadata: u32,
@@ -50,7 +50,7 @@ pub struct SessionIcon {
 }
 
 /// The session's server item icons; later entries for an identifier are ignored.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SessionIcons {
     pub icons: Vec<SessionIcon>,
     /// Material sheets (`assets::BLOCK_ITEM_SHEET_SIZE`) for custom block items.
@@ -290,9 +290,13 @@ pub(super) fn observe(runtime: &mut UiPresentationRuntime, icons: Option<&Arc<Se
             }
             let (sender, done) = crossbeam_channel::bounded(1);
             let source = Arc::clone(icons);
-            rayon::spawn(move || {
+            let work = move || {
                 let _ = sender.send(pack(&source, 0));
-            });
+            };
+            #[cfg(not(target_arch = "wasm32"))]
+            rayon::spawn(work);
+            #[cfg(target_arch = "wasm32")]
+            crate::browser_jobs::submit(crate::browser_jobs::Lane::Icons, work);
             Packing {
                 source: Arc::clone(icons),
                 done,

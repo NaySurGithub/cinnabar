@@ -5,8 +5,7 @@
 use std::sync::Arc;
 
 use protocol::{
-    ActorHandedness, ContainerIdentity, ContainerOpenEvent, EquipmentEvent, InventoryContentEvent,
-    InventoryEvent, NetworkItemStack,
+    ContainerIdentity, ContainerOpenEvent, InventoryContentEvent, InventoryEvent, NetworkItemStack,
 };
 use sha2::{Digest, Sha256};
 
@@ -76,7 +75,7 @@ fn personal_inventory(
             .inventory_ledger_mut(player_runtime)
             .apply(&player_content(slots));
     }
-    runtime.toggle_inventory(player_runtime);
+    runtime.toggle_inventory(player_runtime, None);
     runtime
 }
 
@@ -391,19 +390,20 @@ fn offhand_count_does_not_depend_on_item_icon() {
         runtime
             .publish_local_runtime_id(player_runtime, 1, 42)
             .unwrap();
-        runtime.retain_local_selected_equipment(
-            player_runtime,
-            1,
-            EquipmentEvent {
-                actor_runtime_id: 7,
-                stack: stack(count),
-                inventory_slot: 0,
-                selected_slot: 0,
-                window_id: protocol::OFFHAND_WINDOW_ID as u8,
-                handedness: Some(ActorHandedness::Left),
-            },
-        );
-        runtime.toggle_inventory(player_runtime);
+        runtime
+            .enqueue_inventory_event(
+                player_runtime,
+                1,
+                1,
+                InventoryEvent::Content(InventoryContentEvent {
+                    container: protocol::ContainerIdentity::window(protocol::OFFHAND_WINDOW_ID),
+                    slots: vec![stack(count)].into(),
+                    storage_item: NetworkItemStack::empty(),
+                }),
+            )
+            .unwrap();
+        runtime.drain_pending_inventory(player_runtime);
+        runtime.toggle_inventory(player_runtime, None);
         runtime
     };
     let mut presentation = UiPresentationRuntime::with_hud(fixture_font(), fixture_hud()).unwrap();
@@ -437,7 +437,9 @@ fn review_carried_item_draws_after_the_recipe_panel() {
             storage_item: NetworkItemStack::empty(),
         }));
     runtime.set_inventory_pointer_gui(Some([80.0, 120.0]));
-    runtime.screen_state_mut().book_open = Some(true);
+    runtime
+        .select_inventory_layout(&mut player_runtime, 2)
+        .unwrap();
     let presentation = UiPresentationRuntime::with_hud(fixture_font(), fixture_hud()).unwrap();
     let (mut nodes, mut next, mut layouts) =
         (Vec::new(), 1, ui::TextLayoutCache::new(128, 1024 * 1024));
@@ -577,7 +579,9 @@ fn recipe_book_entries_glint_like_inventory_slots() {
             skipped: 0,
         }));
     // Search lists the whole catalog flat, independent of the default tab.
-    runtime.screen_state_mut().creative_tab = ui_screens::container_actions::SEARCH_TAB;
+    runtime
+        .screen_state_mut()
+        .select_tab(ui_screens::container_actions::SEARCH_TAB);
     capture_hud_frame(
         &player_runtime,
         &mut runtime,

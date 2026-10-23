@@ -1,5 +1,5 @@
 //! Catalog cosmetic emitters follow the attachments the actor frame draws in the world.
-//! Wardrobe and HUD previews never publish placements, so they show geometry only.
+//! Player previews own a separate simulation in the UI attachment frame.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -106,10 +106,10 @@ impl CosmeticEmitters {
                 seed: key.runtime_id
                     ^ key.spawn_revision.rotate_left(32)
                     ^ (u64::from(key.item.index()) << 8 | u64::from(key.emitter)),
-                tile: placement.sprite.as_ref().map(|(key, pixels)| TileRequest {
-                    key: *key,
-                    size: render_model::hats::COSMETIC_SPRITE_SIDE,
-                    pixels: Arc::clone(pixels),
+                tile: placement.sprite.as_ref().map(|sprite| TileRequest {
+                    key: sprite.key,
+                    size: sprite.side,
+                    pixels: Arc::clone(&sprite.pixels),
                 }),
                 ..SpawnRequest::default()
             };

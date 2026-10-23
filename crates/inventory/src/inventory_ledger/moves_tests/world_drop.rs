@@ -8,6 +8,7 @@ use super::*;
 
 mod history_tests;
 mod lifecycle;
+mod retirement;
 
 /// One addressed count and stack-id correction, with its requested cell unchanged.
 fn corrected_container(
@@ -107,6 +108,7 @@ fn rejected_legacy_drop_restores_the_original_stack_and_overlay_once() {
         ..Default::default()
     };
     ledger.set_confirmed_overlay(Cell::Inventory(2), overlay.clone());
+    let original = ledger.displayed_stack(2).unwrap().clone();
     let request = ledger.begin_world_drop(2, Some(1)).unwrap();
     let request_legacy = drop_legacy_id(&ledger, request);
     assert_eq!(ledger.take_world_drops(), 1);
@@ -151,8 +153,7 @@ fn unanswered_legacy_drops_do_not_delay_play_or_require_a_refresh() {
 fn queued_drops_serialize_the_established_legacy_source_and_world_descriptor() {
     for second_amount in [1, 2] {
         let mut ledger = known_ledger(&[(2, digested(stack(6, 100, 3)))]);
-        let first = ledger.begin_world_drop(2, Some(1)).unwrap();
-        let first_legacy = drop_legacy_id(&ledger, first);
+        ledger.begin_world_drop(2, Some(1)).unwrap();
         let second = ledger.begin_world_drop(2, Some(second_amount)).unwrap();
         let second_legacy = drop_legacy_id(&ledger, second);
         assert!(ledger.mark_transport_enqueued(0));
@@ -160,15 +161,9 @@ fn queued_drops_serialize_the_established_legacy_source_and_world_descriptor() {
         assert_eq!(count, 1);
         let transaction = observe_transaction(&packet).unwrap();
         assert_eq!(transaction.actions.len(), 2);
-        assert_eq!(
-            transaction.actions[0].from_item.stack_network_id,
-            Some(first_legacy)
-        );
+        assert_eq!(transaction.actions[0].from_item.stack_network_id, None);
         assert_eq!(transaction.actions[0].from_item.count, 2);
-        assert_eq!(
-            transaction.actions[1].to_item.stack_network_id,
-            Some(first_legacy)
-        );
+        assert_eq!(transaction.actions[1].to_item.stack_network_id, None);
         assert_eq!(transaction.actions[1].to_item.count, second_amount);
         assert_eq!(
             transaction.legacy_request_id,
@@ -278,7 +273,7 @@ fn quick_moves_merge_legacy_remainders_as_sources_and_destinations() {
 }
 
 #[test]
-fn split_responses_accept_distinct_legacy_and_server_stack_ids() {
+fn split_responses_skip_negative_screen_ids_and_keep_positive_siblings() {
     let mut ledger = known_ledger(&[(2, digested(stack(6, 100, 5)))]);
     let drop = ledger.begin_world_drop(2, Some(1)).unwrap();
     let drop_legacy = drop_legacy_id(&ledger, drop);
@@ -305,6 +300,7 @@ fn split_responses_accept_distinct_legacy_and_server_stack_ids() {
         ledger.displayed_stack(2).unwrap().stack_network_id,
         drop_legacy
     );
+    assert_eq!(ledger.displayed_stack(2).unwrap().count, 4);
     assert_eq!(ledger.cursor_stack().unwrap().stack_network_id, 91);
     assert_eq!(ledger.pending_state(), None);
     assert!(!ledger.resync_required());
@@ -314,11 +310,8 @@ fn split_responses_accept_distinct_legacy_and_server_stack_ids() {
         Some((4, 92)),
     ));
     ledger.apply(&response(drop_legacy, StackResponseStatus::Rejected, None));
-    assert_eq!(ledger.displayed_stack(2).unwrap().count, 2);
-    assert_eq!(
-        ledger.displayed_stack(2).unwrap().stack_network_id,
-        drop_legacy
-    );
+    assert_eq!(ledger.displayed_stack(2).unwrap().count, 4);
+    assert_eq!(ledger.displayed_stack(2).unwrap().stack_network_id, 92);
 }
 
 #[test]
