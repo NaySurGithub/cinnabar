@@ -53,7 +53,7 @@ pub fn bounded_visible_text(value: &str) -> &str {
 /// The most bytes of a title or subtitle handed to the JSON UI globals
 /// (`#hud_title_text_string` / `#hud_subtitle_text_string`). Packs read data out of
 /// these strings, so they keep the protocol decode limit, not the presentation one.
-pub const MAX_TITLE_BINDING_BYTES: usize = 16_384;
+pub const MAX_TITLE_BINDING_BYTES: usize = protocol::MAX_UI_TEXT_BYTES;
 
 /// `value` cut at a character boundary to [`MAX_TITLE_BINDING_BYTES`].
 pub fn bounded_title_text(value: &str) -> &str {
